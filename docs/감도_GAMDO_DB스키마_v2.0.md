@@ -73,7 +73,7 @@ erDiagram
 ```sql
 -- 3.1 앱 설정 (key-value)
 CREATE TABLE app_settings (
-  key         TEXT PRIMARY KEY,     -- 'device_uuid','onboarding_done','auto_shutter','haptic_on',
+  key         TEXT PRIMARY KEY,     -- 'device_uuid','onboarding_done','haptic_on',
                                     -- 'default_edit_strength','learning_opt_in'(기본 '0')
   value       TEXT NOT NULL,
   updated_at  INTEGER NOT NULL
@@ -137,8 +137,7 @@ CREATE TABLE sessions (
   resolved_style_json TEXT NOT NULL DEFAULT '{}',  -- 세션 시점 ResolvedStyle 스냅샷(재현성)
   started_at          INTEGER NOT NULL,
   ended_at            INTEGER,
-  final_match_score   REAL,
-  auto_shutter_used   INTEGER NOT NULL DEFAULT 0
+  final_match_score   REAL
 );
 
 -- 3.7 실시간 안내 이력 (KPI '가이드 실효성' 근거)
@@ -157,7 +156,7 @@ CREATE INDEX ix_guides_session ON session_guides(session_id, issued_at);
 CREATE TABLE captures (
   id                 TEXT PRIMARY KEY,   -- 'cap_' + ULID (서버 job과 공유되는 ID)
   session_id         TEXT REFERENCES sessions(id),   -- NULL = 갤러리 불러오기
-  source             TEXT NOT NULL CHECK (source IN ('camera_auto','camera_manual','gallery_import')),
+  source             TEXT NOT NULL CHECK (source IN ('camera_manual','gallery_import')),
   file_path          TEXT NOT NULL,
   thumb_path         TEXT,
   analysis_json      TEXT NOT NULL DEFAULT '{}',  -- 촬영 시점 FrameFeatures
@@ -324,7 +323,7 @@ CREATE TABLE schema_migrations (
 
 **5.3 StylePreset 파라미터** (`presets.params_json`) — 기능명세서 M3-01 스키마와 동일
 
-**5.4 레퍼런스 분석** (`cached_references.analysis_json`) — 기능명세서 §10 `POST /references` 응답과 동일
+**5.4 레퍼런스 분석** (`cached_references.analysis_json`) — 기능명세서 §10 `POST /references/analyze` 응답과 동일
 
 **5.5 편집 작업 목록** (`edit_jobs.operations_json`) — 허용 type: `remove_objects` `simplify_background` `outpaint` `fill_rotation_gap` `relight` `eye_fix` `deblur_light` `skin_tone_even`. **금지 작업은 스키마 차원에서 미정의**(얼굴·신체 형태 변경, 나이·인종 변경, 타인 얼굴 합성).
 

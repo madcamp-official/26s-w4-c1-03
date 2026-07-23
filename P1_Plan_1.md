@@ -13,7 +13,7 @@
 | 항목 | 확정 내용 |
 |---|---|
 | 플랫폼 | **Android 단일, Kotlin 네이티브 + Jetpack Compose** (React Native 안 씀. iOS 없음) |
-| 스타일 | **3종만**: Clean Social, Soft Film, Bright Review |
+| 스타일 | **시스템 프리셋 6종**: Clean Social, Candid Feed, Bright Review, Soft Film, Casual Portrait, Night Street. 무드 화면의 개인화 추천은 상위 3종만 노출 |
 | 촬영 대상 | **1인 인물 우선** (2인 이상은 범위 밖) |
 | 화면 비율 | **4:5, 1:1 두 가지만** |
 | 계정 | **로그인 없음.** 디바이스 UUID만 사용 |
@@ -77,8 +77,8 @@
 
 - [ ] `DeviceId` — 최초 실행 시 UUID 생성, DataStore에 영구 저장
 - [ ] Room DB 스키마 생성 — **DB 스키마 v2.0 §3의 로컬 14테이블 그대로** (Entity 클래스명 = 테이블명). Day 1에는 최소 `app_settings`, `presets`, `sessions`, `captures` 4개만 실제 사용, 나머지는 Entity 정의만
-- [ ] 앱 번들에 `assets/presets.json`(3종 폴백) 포함 — B가 Day 1에 주는 파일. 서버 응답과 동일 스키마
-- 완료 기준: 앱 재시작 후 UUID 동일, presets 3종이 Room에 로드됨
+- [ ] 앱 번들에 `assets/presets.json`(6종 폴백) 포함 — B가 Day 1에 주는 파일. 서버 응답과 동일 스키마
+- 완료 기준: 앱 재시작 후 UUID 동일, presets 6종이 Room에 로드됨
 
 ### 1-4. 화면 골격 (내비게이션만, 디자인 없이)
 
@@ -309,7 +309,7 @@
 
 | 시점 | 받을 것 | 형태 |
 |---|---|---|
-| Day 1 저녁 | presets.json 3종, /edit-jobs 더미 서버, API 계약 문서 | JSON + 실행 중 서버 |
+| Day 1 저녁 | presets.json 6종, /edit-jobs 더미 서버, API 계약 문서 | JSON + 실행 중 서버 |
 | Day 2 정오 | FrameFeatureCalculator.kt + 단위 테스트 | 순수 Kotlin 파일 |
 | Day 3 정오 | AlignmentEngine.kt + guide_config.json + 오버레이 좌표 테스트 4종 | 순수 Kotlin 파일 |
 | Day 4 정오 | ProblemDiagnoser.kt(온디바이스 진단) | 순수 Kotlin 파일 |

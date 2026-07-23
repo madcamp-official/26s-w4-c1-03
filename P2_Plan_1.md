@@ -50,12 +50,12 @@
 - [ ] 앱에서 접근 가능한 네트워크 구성 확인(같은 Wi-Fi, 방화벽) — **데모 환경에서도 유효한 방식으로**(핫스팟 대비)
 - 완료 기준: 실기기 앱에서 `GET /presets` 200 응답
 
-### 1-2. 프리셋 3종 초안 + 정적 서빙
+### 1-2. 프리셋 6종 초안 + 정적 서빙
 
-- [ ] `presets.json` 작성 — 스키마는 기능명세서 M3-01, **3종만**: Clean Social(정돈 배경·삼분할·따뜻한 색감), Soft Film(넓은 배경·중심 이탈 허용·낮은 대비·페이드·입자), Bright Review(중앙 피사체·밝은 노출·선명)
+- [ ] `presets.json` 작성 — 스키마는 기능명세서 M3-01, **6종**: Clean Social(정돈 배경·삼분할·따뜻한 색감), Candid Feed(즉흥 프레이밍·자연스러운 자세·약한 입자감), Bright Review(중앙 피사체·밝은 노출·선명), Soft Film(넓은 배경·중심 이탈 허용·낮은 대비·페이드·입자), Casual Portrait(멀리서 촬영·자연스러운 시선·배경 포함), Night Street(조명 강조·그림자 유지·높은 색 대비)
 - [ ] 각 프리셋에 composition(subjectScaleRange, subjectAnchorX/Y, headroomRange, horizonPosition, cameraPitchRange)과 color(exposureBias, colorTemperature, contrast, saturation, grain, vignette, fade) 초기값 기입 — 근거 사진 1장씩 첨부(튜닝 기준점)
 - [ ] `GET /presets` — 정적 파일 서빙 + ETag. 동일 파일을 A에게 전달(앱 번들 폴백)
-- 완료 기준: JSON 스키마 검증 스크립트 통과, A 앱에서 3종 로드 확인
+- 완료 기준: JSON 스키마 검증 스크립트 통과, A 앱에서 6종 로드 확인
 
 ### 1-3. 더미 /edit-jobs (A의 결과 화면 연결용)
 
@@ -98,7 +98,7 @@
   `matchScore = 0.35*composition + 0.25*subjectScale + 0.15*headroom + 0.15*horizon + 0.10*lighting`
 - [ ] 각 항은 0~1 정규화: 목표 범위 내=1, 범위 밖은 거리 비례 감쇠(선형, 컷오프 2배 거리)
 - [ ] `StyleTarget` 변환기: `presets.json`의 composition → 목표값 객체(A의 AlignmentEngine 입력)
-- [ ] 단위 테스트: 프리셋 3종 × 장면 4종 조합의 점수 스냅샷 테스트
+- [ ] 단위 테스트: 프리셋 6종 × 장면 4종 조합의 점수 스냅샷 테스트
 - 완료 기준: 같은 프레임에 프리셋을 바꾸면 점수가 다르게 나온다(테스트로 증명)
 
 ### 2-3. 서버: 레퍼런스 분석 파이프라인 착수 (Day 5 완성 목표의 절반)
@@ -212,7 +212,7 @@
 
 - [ ] 온보딩 프로필 생성: 카드 특성 벡터(`cards.json`) 가중 평균 + 차원별 확신도(분산 기반) → composition/color 분리 프로필
 - [ ] 요약 문구 생성: 특성값→일상 언어 템플릿("밝은 자연광과 넓은 배경을 좋아하시네요")
-- [ ] 추천 스타일: 프리셋 3종과 프로필 벡터 거리 → 정렬
+- [ ] 추천 스타일: 프리셋 6종과 프로필 벡터 거리 → 정렬 후 상위 3종 반환
 - [ ] 피드백 반영: 5개 선택지 → 구도/색감 프로필 분리 반영(지수이동평균 α=0.3), "색감 별로"는 color만 조정
 - [ ] 단위 테스트: 상이한 카드 선택 2세트 → 상이한 요약·추천 / "색감 별로" 2회 → colorTemperature 보정치 변화
 - 완료 기준: 테스트 통과, A의 온보딩·피드백 화면에서 실동작
@@ -271,13 +271,13 @@
 4. 지표 추출 스크립트(수기 집계로 대체)
 5. 생성 기능 전체(§0.4 — Day 5 판정에 따라, 최후)
 
-**끝까지 지키는 것:** presets 3종, FrameFeatureCalculator, AlignmentEngine, 레퍼런스 분석, 객체 제거 1기능, 얼굴 검증·폴백, 업로드 자동 삭제.
+**끝까지 지키는 것:** presets 6종, FrameFeatureCalculator, AlignmentEngine, 레퍼런스 분석, 객체 제거 1기능, 얼굴 검증·폴백, 업로드 자동 삭제.
 
 ## 부록 B. A에게 전달하는 산출물 일정 (P1_Plan 부록 B와 동일 — 지연 시 즉시 공유)
 
 | 시점 | 전달물 | 완료 조건 |
 |---|---|---|
-| Day 1 저녁 | presets.json 3종 + /edit-jobs 더미 + API 계약(OpenAPI) | A 앱에서 호출 성공 |
+| Day 1 저녁 | presets.json 6종 + /edit-jobs 더미 + API 계약(OpenAPI) | A 앱에서 호출 성공 |
 | Day 2 정오 | FrameFeatureCalculator.kt + 테스트 10케이스 | 테스트 전부 통과 |
 | Day 3 정오 | AlignmentEngine.kt + guide_config.json + 오버레이 좌표 테스트 4종 | 테스트 전부 통과 |
 | Day 4 정오 | ProblemDiagnoser.kt + 테스트 6케이스 | 테스트 전부 통과 |
