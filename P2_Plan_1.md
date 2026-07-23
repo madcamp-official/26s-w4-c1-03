@@ -17,6 +17,7 @@
 | 생성형 공급자 | `GenerativeEditProvider` 인터페이스 뒤에 배치(교체 가능). 1순위 자체 GPU(ComfyUI: LaMa+FLUX.1 Fill), Day 1 품질 비교로 확정 |
 | 생성 기능 범위 | **객체 제거 또는 여백 확장 중 최소 1개 완성.** 권장 순서: 객체 제거(LaMa) 먼저 → 여백 확장(FLUX Fill)은 여력 시 |
 | B의 특수 임무 | 가이드·프로필 로직은 서버가 아니라 **순수 Kotlin 모듈**로 작성해 A에게 전달한다(UI·Android API 의존 금지, JVM 단위 테스트 동반). 알고리즘 소유는 B, 통합은 A |
+| 가이드 방식 | **시각 오버레이 전용** — 텍스트 안내·자동 촬영·일치도 게이지 없음(제품 결정). matchScore는 KPI 로그 전용 내부 값 |
 
 ### 0.2 완료(Done)의 정의
 
@@ -96,7 +97,7 @@
 - [ ] 로드맵 §4.2 공식 그대로 구현(설명 가능성 우선):
   `matchScore = 0.35*composition + 0.25*subjectScale + 0.15*headroom + 0.15*horizon + 0.10*lighting`
 - [ ] 각 항은 0~1 정규화: 목표 범위 내=1, 범위 밖은 거리 비례 감쇠(선형, 컷오프 2배 거리)
-- [ ] `StyleTarget` 변환기: `presets.json`의 composition → 목표값 객체(A의 GuideEngine 입력)
+- [ ] `StyleTarget` 변환기: `presets.json`의 composition → 목표값 객체(A의 AlignmentEngine 입력)
 - [ ] 단위 테스트: 프리셋 3종 × 장면 4종 조합의 점수 스냅샷 테스트
 - 완료 기준: 같은 프레임에 프리셋을 바꾸면 점수가 다르게 나온다(테스트로 증명)
 
@@ -109,26 +110,27 @@
 
 ---
 
-## Day 3 — 안내를 결정하는 두뇌 (GuideEngine)
+## Day 3 — 오버레이를 결정하는 두뇌 (AlignmentEngine)
 
-**당일 데모 완료 기준: 실기기에서 단일 안내와 자동 촬영이 동작한다(A와 공동).**
+**당일 데모 완료 기준: 실기기에서 목표 구도 오버레이가 안정 표시되고 사용자가 맞춰서 수동 촬영한다(A와 공동).**
 
-### 3-1. GuideEngine.kt (순수 Kotlin — 정오까지 A에게 전달)
+> **제품 결정 반영:** 텍스트 안내·자동 촬영·일치도 게이지는 만들지 않는다. B의 두뇌 모듈은 "무엇을 말할지"가 아니라 **"오버레이를 어디에, 얼마나 안정적으로 그릴지"** 를 결정한다.
 
-- [ ] 입력: `FrameFeatures` + `StyleTarget` / 출력: `GuideState(currentGuide: Guide?, matchScore: Float, autoShutterReady: Boolean)`
-- [ ] **안내 우선순위 체인(로드맵 §4.2 고정):** ① 인물 미검출 → ② 수평(|tilt|>3°) → ③ 인물 위치(anchor 이탈) → ④ 거리/크기(scaleRange 이탈) → ⑤ 여백(headroomRange 이탈) → ⑥ 밝기(역광·저조도)
-- [ ] 안정화 구현: 특징값 이동평균(윈도 5프레임) + 히스테리시스(진입 임계 > 해제 임계, 예: 수평 진입 3°/해제 1.5°) + 안내 최소 유지 0.8초
-- [ ] 안내 문구 카탈로그(한국어, 전문 용어 금지): `오른쪽으로 한 걸음 이동하세요` `카메라를 조금 낮춰주세요` `피사체와 거리를 벌려주세요` `얼굴 위 여백을 줄여주세요` `휴대폰을 시계 방향으로 돌려주세요` `조금 밝은 곳으로 이동해보세요` + 방향 enum
-- [ ] `autoShutterReady`: matchScore ≥ 임계(기본 0.75) AND 흔들림<임계 AND 눈 감김 확률<0.3 — 유지 시간 판정은 A의 컨트롤러 담당
-- [ ] **`guide_config.json`**: 모든 임계값·가중치·유지 시간 외부화(현장 튜닝용) — 기본값 명시
-- [ ] 시나리오 단위 테스트 6종: 기울임→수평 안내 / 좌측 치우침→이동 / 과다 접근→거리 / headroom 과다→여백 / 역광→밝기 / 전부 충족→안내 없음+ready
-- 완료 기준: 테스트 6종 통과 + 실기기에서 안내 깜빡임 없음(A와 저녁 판정)
+### 3-1. AlignmentEngine.kt (순수 Kotlin — 정오까지 A에게 전달)
 
-### 3-2. 자동 촬영 판정 지원
+- [ ] 입력: `FrameFeatures` + `StyleTarget` / 출력: `OverlayState(targetFrame: RectN, silhouette: SilhouetteSpec, horizonLine: Float, visible: Boolean)` + `matchScore: Float`(내부 기록 전용 — UI 표시 금지 계약)
+- [ ] 목표 프레임 산출: 프리셋 composition(anchor·scaleRange·headroomRange)을 현재 장면(개방 공간·인물 위치)에 투영해 실현 가능한 목표 영역 계산
+- [ ] 안정화 구현: 오버레이 좌표 이동평균(윈도 5프레임) + 재계산 히스테리시스(장면 대폭 변화 시에만 목표 갱신, 예: 전역 이동량 임계 초과) + 신뢰도 미달 시 마지막 안정값 유지 + 지속 불안정 시 `visible=false`
+- [ ] 인물 진입 판정: 인물 박스가 목표 프레임과 IoU 임계(기본 0.7) 이상이면 `aligned=true`(오버레이 색 전환용 — 유일한 피드백)
+- [ ] **`guide_config.json`**: 이동평균 윈도·IoU 임계·재계산 임계 등 전부 외부화(현장 튜닝용) — 기본값 명시
+- [ ] 단위 테스트 4종: 중앙 장면→기대 목표 좌표 / 인물 진입→aligned 전환 / 흔들리는 입력→좌표 분산 임계 이하(안정화 증명) / 신뢰도 미달→visible 유지 로직
+- 완료 기준: 테스트 4종 통과 + 실기기에서 오버레이 깜빡임 없음(A와 저녁 판정)
 
-- [ ] A와 함께 실기기에서 임계값 1차 튜닝(30분) — ready 오발동/불발동 케이스 기록
-- [ ] **오후 6시 공동 판정**: 자동 촬영 불안정 시 §0.4 규칙 적용 결정
-- 완료 기준: 판정 회의록 1줄 기록(안정/병행 전환)
+### 3-2. 오버레이 안정성 공동 튜닝
+
+- [ ] A와 함께 실기기에서 이동평균·히스테리시스 값 1차 튜닝(30분) — 좌표 튐/지연 트레이드오프 기록
+- [ ] **오후 6시 공동 판정**: 동적 오버레이 불안정 시 정적 프리셋 프레임으로 다운그레이드 결정(P1_Plan §0.4)
+- 완료 기준: 판정 회의록 1줄 기록(동적 유지/정적 다운그레이드)
 
 ### 3-3. 서버: 편집 작업 큐 실구현 착수
 
@@ -177,15 +179,15 @@
 
 ## Day 5 — 레퍼런스 분석 완성 + 생성 실서비스 전환
 
-**당일 데모 완료 기준: 레퍼런스 안내 또는 생성 복구 중 최소 하나가 실서버로 동작한다.**
+**당일 데모 완료 기준: 레퍼런스 오버레이 가이드 또는 생성 복구 중 최소 하나가 실서버로 동작한다.**
 
 ### 5-1. POST /references/analyze 완성
 
 - [ ] Day 2-3 분석 함수를 API로 노출: multipart 수신 → 분석 → 응답(기능명세서 §10.2 스키마: analysis + targetComposition + colorTarget) → **임시 파일 즉시 삭제**(DB 기록 없음)
 - [ ] 응답 시간 5초 이내(초과 시 분석 해상도 축소), 타임아웃·비인물 사진(인물 0명) 응답 처리
-- [ ] targetComposition 변환: 레퍼런스의 인물 배치·비율 → StyleTarget 형식(A의 GuideEngine이 그대로 소비)
+- [ ] targetComposition 변환: 레퍼런스의 인물 배치·비율 → StyleTarget 형식(A의 AlignmentEngine이 그대로 소비)
 - [ ] colorTarget 변환: 팔레트·색온도 → A의 스타일 단계 파라미터 매핑표
-- 완료 기준: A의 레퍼런스 모드에서 분석→오버레이→안내가 실동작(저녁 통합 테스트)
+- 완료 기준: A의 레퍼런스 모드에서 분석→실루엣 오버레이 표시가 실동작(저녁 통합 테스트)
 
 ### 5-2. /edit-jobs 실서비스 전환
 
@@ -232,7 +234,7 @@
 ### 6-4. 이벤트·피드백 저장 확인 (로컬)
 
 - [ ] A와 함께: `feedback`·`session_guides`·`events` 로컬 기록이 쌓이는지 확인(데모 후 지표 산출용)
-- [ ] 지표 추출 스크립트(로컬 DB 파일 → 첫 촬영 완료율·저장률·안내 개선율 계산) 준비
+- [ ] 지표 추출 스크립트(로컬 DB 파일 → 첫 촬영 완료율·저장률·오버레이 on/off 촬영 간 구도 개선율 계산) 준비
 - 완료 기준: 통합 테스트 3회 후 스크립트가 지표 3종을 출력
 
 ---
@@ -269,7 +271,7 @@
 4. 지표 추출 스크립트(수기 집계로 대체)
 5. 생성 기능 전체(§0.4 — Day 5 판정에 따라, 최후)
 
-**끝까지 지키는 것:** presets 3종, FrameFeatureCalculator, GuideEngine, 레퍼런스 분석, 객체 제거 1기능, 얼굴 검증·폴백, 업로드 자동 삭제.
+**끝까지 지키는 것:** presets 3종, FrameFeatureCalculator, AlignmentEngine, 레퍼런스 분석, 객체 제거 1기능, 얼굴 검증·폴백, 업로드 자동 삭제.
 
 ## 부록 B. A에게 전달하는 산출물 일정 (P1_Plan 부록 B와 동일 — 지연 시 즉시 공유)
 
@@ -277,7 +279,7 @@
 |---|---|---|
 | Day 1 저녁 | presets.json 3종 + /edit-jobs 더미 + API 계약(OpenAPI) | A 앱에서 호출 성공 |
 | Day 2 정오 | FrameFeatureCalculator.kt + 테스트 10케이스 | 테스트 전부 통과 |
-| Day 3 정오 | GuideEngine.kt + guide_config.json + 시나리오 테스트 6종 | 테스트 전부 통과 |
+| Day 3 정오 | AlignmentEngine.kt + guide_config.json + 오버레이 좌표 테스트 4종 | 테스트 전부 통과 |
 | Day 4 정오 | ProblemDiagnoser.kt + 테스트 6케이스 | 테스트 전부 통과 |
 | Day 5 정오 | /references/analyze 실서버 + /edit-jobs 실서버 | 실기기 왕복 성공 |
 | Day 6 정오 | ProfileEngine.kt + cards.json + 카드 에셋 | 테스트 통과 + 커버 매트릭스 완성 |
