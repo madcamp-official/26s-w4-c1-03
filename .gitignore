@@ -1,0 +1,62 @@
+# Operating system files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+NUL
+
+# IDE and editor settings
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+
+# Android / Gradle build output
+.gradle/
+**/build/
+local.properties
+.cxx/
+captures/
+.externalNativeBuild/
+
+# Node / React Native / Expo output
+node_modules/
+.expo/
+.expo-shared/
+dist/
+coverage/
+
+# Python / FastAPI runtime files
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Environment variables and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Local databases and generated media
+*.sqlite
+*.sqlite3
+tmp/
+temp/
+uploads/
+generated/
+
+# Logs and local reports
+*.log
+reports/
