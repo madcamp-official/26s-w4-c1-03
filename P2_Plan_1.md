@@ -310,3 +310,15 @@
 - [ ] 모델 다운로드: LaMa, FLUX.1 Fill [dev](비상업 라이선스 — 상용 전환 시 교체 대상임을 provider_decision.md에 명기), InsightFace 모델
 - [ ] ComfyUI headless 기동 스크립트, FastAPI에서 호출 가능한 내부 주소 확인
 - [ ] 비교용 Gemini API 키 발급(무료 티어) — 비교 테스트 후 사용 여부 결정
+
+---
+
+## 작업 기록
+
+### 2026-07-24 — P2 가이드 연결 작업
+
+- 제품 오너 승인 후 P1 담당 영역 파일을 수정함.
+- 수정 파일: `app/src/main/java/com/gamdo/app/ui/camera/CameraScreen.kt`, `app/src/main/java/com/gamdo/app/ui/camera/CameraOverlay.kt`
+- 변경 내용: `FrameFeatureCalculator → AlignmentEngine → OverlayProjection` 연결, `guide_config.json` 로딩, 목표 프레임·실루엣 표시, 정렬 시 흰색에서 세이지 색으로 전환.
+- 기존 수동 셔터·권한·내비게이션 흐름은 변경하지 않음. 텍스트 지시·화살표·일치도 게이지·자동 촬영은 추가하지 않음.
+- 검증: `:app:testDebugUnitTest` 통과. 실기기 시각 검증은 APK 설치 후 별도 진행.

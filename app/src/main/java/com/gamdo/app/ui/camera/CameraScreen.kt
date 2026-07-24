@@ -51,8 +51,15 @@ import com.gamdo.app.camera.centerCropToRatio
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.detect.MlKitFaceDetector
 import com.gamdo.app.detect.MlKitPoseDetector
+import com.gamdo.app.detect.BrightnessSample
+import com.gamdo.app.detect.FrameFeatureCalculator
 import com.gamdo.app.detect.SceneDetector
 import com.gamdo.app.detect.toAnalysisFrame
+import com.gamdo.app.guide.GuideConfig
+import com.gamdo.app.guide.StyleTarget
+import com.gamdo.app.guide.AlignmentEngine
+import com.gamdo.app.guide.parseGuideConfig
+import com.gamdo.app.guide.toProjection
 import com.gamdo.app.ui.components.moodBrush
 import com.gamdo.app.ui.theme.Charcoal950
 import com.gamdo.app.ui.theme.OnDarkHigh
@@ -90,6 +97,25 @@ fun CameraScreen(
     val controller = remember { CameraController(context) }
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
     val scene = remember { SceneDetector(MlKitFaceDetector(), MlKitPoseDetector()) }
+    val featureCalculator = remember { FrameFeatureCalculator() }
+    val alignmentEngine = remember { AlignmentEngine() }
+    val guideConfig = remember {
+        runCatching {
+            context.assets.open("guide_config.json").bufferedReader().use { reader ->
+                parseGuideConfig(reader.readText())
+            }
+        }.getOrDefault(GuideConfig())
+    }
+    val styleTarget = remember {
+        StyleTarget(
+            targetAspectRatio = 4f / 5f,
+            subjectScaleRange = 0.35f..0.55f,
+            subjectAnchorX = 0.5f,
+            headroomRange = 0.05f..0.12f,
+            horizonPosition = 0.5f,
+            cameraPitchRange = -5f..5f,
+        )
+    }
     val tiltSensor = remember { TiltSensor(context) }
     val shakeMeter = remember { ShakeMeter(context) }
     val statsFlow = remember { MutableStateFlow<AnalysisStats?>(null) }
@@ -130,6 +156,17 @@ fun CameraScreen(
                         val faceN = result.faces.size
                         val poseN = result.pose?.landmarks?.size ?: 0
                         detectionFlow.value = "얼굴 $faceN · 포즈 $poseN"
+                        val frameFeatures = featureCalculator.calculate(
+                            input = com.gamdo.app.detect.FrameFeatureInput(
+                                detection = result,
+                                tilt = tiltSensor.reading.value,
+                                brightness = BrightnessSample(frameMean = 0.5f),
+                                shake = shakeMeter.shake.value,
+                            ),
+                        )
+                        val guide = alignmentEngine
+                            .align(frameFeatures, styleTarget, guideConfig)
+                            .toProjection()
                         overlayFlow.value = OverlayData(
                             faces = result.faces.map { it.box },
                             personCenter = result.pose?.landmarks
@@ -142,6 +179,7 @@ fun CameraScreen(
                             frameWidth = frame.width,
                             frameHeight = frame.height,
                             mirror = controller.isFront,
+                            guide = guide,
                         )
                         val f = result.faces.firstOrNull()
                         Log.d(

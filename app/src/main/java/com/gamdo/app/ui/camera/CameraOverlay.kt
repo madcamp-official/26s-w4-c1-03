@@ -11,6 +11,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.unit.dp
 import com.gamdo.app.detect.NormalizedBox
+import com.gamdo.app.guide.OverlayProjection
+import com.gamdo.app.guide.RectN
 import com.gamdo.app.ui.theme.Sage
 import kotlin.math.abs
 import kotlin.math.max
@@ -28,6 +30,7 @@ data class OverlayData(
     val frameWidth: Int,
     val frameHeight: Int,
     val mirror: Boolean,
+    val guide: OverlayProjection? = null,
 )
 
 /**
@@ -66,6 +69,28 @@ fun CameraOverlay(
         }
 
         val data = overlay ?: return@Canvas
+
+        data.guide?.takeIf { it.visible }?.let { guide ->
+            val frame = mapRect(guide.targetFrame, data, vw, vh)
+            val guideColor = if (guide.aligned) Sage else Color.White
+            drawRoundRect(
+                color = guideColor,
+                topLeft = Offset(frame.left, frame.top),
+                size = Size(frame.width, frame.height),
+                cornerRadius = CornerRadius(18.dp.toPx(), 18.dp.toPx()),
+                style = Stroke(width = 3.dp.toPx()),
+            )
+            guide.silhouetteBounds?.let { silhouette ->
+                val ghost = mapRect(silhouette, data, vw, vh)
+                drawRoundRect(
+                    color = guideColor.copy(alpha = 0.22f),
+                    topLeft = Offset(ghost.left, ghost.top),
+                    size = Size(ghost.width, ghost.height),
+                    cornerRadius = CornerRadius(22.dp.toPx(), 22.dp.toPx()),
+                    style = Stroke(width = 2.dp.toPx()),
+                )
+            }
+        }
 
         data.faces.forEach { box ->
             val a = mapNormalized(box.left, box.top, data, vw, vh)
@@ -111,6 +136,17 @@ private fun mapNormalized(nx: Float, ny: Float, data: OverlayData, vw: Float, vh
     }
     val fx = if (data.mirror) 1f - nx else nx
     return Offset(offX + fx * contentW, offY + ny * contentH)
+}
+
+private fun mapRect(rect: RectN, data: OverlayData, vw: Float, vh: Float): RectN {
+    val topLeft = mapNormalized(rect.left, rect.top, data, vw, vh)
+    val bottomRight = mapNormalized(rect.right, rect.bottom, data, vw, vh)
+    return RectN(
+        left = min(topLeft.x, bottomRight.x),
+        top = min(topLeft.y, bottomRight.y),
+        right = max(topLeft.x, bottomRight.x),
+        bottom = max(topLeft.y, bottomRight.y),
+    )
 }
 
 // Kept internal-visible for potential future use.
