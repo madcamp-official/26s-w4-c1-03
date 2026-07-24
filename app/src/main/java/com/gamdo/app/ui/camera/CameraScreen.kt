@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,8 +42,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.gamdo.app.camera.AnalysisStats
 import com.gamdo.app.camera.CameraController
+import com.gamdo.app.camera.FrameAnalyzer
 import com.gamdo.app.camera.centerCropToRatio
+import com.gamdo.app.camera.toAnalysisBitmap
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.ui.components.moodBrush
 import com.gamdo.app.ui.theme.Charcoal950
@@ -50,6 +54,8 @@ import com.gamdo.app.ui.theme.OnDarkHigh
 import com.gamdo.app.ui.theme.OnDarkMedium
 import com.gamdo.app.ui.theme.OnDarkMuted
 import com.gamdo.app.ui.theme.Sage
+import java.util.concurrent.Executors
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
 private val GuideLime = Color(0xFFCDD69A)
@@ -76,13 +82,32 @@ fun CameraScreen(
     val scope = rememberCoroutineScope()
 
     val controller = remember { CameraController(context) }
+    val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
+    val statsFlow = remember { MutableStateFlow<AnalysisStats?>(null) }
+    val stats by statsFlow.collectAsState()
+
     var aspect by rememberSaveable { mutableStateOf(CaptureAspect.RATIO_4_5) }
     var isFront by remember { mutableStateOf(false) }
     var capturing by remember { mutableStateOf(false) }
     var lastThumb by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
 
-    DisposableEffect(Unit) {
-        onDispose { controller.unbind() }
+    DisposableEffect(controller) {
+        // Attach the analysis pipeline (§2-1). onFrame does the YUV→Bitmap
+        // conversion so the HUD timing reflects real per-frame cost; detectors
+        // replace this body in §2-2.
+        controller.setAnalyzer(
+            analysisExecutor,
+            FrameAnalyzer(
+                targetFps = 12,
+                onStats = { statsFlow.value = it },
+                onFrame = { it.toAnalysisBitmap() },
+            ),
+        )
+        onDispose {
+            controller.clearAnalyzer()
+            controller.unbind()
+            analysisExecutor.shutdown()
+        }
     }
 
     Column(
@@ -167,6 +192,10 @@ fun CameraScreen(
                     }
                 }
                 Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
+            }
+
+            stats?.let { s ->
+                DebugHud(stats = s, modifier = Modifier.align(Alignment.TopStart).padding(10.dp))
             }
         }
 
@@ -260,6 +289,23 @@ private fun RuleOfThirds() {
         Box(Modifier.weight(1f).fillMaxHeight())
         Box(Modifier.width(1.dp).fillMaxHeight().background(GridLine))
         Box(Modifier.weight(1f).fillMaxHeight())
+    }
+}
+
+@Composable
+private fun DebugHud(stats: AnalysisStats, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color(0x99000000))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        Text(
+            text = "%.1fms · %dfps · drop %d%%".format(stats.processMs, stats.fps, stats.dropRatePercent),
+            color = GuideLime,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
+        )
     }
 }
 

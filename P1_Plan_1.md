@@ -13,7 +13,8 @@
 | 항목 | 확정 내용 |
 |---|---|
 | 플랫폼 | **Android 단일, Kotlin 네이티브 + Jetpack Compose** (React Native 안 씀. iOS 없음) |
-| 스타일 | **시스템 프리셋 6종**: Clean Social, Candid Feed, Bright Review, Soft Film, Casual Portrait, Night Street. 무드 화면의 개인화 추천은 상위 3종만 노출 |
+| 화면 구조 | **간결화(t2) 채택** (2026-07-24, AGENTS.md D11): 무드/홈 화면·4탭 하단바 없음. **카메라가 홈**, 앨범은 카메라에서 진입, 편집은 앨범에서. 단일 강조색 **세이지**(#A3BFA0) |
+| 스타일 | **시스템 프리셋 6종**: Clean Social, Candid Feed, Bright Review, Soft Film, Casual Portrait, Night Street. ~~무드 화면의 개인화 추천은 상위 3종만 노출~~ <!-- t2: 무드 화면 제거(D11). 프리셋 종수 3(D6) vs 6은 오너 확정 대기 --> |
 | 촬영 대상 | **1인 인물 우선** (2인 이상은 범위 밖) |
 | 화면 비율 | **4:5, 1:1 두 가지만** |
 | 계정 | **로그인 없음.** 디바이스 UUID만 사용 |
@@ -137,11 +138,16 @@
 
 ### 2-1. ImageAnalysis 파이프라인
 
-- [ ] `ImageAnalysis` 유스케이스 추가 — `STRATEGY_KEEP_ONLY_LATEST`(백프레셔: 분석이 늦어도 프리뷰 유지)
-- [ ] 분석 해상도 640px(긴 변) 다운스케일, 분석 주기 스로틀 **초당 10~15회**
-- [ ] YUV→Bitmap/InputImage 변환 유틸(회전 보정 포함)
-- [ ] 성능 계측: 프레임 처리 시간(ms)·드롭률을 디버그 HUD에 표시 — Day 7 튜닝 근거
-- 완료 기준: 분석 켠 상태에서 프리뷰 체감 끊김 없음, 처리 시간 로그 확인
+- [x] `ImageAnalysis` 유스케이스 추가 — `STRATEGY_KEEP_ONLY_LATEST`(백프레셔: 분석이 늦어도 프리뷰 유지) <!-- CameraController: IMAGE_CAPTURE|IMAGE_ANALYSIS 동시 바인딩, 스톨 로그 없음 -->
+- [x] 분석 해상도 640px(긴 변) 다운스케일, 분석 주기 스로틀 **초당 10~15회** <!-- ResolutionSelector 640×480, FrameAnalyzer targetFps=12. 실측 9fps(플레이스홀더 변환 비용), 스로틀 설정은 12 -->
+- [x] YUV→Bitmap/InputImage 변환 유틸(회전 보정 포함) <!-- camera/ImageConversion.toAnalysisBitmap(회전 포함). InputImage 경로는 2-2(ML Kit)에서 추가 -->
+- [x] 성능 계측: 프레임 처리 시간(ms)·드롭률을 디버그 HUD에 표시 — Day 7 튜닝 근거 <!-- CameraScreen DebugHud: "28.9ms · 9fps · drop 64%" 실기기 표시 -->
+- 완료 기준: 분석 켠 상태에서 프리뷰 체감 끊김 없음, 처리 시간 로그 확인 <!-- ✅ 실기기: 3유스케이스 바인딩·백프레셔 스톨 없음, HUD로 처리시간 확인. drop%는 스로틀이 프리뷰 보호 위해 초과분 버리는 정상 동작 -->
+
+### 2-1. 진행 메모
+- `camera/`: FrameAnalyzer(스로틀+처리시간/드롭률), ImageConversion(YUV→Bitmap+회전). 상태 전달은 MutableStateFlow→collectAsState(단일 구독 지점)
+- 처리시간 28.9ms는 **플레이스홀더 풀-RGB 변환(회전 포함)** 비용 — 2-2에서 ML Kit InputImage(RGB 복사 없음)로 교체되면 대폭 감소, 실측 fps도 상승 전망
+- HUD는 개발용(디버그 빌드 상시 표시). 2-5에서 토글화 예정
 
 ### 2-2. ML Kit 감지 래퍼 (B의 스펙에 맞춰 구현)
 
