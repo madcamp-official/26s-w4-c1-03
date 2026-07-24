@@ -1,0 +1,170 @@
+[
+  {
+    "id": "clean_social",
+    "name": "Clean Social",
+    "displayName": "깔끔한 소셜",
+    "thumbnail": "presets/clean_social.jpg",
+    "composition": {
+      "targetAspectRatio": "4:5",
+      "subjectScaleRange": [0.35, 0.55],
+      "subjectPosition": "center",
+      "headroomRange": [0.05, 0.12],
+      "horizonPosition": 0.5,
+      "cameraPitchRange": [-5, 5],
+      "posePattern": "natural_standing",
+      "backgroundRatio": [0.4, 0.6]
+    },
+    "color": {
+      "colorTemperature": 5800,
+      "exposureBias": 0.3,
+      "contrast": 0.1,
+      "saturation": 0.05,
+      "grain": 0.0,
+      "vignette": 0.0,
+      "blurStrength": 0.0,
+      "fade": 0.0
+    },
+    "cropFreedom": 0.2,
+    "generativeEditPolicy": "allow_background"
+  },
+  {
+    "id": "candid_feed",
+    "name": "Candid Feed",
+    "displayName": "자연스러운 피드",
+    "thumbnail": "presets/candid_feed.jpg",
+    "composition": {
+      "targetAspectRatio": "4:5",
+      "subjectScaleRange": [0.3, 0.5],
+      "subjectPosition": "third_left",
+      "headroomRange": [0.06, 0.14],
+      "horizonPosition": 0.55,
+      "cameraPitchRange": [-6, 6],
+      "posePattern": "candid_motion",
+      "backgroundRatio": [0.45, 0.65]
+    },
+    "color": {
+      "colorTemperature": 5500,
+      "exposureBias": 0.15,
+      "contrast": 0.05,
+      "saturation": 0.0,
+      "grain": 0.08,
+      "vignette": 0.05,
+      "blurStrength": 0.0,
+      "fade": 0.12
+    },
+    "cropFreedom": 0.35,
+    "generativeEditPolicy": "conservative"
+  },
+  {
+    "id": "bright_review",
+    "name": "Bright Review",
+    "displayName": "밝은 리뷰",
+    "thumbnail": "presets/bright_review.jpg",
+    "composition": {
+      "targetAspectRatio": "1:1",
+      "subjectScaleRange": [0.45, 0.7],
+      "subjectPosition": "center",
+      "headroomRange": [0.03, 0.08],
+      "horizonPosition": 0.5,
+      "cameraPitchRange": [-3, 3],
+      "posePattern": "product_hold",
+      "backgroundRatio": [0.3, 0.5]
+    },
+    "color": {
+      "colorTemperature": 6200,
+      "exposureBias": 0.6,
+      "contrast": 0.15,
+      "saturation": 0.12,
+      "grain": 0.0,
+      "vignette": 0.0,
+      "blurStrength": 0.0,
+      "fade": 0.0
+    },
+    "cropFreedom": 0.15,
+    "generativeEditPolicy": "allow_background"
+  },
+  {
+    "id": "soft_film",
+    "name": "Soft Film",
+    "displayName": "부드러운 필름",
+    "thumbnail": "presets/soft_film.jpg",
+    "composition": {
+      "targetAspectRatio": "4:5",
+      "subjectScaleRange": [0.32, 0.52],
+      "subjectPosition": "third_right",
+      "headroomRange": [0.08, 0.16],
+      "horizonPosition": 0.5,
+      "cameraPitchRange": [-5, 5],
+      "posePattern": "natural_standing",
+      "backgroundRatio": [0.5, 0.7]
+    },
+    "color": {
+      "colorTemperature": 5200,
+      "exposureBias": 0.1,
+      "contrast": -0.05,
+      "saturation": -0.05,
+      "grain": 0.22,
+      "vignette": 0.15,
+      "blurStrength": 0.0,
+      "fade": 0.25
+    },
+    "cropFreedom": 0.3,
+    "generativeEditPolicy": "conservative"
+  },
+  {
+    "id": "casual_portrait",
+    "name": "Casual Portrait",
+    "displayName": "캐주얼 인물",
+    "thumbnail": "presets/casual_portrait.jpg",
+    "composition": {
+      "targetAspectRatio": "4:5",
+      "subjectScaleRange": [0.4, 0.62],
+      "subjectPosition": "center",
+      "headroomRange": [0.05, 0.12],
+      "horizonPosition": 0.5,
+      "cameraPitchRange": [-4, 4],
+      "posePattern": "natural_standing",
+      "backgroundRatio": [0.35, 0.55]
+    },
+    "color": {
+      "colorTemperature": 5400,
+      "exposureBias": 0.2,
+      "contrast": 0.08,
+      "saturation": 0.03,
+      "grain": 0.05,
+      "vignette": 0.08,
+      "blurStrength": 0.1,
+      "fade": 0.05
+    },
+    "cropFreedom": 0.25,
+    "generativeEditPolicy": "allow_background"
+  },
+  {
+    "id": "night_street",
+    "name": "Night Street",
+    "displayName": "밤거리",
+    "thumbnail": "presets/night_street.jpg",
+    "composition": {
+      "targetAspectRatio": "4:5",
+      "subjectScaleRange": [0.3, 0.5],
+      "subjectPosition": "third_left",
+      "headroomRange": [0.06, 0.14],
+      "horizonPosition": 0.52,
+      "cameraPitchRange": [-6, 6],
+      "posePattern": "candid_motion",
+      "backgroundRatio": [0.5, 0.72]
+    },
+    "color": {
+      "colorTemperature": 4600,
+      "exposureBias": -0.1,
+      "contrast": 0.2,
+      "saturation": 0.1,
+      "grain": 0.18,
+      "vignette": 0.22,
+      "blurStrength": 0.0,
+      "fade": 0.08
+    },
+    "cropFreedom": 0.3,
+    "generativeEditPolicy": "conservative"
+  }
+]

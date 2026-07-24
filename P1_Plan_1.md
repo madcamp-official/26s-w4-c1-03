@@ -64,7 +64,7 @@
    └─ core/        # 공용 유틸, 상수, DeviceId
   ```
 - [x] git 저장소 초기화, `main` 직커밋 규칙, `.gitignore`(local.properties, keystore) <!-- repo·gitignore 기존 재사용. 로컬 브랜치 master↔원격 main 정리는 사용자 몫 -->
-- 완료 기준: 실기기에서 빈 Compose 화면 빌드·실행 성공 <!-- 빌드(assembleDebug) 성공 검증 완료. 실기기 실행은 사용자가 이후 테스트 예정 -->
+- 완료 기준: 실기기에서 빈 Compose 화면 빌드·실행 성공 <!-- ✅ SM-G970N(Android 12)에서 빌드·설치·실행 성공 확인 -->
 
 ### 1-1. 진행 메모
 - 스택: Gradle 8.9 · AGP 8.7.3 · Kotlin 2.0.21 · KSP 2.0.21-1.0.28 · compileSdk/targetSdk 35 · minSdk 26 · Compose BOM 2024.10.01
@@ -75,7 +75,7 @@
 - [x] `CAMERA`, `READ_MEDIA_IMAGES`(API 33+) / `READ_EXTERNAL_STORAGE`(32↓) 런타임 권한 요청 플로우 <!-- core/AppPermissions.kt: SDK 레벨 분기 -->
 - [x] 거부 시: 기능 차단 화면 + "설정 열기" 버튼(`ACTION_APPLICATION_DETAILS_SETTINGS`) <!-- ui/permission/PermissionScreen.kt BLOCKED 단계 -->
 - [x] "다시 묻지 않음" 상태 구분 처리 <!-- PermissionGate: requested + !shouldShowRationale → BLOCKED -->
-- 완료 기준: 권한을 모두 거부해도 앱이 크래시 없이 안내 화면을 보여준다 <!-- PermissionGate가 INTRO/RATIONALE/BLOCKED 안내 화면 표시. 빌드 검증 완료, 실기기 동작은 사용자 테스트 예정 -->
+- 완료 기준: 권한을 모두 거부해도 앱이 크래시 없이 안내 화면을 보여준다 <!-- ✅ 실기기에서 INTRO 안내→권한 요청→허용 진입 확인. 거부/다시묻지않음 경로는 코드 구현 완료(RATIONALE/BLOCKED), 필요 시 별도 스팟체크 -->
 
 ### 1-2. 진행 메모
 - `ui/permission/`: `PermissionGate`(게이트) · `PermissionScreen`(3단계 안내) · `rememberAppPermissionsState()`(재사용 훅 = 명세서 `usePermissions` 대응)
@@ -84,10 +84,15 @@
 
 ### 1-3. 로컬 데이터 기반
 
-- [ ] `DeviceId` — 최초 실행 시 UUID 생성, DataStore에 영구 저장
-- [ ] Room DB 스키마 생성 — **DB 스키마 v2.0 §3의 로컬 14테이블 그대로** (Entity 클래스명 = 테이블명). Day 1에는 최소 `app_settings`, `presets`, `sessions`, `captures` 4개만 실제 사용, 나머지는 Entity 정의만
-- [ ] 앱 번들에 `assets/presets.json`(6종 폴백) 포함 — B가 Day 1에 주는 파일. 서버 응답과 동일 스키마
-- 완료 기준: 앱 재시작 후 UUID 동일, presets 6종이 Room에 로드됨
+- [x] `DeviceId` — 최초 실행 시 UUID 생성, DataStore에 영구 저장 <!-- core/DeviceIdStore. getOrCreate() atomic -->
+- [x] Room DB 스키마 생성 — **DB 스키마 v2.0 §3의 로컬 14테이블 그대로** (Entity 클래스명 = 테이블명). Day 1에는 최소 `app_settings`, `presets`, `sessions`, `captures` 4개만 실제 사용, 나머지는 Entity 정의만 <!-- 14 entity 등록(클래스=테이블명 PascalCase, tableName 명시). DAO 4개만. exportSchema=false -->
+- [x] 앱 번들에 `assets/presets.json`(6종 폴백) 포함 — B가 Day 1에 주는 파일. 서버 응답과 동일 스키마 <!-- B 미전달분 임시 폴백 작성(M3-01 스키마·§10.1 배열). B 확정본 도착 시 교체 -->
+- 완료 기준: 앱 재시작 후 UUID 동일, presets 6종이 Room에 로드됨 <!-- ✅ 실기기(SM-G970N): device 1c898f22 재시작 후 동일, presets 6 로드 확인 -->
+
+### 1-3. 진행 메모
+- `core/DeviceIdStore`(DataStore) · `data/local/`(GamdoDatabase + 14 entity + Daos) · `data/preset/StylePreset`(직렬화) · `data/PresetRepository`(assets 시딩) · `data/AppContainer`(수동 DI)
+- ⚠️ `assets/presets.json`은 **B 산출물 대기 중 임시 폴백** — B 확정본 도착 시 교체(스키마 동일하므로 값만 바뀜)
+- 미완: `X-Device-Id` 헤더 전송(네트워크 연동 시), style_profile 등 정의-only 10테이블 DAO(사용일에 추가)
 
 ### 1-4. 화면 골격 (내비게이션만, 디자인 없이)
 

@@ -44,12 +44,12 @@
 ### M1-01. 프로젝트 셋업 `[P0 | A | Day 1 | 의존성 없음]`
 
 - [x] Android Studio 프로젝트 생성 — Kotlin 네이티브 + Jetpack Compose(Material 3), CameraX 기반
-- [ ] Android 실기기 빌드·실행 확인 (에뮬레이터는 카메라 검증 불가로 보조용) <!-- assembleDebug 빌드 성공. 실기기 실행은 사용자 이후 테스트 -->
+- [x] Android 실기기 빌드·실행 확인 (에뮬레이터는 카메라 검증 불가로 보조용) <!-- SM-G970N(Android 12, SDK 31)에서 설치·실행·화면 렌더 확인 -->
 - [x] 라이브러리 설치: CameraX, ML Kit, Room, Retrofit/OkHttp, kotlinx-serialization(또는 Moshi), Coil, Navigation Compose
 - [x] 폴더 구조 확정: `ui` `camera` `detect` `guide` `edit` `data` `core`
 - [ ] Kotlin 포맷·정적 분석 최소 설정, main 직커밋 규칙 합의 <!-- 정적 분석(ktlint/detekt) 미설정 -->
 
-**DoD:** Android 실기기에서 빈 화면 앱이 빌드·실행된다. <!-- 빌드 검증 완료, 실기기 실행 대기 -->
+**DoD:** Android 실기기에서 빈 화면 앱이 빌드·실행된다. <!-- ✅ SM-G970N(Android 12) 빌드·실행 확인 -->
 
 
 ### M1-02. 권한 관리 `[P0 | A | Day 1]`
@@ -58,16 +58,17 @@
 - [x] 사진 라이브러리 읽기/쓰기 권한 (Android 13+ 세분화 권한 대응) <!-- READ_MEDIA_IMAGES(33+)/READ_EXTERNAL_STORAGE(32↓). 갤러리 쓰기는 MediaStore로 무권한 처리 -->
 - [x] 권한 상태 전역 훅 제공 (`usePermissions`) <!-- Compose 대응: rememberAppPermissionsState() -->
 
-**DoD:** 권한 미허용 상태에서 앱이 죽지 않고 안내 화면을 보여준다. <!-- PermissionGate로 충족(빌드 검증). 실기기 확인은 사용자 테스트 -->
+**DoD:** 권한 미허용 상태에서 앱이 죽지 않고 안내 화면을 보여준다. <!-- ✅ 실기기에서 INTRO 안내 화면·권한 요청·허용 후 진입까지 확인 -->
 
 
 ### M1-03. 사용자 식별·설정 저장 `[P0 | A | Day 1]`
 
-- [ ] 최초 실행 시 디바이스 UUID 생성·영구 저장 (로그인 없음 — 계정 기능 영구 제외)
-- [ ] 로컬 SQLite 초기화: **로컬 DB가 원천(source of truth)** — 설정, 스타일 프로필, 프리셋, 세션·안내 기록, 촬영·편집 스택, 피드백 (DB 스키마 v2.0 §3의 14개 테이블)
-- [ ] 서버 통신 시 UUID를 헤더(`X-Device-Id`)로 전송 — 서버는 이 값을 작업 소유 표시·파일 삭제 정책에만 사용(사용자 저장 없음)
+- [x] 최초 실행 시 디바이스 UUID 생성·영구 저장 (로그인 없음 — 계정 기능 영구 제외) <!-- core/DeviceIdStore(DataStore). 실기기: 재시작 후 UUID 1c898f22 동일 확인 -->
+- [x] 로컬 SQLite 초기화: **로컬 DB가 원천(source of truth)** — 설정, 스타일 프로필, 프리셋, 세션·안내 기록, 촬영·편집 스택, 피드백 (DB 스키마 v2.0 §3의 14개 테이블) <!-- GamdoDatabase에 14 entity 전부 등록. Day1 사용 DAO 4개(app_settings/presets/sessions/captures), 나머지 정의만. presets 6종 assets 시딩 확인 -->
+- [ ] 서버 통신 시 UUID를 헤더(`X-Device-Id`)로 전송 — 서버는 이 값을 작업 소유 표시·파일 삭제 정책에만 사용(사용자 저장 없음) <!-- Retrofit 연동(1-6/이후) 시 인터셉터로 부착 예정 -->
 
-**DoD:** 앱 재시작 후에도 동일 UUID·설정이 유지된다. 서버 미접속 상태에서 프로필·프리셋 기반 기능이 전부 동작한다.
+**DoD:** 앱 재시작 후에도 동일 UUID·설정이 유지된다. 서버 미접속 상태에서 프로필·프리셋 기반 기능이 전부 동작한다. <!-- ✅ 실기기에서 재시작 UUID 동일·presets 6종 오프라인 로드 확인 -->
+
 
 ### M1-04. 감지 API 추상화 계층 `[P0 | A | Day 2]`
 
