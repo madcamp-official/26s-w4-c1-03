@@ -34,7 +34,7 @@ class FrameFeatureCalculatorTest {
         )
         val result = calculator.calculate(FrameFeatureInput(DetectionResult(emptyList(), pose)))
 
-        assertEquals(NormalizedBox(0.2f, 0.25f, 1f, 0.75f), result.personBox)
+        assertEquals(NormalizedBox(0.2f, 0f, 1f, 0.75f), result.personBox)
         assertEquals(0.8f * 0.75f, result.personAreaRatio, 0.0001f)
     }
 
@@ -99,7 +99,8 @@ class FrameFeatureCalculatorTest {
         )
 
         assertEquals(0.12f, result.headroom, 0.0001f)
-        assertEquals(SideMargins(0.1f, 0.2f), result.sideMargins)
+        assertEquals(0.1f, result.sideMargins.left, 0.0001f)
+        assertEquals(0.2f, result.sideMargins.right, 0.0001f)
     }
 
     @Test
