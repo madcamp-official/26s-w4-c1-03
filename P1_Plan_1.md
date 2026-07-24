@@ -46,13 +46,13 @@
 
 ### 1-1. 프로젝트 셋업
 
-- [ ] Android Studio 프로젝트 생성 — 패키지 `com.gamdo.app`, minSdk 26, targetSdk 최신, Kotlin + Compose(Material 3)
-- [ ] 의존성 추가(버전 카탈로그 `libs.versions.toml`로 관리):
-  - [ ] CameraX: `camera-core`, `camera-camera2`, `camera-lifecycle`, `camera-view` (Preview·ImageAnalysis·ImageCapture)
-  - [ ] ML Kit: `face-detection`, `pose-detection`(+`pose-detection-accurate`는 성능 보고 결정)
-  - [ ] Room(runtime·ktx·compiler/KSP), Retrofit + OkHttp + kotlinx-serialization(또는 Moshi), Coil(이미지 로딩)
-  - [ ] Navigation Compose, Accompanist Permissions(또는 직접 구현)
-- [ ] 모듈/패키지 구조 생성 — **이 구조를 임의 변경하지 않는다:**
+- [x] Android Studio 프로젝트 생성 — 패키지 `com.gamdo.app`, minSdk 26, targetSdk 최신, Kotlin + Compose(Material 3) <!-- targetSdk 35(AGP 8.7.3 무경고 지원). 36 원하면 AGP 8.9+로 상향 -->
+- [x] 의존성 추가(버전 카탈로그 `libs.versions.toml`로 관리):
+  - [x] CameraX: `camera-core`, `camera-camera2`, `camera-lifecycle`, `camera-view` (Preview·ImageAnalysis·ImageCapture)
+  - [x] ML Kit: `face-detection`, `pose-detection`(+`pose-detection-accurate`는 성능 보고 결정 — 정의만 해둠)
+  - [x] Room(runtime·ktx·compiler/KSP), Retrofit + OkHttp + kotlinx-serialization(또는 Moshi), Coil(이미지 로딩)
+  - [x] Navigation Compose, Accompanist Permissions(또는 직접 구현)
+- [x] 모듈/패키지 구조 생성 — **이 구조를 임의 변경하지 않는다:**
   ```text
   com.gamdo.app
    ├─ ui/          # Compose 화면 (onboarding, home, camera, result, style, mystyle)
@@ -63,15 +63,24 @@
    ├─ data/        # Room DB, Repository, Retrofit API
    └─ core/        # 공용 유틸, 상수, DeviceId
   ```
-- [ ] git 저장소 초기화, `main` 직커밋 규칙, `.gitignore`(local.properties, keystore)
-- 완료 기준: 실기기에서 빈 Compose 화면 빌드·실행 성공
+- [x] git 저장소 초기화, `main` 직커밋 규칙, `.gitignore`(local.properties, keystore) <!-- repo·gitignore 기존 재사용. 로컬 브랜치 master↔원격 main 정리는 사용자 몫 -->
+- 완료 기준: 실기기에서 빈 Compose 화면 빌드·실행 성공 <!-- 빌드(assembleDebug) 성공 검증 완료. 실기기 실행은 사용자가 이후 테스트 예정 -->
+
+### 1-1. 진행 메모
+- 스택: Gradle 8.9 · AGP 8.7.3 · Kotlin 2.0.21 · KSP 2.0.21-1.0.28 · compileSdk/targetSdk 35 · minSdk 26 · Compose BOM 2024.10.01
+- `./gradlew` 사용 시 `JAVA_HOME`을 Android Studio JBR(JDK 17)로 지정 (PATH 기본 java는 19). SDK: `C:\android-sdk`
 
 ### 1-2. 권한 처리
 
-- [ ] `CAMERA`, `READ_MEDIA_IMAGES`(API 33+) / `READ_EXTERNAL_STORAGE`(32↓) 런타임 권한 요청 플로우
-- [ ] 거부 시: 기능 차단 화면 + "설정 열기" 버튼(`ACTION_APPLICATION_DETAILS_SETTINGS`)
-- [ ] "다시 묻지 않음" 상태 구분 처리
-- 완료 기준: 권한을 모두 거부해도 앱이 크래시 없이 안내 화면을 보여준다
+- [x] `CAMERA`, `READ_MEDIA_IMAGES`(API 33+) / `READ_EXTERNAL_STORAGE`(32↓) 런타임 권한 요청 플로우 <!-- core/AppPermissions.kt: SDK 레벨 분기 -->
+- [x] 거부 시: 기능 차단 화면 + "설정 열기" 버튼(`ACTION_APPLICATION_DETAILS_SETTINGS`) <!-- ui/permission/PermissionScreen.kt BLOCKED 단계 -->
+- [x] "다시 묻지 않음" 상태 구분 처리 <!-- PermissionGate: requested + !shouldShowRationale → BLOCKED -->
+- 완료 기준: 권한을 모두 거부해도 앱이 크래시 없이 안내 화면을 보여준다 <!-- PermissionGate가 INTRO/RATIONALE/BLOCKED 안내 화면 표시. 빌드 검증 완료, 실기기 동작은 사용자 테스트 예정 -->
+
+### 1-2. 진행 메모
+- `ui/permission/`: `PermissionGate`(게이트) · `PermissionScreen`(3단계 안내) · `rememberAppPermissionsState()`(재사용 훅 = 명세서 `usePermissions` 대응)
+- AndroidManifest에 CAMERA / READ_MEDIA_IMAGES / READ_EXTERNAL_STORAGE(maxSdk 32) / INTERNET 선언
+- 미완: Kotlin 포맷·정적 분석(ktlint/detekt) 최소 설정 (명세서 M1-01) — 별도 진행 필요
 
 ### 1-3. 로컬 데이터 기반
 

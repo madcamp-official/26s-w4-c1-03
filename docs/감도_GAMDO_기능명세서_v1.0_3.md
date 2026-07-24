@@ -43,21 +43,23 @@
 
 ### M1-01. 프로젝트 셋업 `[P0 | A | Day 1 | 의존성 없음]`
 
-- [ ] Android Studio 프로젝트 생성 — Kotlin 네이티브 + Jetpack Compose(Material 3), CameraX 기반
-- [ ] Android 실기기 빌드·실행 확인 (에뮬레이터는 카메라 검증 불가로 보조용)
-- [ ] 라이브러리 설치: CameraX, ML Kit, Room, Retrofit/OkHttp, kotlinx-serialization(또는 Moshi), Coil, Navigation Compose
-- [ ] 폴더 구조 확정: `ui` `camera` `detect` `guide` `edit` `data` `core`
-- [ ] Kotlin 포맷·정적 분석 최소 설정, main 직커밋 규칙 합의
+- [x] Android Studio 프로젝트 생성 — Kotlin 네이티브 + Jetpack Compose(Material 3), CameraX 기반
+- [ ] Android 실기기 빌드·실행 확인 (에뮬레이터는 카메라 검증 불가로 보조용) <!-- assembleDebug 빌드 성공. 실기기 실행은 사용자 이후 테스트 -->
+- [x] 라이브러리 설치: CameraX, ML Kit, Room, Retrofit/OkHttp, kotlinx-serialization(또는 Moshi), Coil, Navigation Compose
+- [x] 폴더 구조 확정: `ui` `camera` `detect` `guide` `edit` `data` `core`
+- [ ] Kotlin 포맷·정적 분석 최소 설정, main 직커밋 규칙 합의 <!-- 정적 분석(ktlint/detekt) 미설정 -->
 
-**DoD:** Android 실기기에서 빈 화면 앱이 빌드·실행된다.
+**DoD:** Android 실기기에서 빈 화면 앱이 빌드·실행된다. <!-- 빌드 검증 완료, 실기기 실행 대기 -->
+
 
 ### M1-02. 권한 관리 `[P0 | A | Day 1]`
 
-- [ ] 카메라 권한 요청 및 거부 시 안내 화면(설정 이동 버튼)
-- [ ] 사진 라이브러리 읽기/쓰기 권한 (Android 13+ 세분화 권한 대응)
-- [ ] 권한 상태 전역 훅 제공 (`usePermissions`)
+- [x] 카메라 권한 요청 및 거부 시 안내 화면(설정 이동 버튼)
+- [x] 사진 라이브러리 읽기/쓰기 권한 (Android 13+ 세분화 권한 대응) <!-- READ_MEDIA_IMAGES(33+)/READ_EXTERNAL_STORAGE(32↓). 갤러리 쓰기는 MediaStore로 무권한 처리 -->
+- [x] 권한 상태 전역 훅 제공 (`usePermissions`) <!-- Compose 대응: rememberAppPermissionsState() -->
 
-**DoD:** 권한 미허용 상태에서 앱이 죽지 않고 안내 화면을 보여준다.
+**DoD:** 권한 미허용 상태에서 앱이 죽지 않고 안내 화면을 보여준다. <!-- PermissionGate로 충족(빌드 검증). 실기기 확인은 사용자 테스트 -->
+
 
 ### M1-03. 사용자 식별·설정 저장 `[P0 | A | Day 1]`
 
