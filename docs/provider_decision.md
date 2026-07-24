@@ -17,6 +17,7 @@
 - 5-case GPU smoke benchmark: 각 입력에서 seed 0·1 후보 2개 생성 성공
 - 실제 사진 샘플 5종(astronaut/coffee/chelsea/rocket/motorcycle)으로 10개 결과 생성 성공, 전부 원본 해상도 유지 및 파일 무결성 확인. 마스크가 품질 평가용으로 큐레이션된 세트는 아니므로 정식 4/5 육안 판정은 보류.
 - CAMP-2 내부 FastAPI + worker E2E: `queued → processing → validating → done`, InsightFace `validation=passed` 후보 2개(seed 0·1) 반환.
+- 연속 부하 10건: 10/10 `done`, 10/10 `validation=passed`, 개별 1.70~2.22초, 총 18.09초.
 - InsightFace `buffalo_l`: CUDAExecutionProvider 로드 성공
 - 임계값 sanity check: 동일 이미지 cosine 1.0000, 밝기 변경 cosine 0.9993, 얼굴 미검출 케이스 거부. 초기 threshold `0.35` 통과 확인(실제 인물 5장 formal calibration은 별도).
 

@@ -90,7 +90,7 @@
 - **P2 로컬 데이터·운영:** 6종 `presets.json`과 v1 카드 메타 16장(`cards.json`)은 검증 스크립트를 통과했다. 레퍼런스 합성 10장 분석은 최대 약 136ms였고, `job_stats.py`·`local_metrics.py`가 서버 job 및 앱 로컬 KPI 집계 경로를 제공한다. Android JVM 테스트와 서버 테스트 19개는 통과했다. CAMP-2의 ComfyUI LaMa smoke 및 SSH 터널 provider E2E도 통과했다.
 - **앱 통합 상태:** 앱은 `app/src/main/assets/presets.json`의 6종 번들 폴백으로 오프라인 동작한다. `ProfileEngine`·`cards.json`의 온보딩 UI/Room 연결과 실제 카드 이미지 제공은 담당 A 통합·콘텐츠 작업 대기다. 착수·전달 순서는 `P2_Plan_1.md` §0.5를 따른다.
 
-미해결/대기: 연결된 실기기가 없어 오버레이 시각 검증·앱↔Room 기록 확인 미실행, 실제 인물 사진 5장 품질 평가·InsightFace 임계 캘리브레이션, 자동 행인 마스크·FLUX.1 Fill, 실제 카드 이미지 라이선스 확인과 테스트 사진 세트가 필요하다. CAMP-2 내부 FastAPI↔worker↔ComfyUI↔InsightFace E2E와 공급자 미준비·검증 실패 fallback은 확인 완료. (프리셋 종수는 6종 확정 — D6)
+미해결/대기: 연결된 실기기가 없어 오버레이 시각 검증·앱↔Room 기록 확인 미실행, 큐레이션 사진의 정식 품질 판정·InsightFace 임계 캘리브레이션, 자동 행인 마스크·FLUX.1 Fill, 실제 카드 이미지 라이선스 확인과 테스트 사진 세트가 필요하다. CAMP-2 내부 FastAPI↔worker↔ComfyUI↔InsightFace E2E와 10건 연속 부하(10/10 passed), 공급자 미준비·검증 실패 fallback은 확인 완료. (프리셋 종수는 6종 확정 — D6)
 
 **빌드 방법:** `JAVA_HOME`을 Android Studio JBR(JDK 17)로 지정 후 `./gradlew :app:assembleDebug`. SDK는 `C:\android-sdk`. (환경 상세는 세션 메모리 참조)
 
