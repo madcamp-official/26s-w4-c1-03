@@ -14,7 +14,7 @@
 |---|---|
 | 플랫폼 | **Android 단일, Kotlin 네이티브 + Jetpack Compose** (React Native 안 씀. iOS 없음) |
 | 화면 구조 | **간결화(t2) 채택** (2026-07-24, AGENTS.md D11): 무드/홈 화면·4탭 하단바 없음. **카메라가 홈**, 앨범은 카메라에서 진입, 편집은 앨범에서. 단일 강조색 **세이지**(#A3BFA0) |
-| 스타일 | **시스템 프리셋 6종**: Clean Social, Candid Feed, Bright Review, Soft Film, Casual Portrait, Night Street. ~~무드 화면의 개인화 추천은 상위 3종만 노출~~ <!-- t2: 무드 화면 제거(D11). 프리셋 종수 3(D6) vs 6은 오너 확정 대기 --> |
+| 스타일 | **시스템 프리셋 6종**: Clean Social, Candid Feed, Bright Review, Soft Film, Casual Portrait, Night Street (6종 확정 — AGENTS.md D6). ~~무드 화면의 개인화 추천은 상위 3종만 노출~~ <!-- t2: 무드 화면 제거(D11) --> |
 | 촬영 대상 | **1인 인물 우선** (2인 이상은 범위 밖) |
 | 화면 비율 | **4:5, 1:1 두 가지만** |
 | 계정 | **로그인 없음.** 디바이스 UUID만 사용 |
@@ -151,10 +151,16 @@
 
 ### 2-2. ML Kit 감지 래퍼 (B의 스펙에 맞춰 구현)
 
-- [ ] `FaceDetectorWrapper`: 얼굴 박스, 눈 감김 확률(classification 모드), 정규화 좌표(0~1) 반환
-- [ ] `PoseDetectorWrapper`: 스트리밍 모드 33 랜드마크, 신뢰도 포함
-- [ ] 인터페이스 뒤에 배치(`interface FaceDetector` 등) — mock 교체 가능하게
-- 완료 기준: 단위 테스트에서 mock 교체 동작, 실기기에서 얼굴·포즈 값 로그 출력
+- [x] `FaceDetectorWrapper`: 얼굴 박스, 눈 감김 확률(classification 모드), 정규화 좌표(0~1) 반환 <!-- detect/MlKitFaceDetector: PERFORMANCE_FAST + CLASSIFICATION_ALL, NormalizedBox(0~1)·eyeOpenProb·rollZ -->
+- [x] `PoseDetectorWrapper`: 스트리밍 모드 33 랜드마크, 신뢰도 포함 <!-- detect/MlKitPoseDetector: STREAM_MODE, PoseLandmarkPoint(정규좌표+inFrameLikelihood) -->
+- [x] 인터페이스 뒤에 배치(`interface FaceDetector` 등) — mock 교체 가능하게 <!-- detect/Detectors: FaceDetector·PoseDetector 인터페이스 + SceneDetector. AnalysisFrame.image=Any?로 ML Kit 비의존 -->
+- 완료 기준: 단위 테스트에서 mock 교체 동작, 실기기에서 얼굴·포즈 값 로그 출력 <!-- ✅ 단위테스트 SceneDetectorTest 통과(JVM, mock 교체). 실기기: 온디바이스 감지 동작(처리 112ms=실 ML Kit face+pose), 매 프레임 값 로그. 얼굴 값(box/eye/roll)은 인물 프레임 시 출력 — 무피사체 시 faces=0 -->
+
+### 2-2. 진행 메모
+- `detect/`: Detections(도메인 모델·AnalysisFrame·toAnalysisFrame) · Detectors(인터페이스+SceneDetector) · MlKitDetectors(Face/Pose 구현). test/SceneDetectorTest(mock 교체)
+- onFrame에서 SceneDetector 실행 → HUD "얼굴 N · 포즈 M" + logcat 값. 처리시간 28.9ms(2-1 변환)→**112ms(실 감지)**, drop 0%(감지가 12fps 스로틀보다 무거워 버림 불필요)
+- 미구현/후속: 눈·코·입 세부 랜드마크(landmarkMode), personBox·파생값(어깨기울기 등)·주피사체 선정은 **2-4 FrameFeatures(B 모듈)**, SegmentationProvider(MediaPipe)는 **M5-04(P1)**
+- 참고: 기기에서 ML Kit/TFLite `_mini_benchmark` 가속 벤치마크가 별도 프로세스에서 SIGABRT — 앱 본체엔 영향 없음(CPU 폴백, 감지 정상)
 
 ### 2-3. 센서 파이프라인
 

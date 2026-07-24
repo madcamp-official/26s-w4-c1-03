@@ -72,12 +72,12 @@
 
 ### M1-04. 감지 API 추상화 계층 `[P0 | A | Day 2]`
 
-- [ ] 인터페이스 정의: `FaceDetector`, `PoseDetector`, `SegmentationProvider` (구현체 교체 가능하게)
-- [ ] 1차 구현체: ML Kit(얼굴·포즈), MediaPipe(분할)
-- [ ] 반환 타입 공통화: 정규화 좌표(0~1), 신뢰도 포함
-- [ ] 어댑터는 얇게 유지 — 추상화 작업에 반나절 이상 쓰지 않는다
+- [x] 인터페이스 정의: `FaceDetector`, `PoseDetector`, `SegmentationProvider` (구현체 교체 가능하게) <!-- FaceDetector·PoseDetector 완료(detect/Detectors). SegmentationProvider는 M5-04(P1) 후속 -->
+- [x] 1차 구현체: ML Kit(얼굴·포즈), MediaPipe(분할) <!-- ML Kit 얼굴·포즈 완료(MlKitDetectors). MediaPipe 분할은 M5-04(P1) -->
+- [x] 반환 타입 공통화: 정규화 좌표(0~1), 신뢰도 포함 <!-- NormalizedBox·PoseLandmarkPoint(0~1), inFrameLikelihood -->
+- [x] 어댑터는 얇게 유지 — 추상화 작업에 반나절 이상 쓰지 않는다
 
-**DoD:** 호출부 코드 수정 없이 구현체를 mock으로 교체해 테스트할 수 있다.
+**DoD:** 호출부 코드 수정 없이 구현체를 mock으로 교체해 테스트할 수 있다. <!-- ✅ SceneDetectorTest(JVM): fake FaceDetector/PoseDetector 주입 통과 -->
 
 ---
 
@@ -223,15 +223,15 @@
 
 ### M5-01. 얼굴·인물 감지 `[P0 | A | Day 2 | 의존: M1-04, M4-03]`
 
-- [ ] 얼굴 바운딩 박스·랜드마크(눈·코·입), 눈 감김 확률, 얼굴 수
-- [ ] 인물 바운딩 박스(포즈 랜드마크로부터 산출), 인물 수
-- [ ] 다중 인물 시 주 피사체 선정 규칙: 최대 크기 + 중앙 근접 가중
+- [x] 얼굴 바운딩 박스·~~랜드마크(눈·코·입)~~, 눈 감김 확률, 얼굴 수 <!-- 박스(정규)·눈감김·수 O(MlKitFaceDetector). 눈코입 랜드마크는 landmarkMode 추가 필요 -->
+- [ ] 인물 바운딩 박스(포즈 랜드마크로부터 산출), 인물 수 <!-- 포즈 33랜드마크는 확보. personBox 산출은 2-4 FrameFeatures(B) -->
+- [ ] 다중 인물 시 주 피사체 선정 규칙: 최대 크기 + 중앙 근접 가중 <!-- 1인 우선(D9), 후속 -->
 
 ### M5-02. 포즈 추정 `[P0 | A | Day 2]`
 
-- [ ] ML Kit 포즈 33 랜드마크, 스트리밍 모드(연속 프레임 추적)
-- [ ] 파생값: 어깨 기울기, 얼굴 방향(요/피치 근사), 팔·손 위치, 다리 간격, 무게 중심
-- [ ] 전신/상반신/얼굴 중심 분류(랜드마크 가시성 기반)
+- [x] ML Kit 포즈 33 랜드마크, 스트리밍 모드(연속 프레임 추적) <!-- MlKitPoseDetector STREAM_MODE, 정규좌표+inFrameLikelihood -->
+- [ ] 파생값: 어깨 기울기, 얼굴 방향(요/피치 근사), 팔·손 위치, 다리 간격, 무게 중심 <!-- 2-4 FrameFeatures(B 모듈)에서 산출 -->
+- [ ] 전신/상반신/얼굴 중심 분류(랜드마크 가시성 기반) <!-- 2-4 FrameFeatures 후속 -->
 
 ### M5-03. 장면 특징 추출 `[P0 | A | Day 2]`
 

@@ -46,8 +46,11 @@ import com.gamdo.app.camera.AnalysisStats
 import com.gamdo.app.camera.CameraController
 import com.gamdo.app.camera.FrameAnalyzer
 import com.gamdo.app.camera.centerCropToRatio
-import com.gamdo.app.camera.toAnalysisBitmap
 import com.gamdo.app.data.AppContainer
+import com.gamdo.app.detect.MlKitFaceDetector
+import com.gamdo.app.detect.MlKitPoseDetector
+import com.gamdo.app.detect.SceneDetector
+import com.gamdo.app.detect.toAnalysisFrame
 import com.gamdo.app.ui.components.moodBrush
 import com.gamdo.app.ui.theme.Charcoal950
 import com.gamdo.app.ui.theme.OnDarkHigh
@@ -83,8 +86,11 @@ fun CameraScreen(
 
     val controller = remember { CameraController(context) }
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
+    val scene = remember { SceneDetector(MlKitFaceDetector(), MlKitPoseDetector()) }
     val statsFlow = remember { MutableStateFlow<AnalysisStats?>(null) }
+    val detectionFlow = remember { MutableStateFlow("") }
     val stats by statsFlow.collectAsState()
+    val detection by detectionFlow.collectAsState()
 
     var aspect by rememberSaveable { mutableStateOf(CaptureAspect.RATIO_4_5) }
     var isFront by remember { mutableStateOf(false) }
@@ -92,20 +98,43 @@ fun CameraScreen(
     var lastThumb by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
 
     DisposableEffect(controller) {
-        // Attach the analysis pipeline (§2-1). onFrame does the YUV→Bitmap
-        // conversion so the HUD timing reflects real per-frame cost; detectors
-        // replace this body in §2-2.
+        // Attach the analysis pipeline (§2-1) running ML Kit face + pose (§2-2).
+        // FrameAnalyzer times onFrame, so the HUD reflects real detection cost.
         controller.setAnalyzer(
             analysisExecutor,
             FrameAnalyzer(
                 targetFps = 12,
                 onStats = { statsFlow.value = it },
-                onFrame = { it.toAnalysisBitmap() },
+                onFrame = { imageProxy ->
+                    imageProxy.toAnalysisFrame()?.let { frame ->
+                        val result = scene.detect(frame)
+                        val faceN = result.faces.size
+                        val poseN = result.pose?.landmarks?.size ?: 0
+                        detectionFlow.value = "얼굴 $faceN · 포즈 $poseN"
+                        val f = result.faces.firstOrNull()
+                        Log.d(
+                            TAG,
+                            "faces=$faceN pose=$poseN " +
+                                "poseConf=%.2f ".format(result.pose?.averageInFrameLikelihood ?: 0f) +
+                                if (f != null) {
+                                    "face0 box=(%.2f,%.2f,%.2f,%.2f) eyeL=%s eyeR=%s rollZ=%.1f".format(
+                                        f.box.left, f.box.top, f.box.right, f.box.bottom,
+                                        f.leftEyeOpenProbability?.let { "%.2f".format(it) } ?: "?",
+                                        f.rightEyeOpenProbability?.let { "%.2f".format(it) } ?: "?",
+                                        f.headEulerAngleZ,
+                                    )
+                                } else {
+                                    "no-face"
+                                },
+                        )
+                    }
+                },
             ),
         )
         onDispose {
             controller.clearAnalyzer()
             controller.unbind()
+            scene.close()
             analysisExecutor.shutdown()
         }
     }
@@ -194,8 +223,12 @@ fun CameraScreen(
                 Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
             }
 
-            stats?.let { s ->
-                DebugHud(stats = s, modifier = Modifier.align(Alignment.TopStart).padding(10.dp))
+            Column(
+                modifier = Modifier.align(Alignment.TopStart).padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                stats?.let { DebugHud(stats = it) }
+                if (detection.isNotEmpty()) DetectionBadge(detection)
             }
         }
 
@@ -306,6 +339,18 @@ private fun DebugHud(stats: AnalysisStats, modifier: Modifier = Modifier) {
             fontSize = 10.sp,
             fontWeight = FontWeight.Medium,
         )
+    }
+}
+
+@Composable
+private fun DetectionBadge(text: String) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color(0x99000000))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        Text(text = text, color = Sage, fontSize = 10.sp, fontWeight = FontWeight.Medium)
     }
 }
 
