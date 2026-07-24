@@ -11,4 +11,3 @@ def require_device_id(x_device_id: str | None = Header(default=None, alias="X-De
             "retryable": False,
         })
     return x_device_id
-

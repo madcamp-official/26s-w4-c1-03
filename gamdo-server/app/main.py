@@ -50,4 +50,3 @@ def health() -> dict[str, str]:
 app.include_router(presets.router, prefix="/api/v1", tags=["presets"])
 app.include_router(references.router, prefix="/api/v1", tags=["references"])
 app.include_router(edit_jobs.router, prefix="/api/v1", tags=["edit-jobs"])
-
