@@ -45,6 +45,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.gamdo.app.camera.AnalysisStats
 import com.gamdo.app.camera.CameraController
 import com.gamdo.app.camera.FrameAnalyzer
+import com.gamdo.app.camera.ShakeMeter
+import com.gamdo.app.camera.TiltSensor
 import com.gamdo.app.camera.centerCropToRatio
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.detect.MlKitFaceDetector
@@ -58,6 +60,7 @@ import com.gamdo.app.ui.theme.OnDarkMedium
 import com.gamdo.app.ui.theme.OnDarkMuted
 import com.gamdo.app.ui.theme.Sage
 import java.util.concurrent.Executors
+import kotlin.math.abs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
@@ -87,10 +90,23 @@ fun CameraScreen(
     val controller = remember { CameraController(context) }
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
     val scene = remember { SceneDetector(MlKitFaceDetector(), MlKitPoseDetector()) }
+    val tiltSensor = remember { TiltSensor(context) }
+    val shakeMeter = remember { ShakeMeter(context) }
     val statsFlow = remember { MutableStateFlow<AnalysisStats?>(null) }
     val detectionFlow = remember { MutableStateFlow("") }
     val stats by statsFlow.collectAsState()
     val detection by detectionFlow.collectAsState()
+    val tilt by tiltSensor.reading.collectAsState()
+    val shake by shakeMeter.shake.collectAsState()
+
+    DisposableEffect(Unit) {
+        tiltSensor.start()
+        shakeMeter.start()
+        onDispose {
+            tiltSensor.stop()
+            shakeMeter.stop()
+        }
+    }
 
     var aspect by rememberSaveable { mutableStateOf(CaptureAspect.RATIO_4_5) }
     var isFront by remember { mutableStateOf(false) }
@@ -229,6 +245,7 @@ fun CameraScreen(
             ) {
                 stats?.let { DebugHud(stats = it) }
                 if (detection.isNotEmpty()) DetectionBadge(detection)
+                TiltBadge(rollDeg = tilt.rollDeg, pitchDeg = tilt.pitchDeg, shake = shake)
             }
         }
 
@@ -336,6 +353,24 @@ private fun DebugHud(stats: AnalysisStats, modifier: Modifier = Modifier) {
         Text(
             text = "%.1fms · %dfps · drop %d%%".format(stats.processMs, stats.fps, stats.dropRatePercent),
             color = GuideLime,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+@Composable
+private fun TiltBadge(rollDeg: Float, pitchDeg: Float, shake: Float) {
+    val level = abs(rollDeg) <= 1f
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color(0x99000000))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        Text(
+            text = "수평 %.1f° · 기울기 %.1f° · 흔들림 %.3f".format(rollDeg, pitchDeg, shake),
+            color = if (level) Sage else OnDarkMedium,
             fontSize = 10.sp,
             fontWeight = FontWeight.Medium,
         )

@@ -164,9 +164,14 @@
 
 ### 2-3. 센서 파이프라인
 
-- [ ] `TiltSensor`: ROTATION_VECTOR 기반 roll/pitch, 저역통과 필터(α=0.2로 시작), 10Hz+
-- [ ] `ShakeMeter`: 최근 0.5초 각속도 분산 → 흔들림 수치
-- 완료 기준: 기기를 기울이면 HUD의 수평값이 ±0.5° 안정성으로 따라온다
+- [x] `TiltSensor`: ROTATION_VECTOR 기반 roll/pitch, 저역통과 필터(α=0.2로 시작), 10Hz+ <!-- camera/TiltSensor, SENSOR_DELAY_GAME, StateFlow<TiltReading> -->
+- [x] `ShakeMeter`: 최근 0.5초 각속도 분산 → 흔들림 수치 <!-- camera/ShakeMeter, 자이로 각속도 크기 0.5초 윈도 분산 -->
+- 완료 기준: 기기를 기울이면 HUD의 수평값이 ±0.5° 안정성으로 따라온다 <!-- ✅ 실기기 HUD "수평 -1.3°" 실제 방향 반영, 정지 2초간 불변(±0.5° 이내). 수평 도달(|roll|≤1°) 시 세이지 색전환 -->
+
+### 2-3. 진행 메모
+- `camera/TiltSensor`·`camera/ShakeMeter`(SensorManager, StateFlow). CameraScreen에서 start/stop + HUD 3번째 줄 "수평 · 기울기 · 흔들림"
+- roll 값은 Day 3 수평선 오버레이/AlignmentEngine 입력으로 재사용 예정
+- 참고: roll ±180° 경계 랩어라운드는 미보정(대략 수직 파지 기준 정상). 필요 시 Day3에서 언랩 처리
 
 ### 2-4. FrameFeatures 계산 (B가 Day 2에 주는 순수 Kotlin 모듈 `detect/FrameFeatureCalculator.kt` 통합)
 
