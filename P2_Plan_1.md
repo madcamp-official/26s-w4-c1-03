@@ -189,15 +189,15 @@
 
 ### 4-2. 객체 제거 파이프라인 (생성 기능 1순위 — 실구현)
 
-- [ ] ComfyUI 워크플로 JSON 템플릿: LaMa 객체 제거(마스크 입력), 파라미터 주입 함수
+- [x] ComfyUI 워크플로 JSON 템플릿: LaMa 객체 제거(마스크 입력), 파라미터 주입 함수 — `gamdo-server/workflows/lama_remove_objects_api.json`, seed별 후보 큐잉
 - [ ] **자동 마스크 생성**: 서버 측 인물 감지(MediaPipe)로 "주 피사체가 아닌 사람" 후보 마스크 산출 + 클라이언트 수동 마스크 병합 지원
 - [ ] 큰 영역(프레임의 15% 초과) 제거 시 FLUX.1 Fill로 승격하는 분기
-- [ ] 워커에 연결: `remove_objects` operation 처리 → 결과 후보 2개(시드 2개) 생성
+- [x] 워커에 연결: `remove_objects` operation 처리 → 결과 후보 2개(시드 2개) 생성 — SSH 터널 경유 CAMP-2 ComfyUI E2E 확인
 - 완료 기준: 행인 있는 테스트 사진 5장 중 4장 이상에서 육안 합격 결과
 
 ### 4-3. 결과 검증기
 
-- [ ] InsightFace 임베딩: 편집 전후 주 피사체 얼굴 거리 계산, **임계 초과 시 해당 후보 폐기**(임계 초기값은 동일인 테스트 셋으로 캘리브레이션 — 오전 30분)
+- [x] InsightFace 임베딩: 편집 전후 주 피사체 얼굴 거리 계산, **임계 초과 시 해당 후보 폐기** — `InsightFaceVerifier` 구현 및 CAMP-2 `buffalo_l` CUDA provider 로드 확인. 동일인 테스트 셋 캘리브레이션은 대기
 - [ ] 얼굴 보호 마스크: 편집 마스크와 얼굴 박스 교차 시 얼굴 영역 제외(팽창 마진 10%)
 - [ ] 휴리스틱 검사: 결과 인물 수 ≠ 기대 인물 수 → 폐기, 극단 색상 변화(히스토그램 거리) → 폐기
 - [x] 전 후보 폐기·공급자 미준비 시: `status='fallback'` + failReason 기록 (앱은 기본 보정 유지 — A와 계약된 동작)
@@ -226,7 +226,7 @@
 
 ### 5-2. /edit-jobs 실서비스 전환
 
-- [ ] Day 1의 fallback 상태 스텁을 실제 파이프라인으로 교체하고, 실제 생성 결과가 있을 때만 `done`으로 전이
+- [ ] Day 1의 fallback 상태 스텁을 실제 파이프라인으로 교체하고, 실제 생성 결과가 있을 때만 `done`으로 전이 — provider/워크플로 연결 완료, FastAPI 프로세스↔CAMP-2 네트워크 연결은 대기
 - [x] 진행 상태 세분화: `progress_stage` 갱신(removing→validating), 폴링 응답에 포함
 - [ ] (여력 시) 여백 확장 operation: FLUX.1 Fill 아웃페인팅 — 상한 원본의 30%, 방향별(top/left/right)
 - [x] 동시 요청 방어: 디바이스당 진행 중 job 1개 제한(초과 시 409)

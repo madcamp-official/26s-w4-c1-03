@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+from PIL import Image, ImageDraw
 
 from .generative import GeneratedCandidate, GenerativeEditProvider, ProviderNotReady
 
@@ -38,19 +41,36 @@ class ComfyUiProvider(GenerativeEditProvider):
         if not self.base_url or self.workflow_path is None or not self.workflow_path.exists():
             raise ProviderNotReady("ComfyUI URL or workflow is not configured")
         workflow = json.loads(self.workflow_path.read_text(encoding="utf-8"))
-        input_name = self._upload_image(image_path)
-        workflow = _inject_workflow_inputs(workflow, input_name, operations, result_count)
-        prompt = self._request_json("/prompt", {"prompt": workflow})
-        prompt_id = prompt.get("prompt_id")
-        if not prompt_id:
-            raise ProviderNotReady("ComfyUI did not return a prompt id")
+        temporary_upload: Path | None = None
+        try:
+            upload_path = image_path
+            if _has_masks(operations):
+                temporary_upload = _masked_upload_path(image_path, operations)
+                upload_path = temporary_upload
+            input_name = self._upload_image(upload_path)
+            candidates: list[GeneratedCandidate] = []
+            for seed in range(max(1, result_count)):
+                seeded = _inject_workflow_inputs(workflow, input_name, operations, 1, seed)
+                prompt = self._request_json("/prompt", {"prompt": seeded})
+                prompt_id = prompt.get("prompt_id")
+                if not prompt_id:
+                    raise ProviderNotReady("ComfyUI did not return a prompt id")
+                item = self._wait_for_history(str(prompt_id))
+                candidates.extend(self._download_outputs(item["outputs"], str(prompt_id), 1, seed))
+            return candidates
+        finally:
+            if temporary_upload is not None:
+                temporary_upload.unlink(missing_ok=True)
 
+    def _wait_for_history(self, prompt_id: str) -> dict[str, Any]:
         deadline = time.monotonic() + self.timeout_seconds
         while time.monotonic() < deadline:
             history = self._request_json(f"/history/{urllib.parse.quote(prompt_id)}")
             item = history.get(prompt_id)
+            if item and item.get("status", {}).get("status_str") == "error":
+                raise ProviderNotReady("ComfyUI workflow failed")
             if item and item.get("outputs"):
-                return self._download_outputs(item["outputs"], prompt_id, result_count)
+                return item
             time.sleep(0.5)
         raise TimeoutError("ComfyUI job timed out")
 
@@ -98,6 +118,7 @@ class ComfyUiProvider(GenerativeEditProvider):
         outputs: dict[str, Any],
         prompt_id: str,
         result_count: int,
+        seed: int = 0,
     ) -> list[GeneratedCandidate]:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         candidates: list[GeneratedCandidate] = []
@@ -117,7 +138,7 @@ class ComfyUiProvider(GenerativeEditProvider):
                         path.write_bytes(response.read())
                 except OSError as exc:
                     raise ProviderNotReady("ComfyUI output download failed") from exc
-                candidates.append(GeneratedCandidate(path=path, seed=index, operation="remove_objects"))
+                candidates.append(GeneratedCandidate(path=path, seed=seed + index, operation="remove_objects"))
         return candidates
 
 
@@ -126,6 +147,7 @@ def _inject_workflow_inputs(
     input_name: str,
     operations: list[dict[str, Any]],
     result_count: int,
+    seed: int = 0,
 ) -> dict[str, Any]:
     """Inject only deployment-defined placeholders; arbitrary workflow nodes stay intact."""
     def replace(value: Any) -> Any:
@@ -137,12 +159,61 @@ def _inject_workflow_inputs(
             return input_name
         if value == "${RESULT_COUNT}":
             return result_count
+        if value == "${SEED}":
+            return seed
         if value == "${OPERATIONS_JSON}":
             return operations
         if isinstance(value, str):
             return value.replace("${INPUT_IMAGE}", input_name).replace(
                 "${RESULT_COUNT}", str(result_count)
-            )
+            ).replace("${SEED}", str(seed))
         return value
 
     return replace(workflow)
+
+
+def _has_masks(operations: list[dict[str, Any]]) -> bool:
+    return any(operation.get("masks") for operation in operations if isinstance(operation, dict))
+
+
+def _masked_upload_path(image_path: Path, operations: list[dict[str, Any]]) -> Path:
+    """Create a transient RGBA upload; the alpha channel is consumed as a mask by ComfyUI."""
+    with Image.open(image_path) as source:
+        image = source.convert("RGBA")
+    mask = Image.new("L", image.size, 0)
+    drawer = ImageDraw.Draw(mask)
+    for operation in operations:
+        for item in operation.get("masks", []):
+            if not isinstance(item, dict):
+                continue
+            if isinstance(item.get("points"), list):
+                points = [_point(item_point, image.size) for item_point in item["points"]]
+                drawer.polygon(points, fill=255)
+                continue
+            rect = item.get("rect") or item
+            if all(key in rect for key in ("x", "y", "width", "height")):
+                x, y = _point((rect["x"], rect["y"]), image.size)
+                w, h = _size((rect["width"], rect["height"]), image.size)
+                drawer.rectangle((x, y, x + w, y + h), fill=255)
+    image.putalpha(Image.eval(mask, lambda value: 255 - value))
+    handle = tempfile.NamedTemporaryFile(prefix="gamdo-mask-", suffix=".png", delete=False)
+    temporary = Path(handle.name)
+    handle.close()
+    image.save(temporary, format="PNG")
+    return temporary
+
+
+def _point(value: Any, size: tuple[int, int]) -> tuple[int, int]:
+    x, y = float(value[0]), float(value[1])
+    if 0 <= x <= 1 and 0 <= y <= 1:
+        x *= size[0]
+        y *= size[1]
+    return round(x), round(y)
+
+
+def _size(value: Any, size: tuple[int, int]) -> tuple[int, int]:
+    width, height = float(value[0]), float(value[1])
+    if 0 <= width <= 1 and 0 <= height <= 1:
+        width *= size[0]
+        height *= size[1]
+    return round(width), round(height)

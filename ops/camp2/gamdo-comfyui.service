@@ -1,0 +1,16 @@
+[Unit]
+Description=GAMDO CAMP-2 ComfyUI headless service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/gamdo/ComfyUI
+ExecStart=/opt/gamdo/venv/bin/python main.py --listen 127.0.0.1 --port 8188 --disable-auto-launch
+Restart=on-failure
+RestartSec=5
+User=root
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

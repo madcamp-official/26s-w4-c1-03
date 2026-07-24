@@ -9,6 +9,7 @@ from .db import Database
 from .generative import (
     CandidateValidator,
     GenerativeEditProvider,
+    InsightFaceVerifier,
     ProviderNotReady,
     UnavailableProvider,
     candidate_id,
@@ -28,7 +29,7 @@ class JobWorker:
         self.database = database or Database()
         self.poll_seconds = poll_seconds
         self.provider = provider or UnavailableProvider()
-        self.validator = validator or CandidateValidator()
+        self.validator = validator or CandidateValidator(InsightFaceVerifier.from_environment())
         self.processing_timeout_ms = int(os.getenv("GAMDO_PROCESSING_TIMEOUT_MS", "300000"))
 
     def process_once(self) -> bool:
@@ -44,7 +45,7 @@ class JobWorker:
             candidates = self.provider.remove_objects(
                 Path(input_row["storage_path"]), operations, job["result_count"]
             )
-        except (ProviderNotReady, OSError, ValueError):
+        except (ProviderNotReady, OSError, TimeoutError, ValueError):
             self.database.transition_job(job["id"], "fallback", fail_reason="provider_not_ready")
             self.database.schedule_input_purge(job["id"])
             self.purge_once()

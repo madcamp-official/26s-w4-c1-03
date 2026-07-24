@@ -1,0 +1,3 @@
+# Optional CAMP-2 runtime dependencies. Keep the default server lightweight.
+insightface>=1,<2
+onnxruntime-gpu>=1.23,<2

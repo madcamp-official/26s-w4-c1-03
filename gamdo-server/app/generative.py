@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -48,6 +49,53 @@ class IdentityVerifier(Protocol):
 class UnavailableIdentityVerifier:
     def verify(self, original: Image.Image, candidate: Image.Image) -> bool:
         return False
+
+
+class InsightFaceVerifier:
+    """In-memory face identity check backed by InsightFace when enabled.
+
+    The model is loaded once per worker, while face embeddings are kept only for
+    the duration of ``verify`` and are never serialized.
+    """
+
+    def __init__(self, threshold: float = 0.35) -> None:
+        self.threshold = threshold
+        self._app: Any | None = None
+
+    @classmethod
+    def from_environment(cls) -> "InsightFaceVerifier | None":
+        if os.getenv("GAMDO_INSIGHTFACE_ENABLED", "0") != "1":
+            return None
+        try:
+            return cls(float(os.getenv("GAMDO_FACE_SIMILARITY_THRESHOLD", "0.35")))
+        except ValueError:
+            return cls()
+
+    def verify(self, original: Image.Image, candidate: Image.Image) -> bool:
+        try:
+            import numpy as np
+            from insightface.app import FaceAnalysis
+
+            if self._app is None:
+                providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+                self._app = FaceAnalysis(name="buffalo_l", providers=providers)
+                self._app.prepare(ctx_id=0, det_size=(640, 640))
+            left = self._largest_face(self._app.get(_bgr(original, np)))
+            right = self._largest_face(self._app.get(_bgr(candidate, np)))
+            if left is None or right is None:
+                return False
+            similarity = float(np.dot(left.normed_embedding, right.normed_embedding))
+            return similarity >= self.threshold
+        except (ImportError, OSError, RuntimeError, ValueError):
+            return False
+
+    @staticmethod
+    def _largest_face(faces: list[Any]) -> Any | None:
+        return max(faces, key=lambda face: float(face.bbox[2] - face.bbox[0]) * float(face.bbox[3] - face.bbox[1]), default=None)
+
+
+def _bgr(image: Image.Image, numpy: Any) -> Any:
+    return numpy.asarray(image.convert("RGB"))[:, :, ::-1].copy()
 
 
 @dataclass(frozen=True)
