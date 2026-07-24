@@ -91,13 +91,47 @@ class Database:
                 (job_id,),
             ).fetchall()
 
-    def transition_job(self, job_id: str, status: str, *, fail_reason: str | None = None) -> None:
+    def claim_next_queued(self) -> sqlite3.Row | None:
+        timestamp = now_ms()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            job = connection.execute(
+                """
+                SELECT * FROM edit_jobs
+                WHERE status = 'queued'
+                ORDER BY priority DESC, queued_at ASC
+                LIMIT 1
+                """
+            ).fetchone()
+            if job is None:
+                return None
+            connection.execute(
+                """
+                UPDATE edit_jobs
+                SET status = 'processing', progress_stage = 'removing',
+                    started_at = COALESCE(started_at, ?), updated_at = ?
+                WHERE id = ? AND status = 'queued'
+                """,
+                (timestamp, timestamp, job["id"]),
+            )
+            return connection.execute(
+                "SELECT * FROM edit_jobs WHERE id = ?", (job["id"],)
+            ).fetchone()
+
+    def transition_job(
+        self,
+        job_id: str,
+        status: str,
+        *,
+        fail_reason: str | None = None,
+        progress_stage: str | None = None,
+    ) -> None:
         timestamp = now_ms()
         with self.connect() as connection:
             connection.execute(
                 """
                 UPDATE edit_jobs
-                SET status = ?, fail_reason = ?,
+                SET status = ?, fail_reason = ?, progress_stage = ?,
                     started_at = CASE WHEN ? = 'processing' AND started_at IS NULL THEN ? ELSE started_at END,
                     finished_at = CASE WHEN ? IN ('done', 'failed', 'fallback', 'canceled') THEN ? ELSE finished_at END,
                     updated_at = ?
@@ -106,6 +140,7 @@ class Database:
                 (
                     status,
                     fail_reason,
+                    progress_stage,
                     status,
                     timestamp,
                     status,
@@ -125,4 +160,22 @@ class Database:
                 WHERE job_id = ? AND role = 'input' AND purged_at IS NULL
                 """,
                 (timestamp, timestamp, job_id),
+            )
+
+    def expired_files(self) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return connection.execute(
+                """
+                SELECT * FROM edit_job_files
+                WHERE purge_after IS NOT NULL AND purge_after <= ? AND purged_at IS NULL
+                """,
+                (now_ms(),),
+            ).fetchall()
+
+    def mark_file_purged(self, file_id: str) -> None:
+        timestamp = now_ms()
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE edit_job_files SET purged_at = ?, updated_at = ? WHERE id = ?",
+                (timestamp, timestamp, file_id),
             )
