@@ -8,6 +8,7 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.view.LifecycleCameraController
@@ -33,14 +34,20 @@ class CameraController(context: Context) {
             cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
             // Backpressure: analysis may lag, preview must not (§2-1).
             imageAnalysisBackpressureStrategy = ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
-            // Downscale analysis frames to ~640px long side.
+            // Downscale analysis frames to ~640px long side, forced 4:3.
             imageAnalysisResolutionSelector = ResolutionSelector.Builder()
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                 .setResolutionStrategy(
                     ResolutionStrategy(
                         Size(640, 480),
                         ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER,
                     ),
                 )
+                .build()
+            // Match the preview FOV to the analysis (both 4:3) so overlay boxes
+            // computed from analysis-normalized coords line up with the preview (§2-5).
+            previewResolutionSelector = ResolutionSelector.Builder()
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                 .build()
         }
 

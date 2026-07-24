@@ -94,10 +94,13 @@ fun CameraScreen(
     val shakeMeter = remember { ShakeMeter(context) }
     val statsFlow = remember { MutableStateFlow<AnalysisStats?>(null) }
     val detectionFlow = remember { MutableStateFlow("") }
+    val overlayFlow = remember { MutableStateFlow<OverlayData?>(null) }
     val stats by statsFlow.collectAsState()
     val detection by detectionFlow.collectAsState()
+    val overlay by overlayFlow.collectAsState()
     val tilt by tiltSensor.reading.collectAsState()
     val shake by shakeMeter.shake.collectAsState()
+    var showHud by rememberSaveable { mutableStateOf(true) }
 
     DisposableEffect(Unit) {
         tiltSensor.start()
@@ -127,6 +130,19 @@ fun CameraScreen(
                         val faceN = result.faces.size
                         val poseN = result.pose?.landmarks?.size ?: 0
                         detectionFlow.value = "얼굴 $faceN · 포즈 $poseN"
+                        overlayFlow.value = OverlayData(
+                            faces = result.faces.map { it.box },
+                            personCenter = result.pose?.landmarks
+                                ?.filter { it.inFrameLikelihood > 0.3f }
+                                ?.takeIf { it.isNotEmpty() }
+                                ?.let { lm ->
+                                    lm.map { it.x }.average().toFloat() to lm.map { it.y }.average().toFloat()
+                                }
+                                ?: result.faces.firstOrNull()?.box?.let { it.centerX to it.centerY },
+                            frameWidth = frame.width,
+                            frameHeight = frame.height,
+                            mirror = controller.isFront,
+                        )
                         val f = result.faces.firstOrNull()
                         Log.d(
                             TAG,
@@ -166,6 +182,7 @@ fun CameraScreen(
                 modifier = Modifier
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color(0xE6242822))
+                    .clickable { showHud = !showHud }
                     .padding(horizontal = 14.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(7.dp),
@@ -239,13 +256,22 @@ fun CameraScreen(
                 Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
             }
 
-            Column(
-                modifier = Modifier.align(Alignment.TopStart).padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                stats?.let { DebugHud(stats = it) }
-                if (detection.isNotEmpty()) DetectionBadge(detection)
-                TiltBadge(rollDeg = tilt.rollDeg, pitchDeg = tilt.pitchDeg, shake = shake)
+            CameraOverlay(
+                overlay = overlay,
+                rollDeg = tilt.rollDeg,
+                pitchDeg = tilt.pitchDeg,
+                modifier = Modifier.fillMaxSize(),
+            )
+
+            if (showHud) {
+                Column(
+                    modifier = Modifier.align(Alignment.TopStart).padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    stats?.let { DebugHud(stats = it) }
+                    if (detection.isNotEmpty()) DetectionBadge(detection)
+                    TiltBadge(rollDeg = tilt.rollDeg, pitchDeg = tilt.pitchDeg, shake = shake)
+                }
             }
         }
 
