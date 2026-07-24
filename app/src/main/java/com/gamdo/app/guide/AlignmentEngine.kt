@@ -1,0 +1,189 @@
+package com.gamdo.app.guide
+
+import com.gamdo.app.detect.FrameFeatures
+import com.gamdo.app.detect.NormalizedBox
+import java.util.ArrayDeque
+import kotlin.math.abs
+import kotlin.math.hypot
+
+data class RectN(
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+) {
+    val width: Float get() = right - left
+    val height: Float get() = bottom - top
+
+    fun clamped(): RectN {
+        val l = left.coerceIn(0f, 1f)
+        val t = top.coerceIn(0f, 1f)
+        val r = right.coerceIn(l, 1f)
+        val b = bottom.coerceIn(t, 1f)
+        return RectN(l, t, r, b)
+    }
+}
+
+data class SilhouetteSpec(
+    val bounds: RectN,
+    val opacity: Float = 0.22f,
+)
+
+/** Composition-only target. Color parameters are intentionally not part of this contract. */
+data class StyleTarget(
+    val targetAspectRatio: Float = 4f / 5f,
+    val subjectScaleRange: ClosedFloatingPointRange<Float> = 0.35f..0.55f,
+    val subjectAnchorX: Float = 0.5f,
+    val subjectAnchorY: Float = 0.5f,
+    val headroomRange: ClosedFloatingPointRange<Float> = 0.05f..0.12f,
+    val horizonPosition: Float = 0.5f,
+    val cameraPitchRange: ClosedFloatingPointRange<Float> = -5f..5f,
+)
+
+data class GuideConfig(
+    val smoothingWindow: Int = 5,
+    val alignedIouThreshold: Float = 0.7f,
+    val recomputeMovementThreshold: Float = 0.08f,
+    val minPoseConfidence: Float = 0.3f,
+    val maxUnstableFrames: Int = 5,
+) {
+    init {
+        require(smoothingWindow > 0)
+        require(alignedIouThreshold in 0f..1f)
+        require(recomputeMovementThreshold >= 0f)
+        require(maxUnstableFrames > 0)
+    }
+}
+
+data class OverlayState(
+    val targetFrame: RectN,
+    val silhouette: SilhouetteSpec?,
+    val horizonY: Float,
+    val visible: Boolean,
+    val aligned: Boolean,
+)
+
+data class GuideMetrics(
+    val matchScore: Float,
+    val targetMovement: Float,
+    val unstableFrames: Int,
+)
+
+/**
+ * Converts frame features into a stable visual guide. This class is deliberately
+ * platform-free: the camera layer owns rendering and user-facing copy.
+ */
+class AlignmentEngine {
+    private val targetHistory = ArrayDeque<RectN>()
+    private var lastStableTarget: RectN? = null
+    private var lastMetrics = GuideMetrics(0f, 0f, 0)
+
+    fun align(
+        features: FrameFeatures,
+        target: StyleTarget,
+        config: GuideConfig = GuideConfig(),
+    ): OverlayState {
+        val desired = targetFrame(target)
+        val confidenceUsable = features.poseConfidence >= config.minPoseConfidence
+        val previous = lastStableTarget
+
+        if (!confidenceUsable) {
+            val fallback = previous ?: desired
+            lastMetrics = lastMetrics.copy(targetMovement = 0f)
+            return state(fallback, features, target, config, visible = previous != null)
+        }
+
+        val movement = previous?.let { distance(it, desired) } ?: 0f
+        if (previous != null && movement > config.recomputeMovementThreshold) {
+            lastMetrics = lastMetrics.copy(
+                targetMovement = movement,
+                unstableFrames = lastMetrics.unstableFrames + 1,
+            )
+            if (lastMetrics.unstableFrames >= config.maxUnstableFrames) {
+                return state(previous, features, target, config, visible = false)
+            }
+        } else {
+            lastMetrics = lastMetrics.copy(targetMovement = movement, unstableFrames = 0)
+        }
+
+        targetHistory.addLast(desired)
+        while (targetHistory.size > config.smoothingWindow) targetHistory.removeFirst()
+        val smoothed = average(targetHistory).clamped()
+        lastStableTarget = smoothed
+        return state(smoothed, features, target, config, visible = true)
+    }
+
+    fun metrics(): GuideMetrics = lastMetrics
+
+    fun reset() {
+        targetHistory.clear()
+        lastStableTarget = null
+        lastMetrics = GuideMetrics(0f, 0f, 0)
+    }
+
+    private fun state(
+        frame: RectN,
+        features: FrameFeatures,
+        target: StyleTarget,
+        config: GuideConfig,
+        visible: Boolean,
+    ): OverlayState {
+        val iou = features.personBox?.let { intersectionOverUnion(it, frame) } ?: 0f
+        val aligned = visible && iou >= config.alignedIouThreshold
+        val score = iou.coerceIn(0f, 1f)
+        lastMetrics = lastMetrics.copy(matchScore = score)
+        return OverlayState(
+            targetFrame = frame,
+            silhouette = if (visible && features.personBox != null) {
+                SilhouetteSpec(frame)
+            } else {
+                null
+            },
+            horizonY = target.horizonPosition.coerceIn(0f, 1f),
+            visible = visible,
+            aligned = aligned,
+        )
+    }
+
+    private fun targetFrame(target: StyleTarget): RectN {
+        val height = target.subjectScaleRange.midpoint().coerceIn(0.12f, 0.92f)
+        val width = (height * target.targetAspectRatio).coerceIn(0.12f, 0.92f)
+        val centerX = target.subjectAnchorX.coerceIn(width / 2f, 1f - width / 2f)
+        val headroom = target.headroomRange.midpoint().coerceIn(0f, 0.8f)
+        val centerY = (headroom + height / 2f).coerceIn(height / 2f, 1f - height / 2f)
+        return RectN(
+            left = centerX - width / 2f,
+            top = centerY - height / 2f,
+            right = centerX + width / 2f,
+            bottom = centerY + height / 2f,
+        ).clamped()
+    }
+
+    private fun average(rects: Collection<RectN>): RectN {
+        if (rects.isEmpty()) return lastStableTarget ?: RectN(0f, 0f, 1f, 1f)
+        val count = rects.size.toFloat()
+        return RectN(
+            rects.sumOf { it.left.toDouble() }.toFloat() / count,
+            rects.sumOf { it.top.toDouble() }.toFloat() / count,
+            rects.sumOf { it.right.toDouble() }.toFloat() / count,
+            rects.sumOf { it.bottom.toDouble() }.toFloat() / count,
+        )
+    }
+
+    private fun distance(a: RectN, b: RectN): Float = hypot(
+        abs(a.left - b.left) + abs(a.right - b.right),
+        abs(a.top - b.top) + abs(a.bottom - b.bottom),
+    )
+
+    private fun intersectionOverUnion(a: NormalizedBox, b: RectN): Float {
+        val left = maxOf(a.left, b.left)
+        val top = maxOf(a.top, b.top)
+        val right = minOf(a.right, b.right)
+        val bottom = minOf(a.bottom, b.bottom)
+        val intersection = ((right - left).coerceAtLeast(0f) * (bottom - top).coerceAtLeast(0f))
+        val union = (a.width * a.height) + (b.width * b.height) - intersection
+        return if (union <= 0f) 0f else intersection / union
+    }
+
+    private fun ClosedFloatingPointRange<Float>.midpoint(): Float = (start + endInclusive) / 2f
+}

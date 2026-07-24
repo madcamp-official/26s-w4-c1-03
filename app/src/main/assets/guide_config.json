@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "smoothingWindow": 5,
+  "alignedIouThreshold": 0.7,
+  "recomputeMovementThreshold": 0.08,
+  "minPoseConfidence": 0.3,
+  "maxUnstableFrames": 5
+}
