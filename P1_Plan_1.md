@@ -110,11 +110,17 @@
 
 ### 1-5. CameraX 프리뷰 + 촬영 + 저장
 
-- [ ] `CameraController` 클래스: Preview + ImageCapture 바인딩, 전/후면 전환, 탭 포커스
-- [ ] 화면 비율 토글: 4:5 / 1:1 — 프리뷰 크롭 마스크 + 촬영 결과 크롭 저장
-- [ ] 촬영: JPEG 저장 → 앱 전용 디렉토리(`filesDir/captures/`) + MediaStore로 갤러리 내보내기, EXIF 회전 정상 처리
-- [ ] `captures` 테이블에 기록(id `cap_`+ULID, file_path, source='camera_manual')
-- 완료 기준: **찍은 사진이 갤러리 앱에서 올바른 방향·비율로 보인다**
+- [x] `CameraController` 클래스: Preview + ImageCapture 바인딩, 전/후면 전환, 탭 포커스 <!-- camera/CameraController(LifecycleCameraController 래퍼). 탭포커스·핀치줌은 PreviewView 기본 제공 -->
+- [x] 화면 비율 토글: 4:5 / 1:1 — 프리뷰 크롭 마스크 + 촬영 결과 크롭 저장 <!-- BoxWithConstraints 마스크 + centerCropToRatio. 실기기: 원본 3024×3780=정확히 4:5 -->
+- [x] 촬영: JPEG 저장 → 앱 전용 디렉토리(`filesDir/captures/`) + MediaStore로 갤러리 내보내기, EXIF 회전 정상 처리 <!-- 회전을 픽셀에 반영(orientation=NULL) → 방향 정상. MediaStore Pictures/감도 export -->
+- [x] `captures` 테이블에 기록(id `cap_`+ULID, file_path, source='camera_manual') <!-- core/Ulid, CaptureRepository. 앨범 DB 로드로 확인 -->
+- 완료 기준: **찍은 사진이 갤러리 앱에서 올바른 방향·비율로 보인다** <!-- ✅ 실기기: 촬영 원본 4:5·세로 정상, MediaStore(Pictures/감도) 내보내기 확인, 촬영 이미지에 그리드 오버레이 미포함 -->
+
+### 1-5. 진행 메모
+- `camera/`: CameraController(LifecycleCameraController), BitmapExt(rotate/mirror/centerCrop). `core/Ulid`. `data/CaptureRepository`(filesDir + MediaStore + captures insert)
+- t2 흐름: **셔터는 촬영만 하고 카메라에 머묾**(편집은 앨범→탭). 촬영 후 좌하단 썸네일 즉시 갱신
+- `ui/album`: captures 테이블에서 실제 촬영 로드(Coil), 비었으면 안내
+- 미구현/보류: 촬영음·플래시, 광각 렌즈 선택, 프리뷰 30FPS 계측(Day7), EXIF 메타 보존(현재는 방향만 픽셀 반영)
 
 ### 1-6. (저녁) B와 인터페이스 계약 고정 — 30분
 

@@ -35,4 +35,6 @@ class AppContainer(context: Context) {
     )
 
     val settingsRepository: SettingsRepository = SettingsRepository(database.appSettingsDao())
+
+    val captureRepository: CaptureRepository = CaptureRepository(appContext, database.capturesDao())
 }

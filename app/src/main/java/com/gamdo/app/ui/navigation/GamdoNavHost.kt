@@ -69,13 +69,14 @@ fun GamdoNavHost(
 
         composable(Routes.CAMERA) {
             CameraScreen(
+                container = container,
                 onOpenAlbum = { navController.navigate(Routes.ALBUM) },
-                onCaptured = { navController.navigate(Routes.result("demo")) },
             )
         }
 
         composable(Routes.ALBUM) {
             AlbumScreen(
+                container = container,
                 onBack = { navController.popBackStack() },
                 onOpenPhoto = { captureId -> navController.navigate(Routes.result(captureId)) },
             )

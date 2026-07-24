@@ -51,4 +51,7 @@ interface CapturesDao {
 
     @Query("SELECT * FROM captures WHERE id = :id")
     suspend fun get(id: String): Captures?
+
+    @Query("SELECT * FROM captures WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT :limit")
+    suspend fun getRecent(limit: Int = 60): List<Captures>
 }

@@ -1,11 +1,14 @@
 package com.gamdo.app.ui.camera
 
+import android.util.Log
+import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -19,39 +22,75 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.gamdo.app.camera.CameraController
+import com.gamdo.app.camera.centerCropToRatio
+import com.gamdo.app.data.AppContainer
 import com.gamdo.app.ui.components.moodBrush
-import com.gamdo.app.ui.theme.Charcoal800
 import com.gamdo.app.ui.theme.Charcoal950
 import com.gamdo.app.ui.theme.OnDarkHigh
 import com.gamdo.app.ui.theme.OnDarkMedium
 import com.gamdo.app.ui.theme.OnDarkMuted
 import com.gamdo.app.ui.theme.Sage
+import kotlinx.coroutines.launch
 
 private val GuideLime = Color(0xFFCDD69A)
 private val GridLine = Color(0x47FFFFFF)
+private const val TAG = "CameraScreen"
+
+enum class CaptureAspect(val label: String, val ratioWtoH: Float) {
+    RATIO_4_5("4:5", 4f / 5f),
+    RATIO_1_1("1:1", 1f),
+}
 
 /**
- * Camera = home (t2 skeleton). Static preview + guide-overlay stand-in; real
- * CameraX preview/analysis/overlay land in §1-5 and Day 2–3.
+ * Camera = home (§1-5): real CameraX preview + capture. Shutter captures and
+ * stays here (t2 flow — editing happens from the album); the shot is written to
+ * the app dir, exported to the gallery, and recorded in `captures`.
  */
 @Composable
 fun CameraScreen(
+    container: AppContainer,
     onOpenAlbum: () -> Unit,
-    onCaptured: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
+
+    val controller = remember { CameraController(context) }
+    var aspect by rememberSaveable { mutableStateOf(CaptureAspect.RATIO_4_5) }
+    var isFront by remember { mutableStateOf(false) }
+    var capturing by remember { mutableStateOf(false) }
+    var lastThumb by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose { controller.unbind() }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Charcoal950),
     ) {
+        // Status chip
         Box(modifier = Modifier.fillMaxWidth().padding(top = 10.dp), contentAlignment = Alignment.Center) {
             Row(
                 modifier = Modifier
@@ -66,69 +105,79 @@ fun CameraScreen(
             }
         }
 
-        Box(
+        // Aspect ratio toggle
+        Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color(0x66242822))
+                    .padding(3.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                CaptureAspect.entries.forEach { option ->
+                    val selected = option == aspect
+                    Text(
+                        text = option.label,
+                        color = if (selected) Charcoal950 else OnDarkMedium,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(if (selected) Sage else Color.Transparent)
+                            .clickable { aspect = option }
+                            .padding(horizontal = 14.dp, vertical = 5.dp),
+                    )
+                }
+            }
+        }
+
+        // Preview + aspect mask + grid
+        BoxWithConstraints(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(top = 8.dp)
-                .background(Brush.linearGradient(listOf(Color(0xFF20261E), Color(0xFF0F120E)))),
+                .padding(top = 8.dp),
         ) {
-            RuleOfThirds()
-            // Target-frame bracket (sage corners) — the only guide style allowed (D2)
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(width = 150.dp, height = 200.dp),
-            ) {
-                CornerMark(Alignment.TopStart)
-                CornerMark(Alignment.TopEnd)
-                CornerMark(Alignment.BottomStart)
-                CornerMark(Alignment.BottomEnd)
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .size(5.dp)
-                        .clip(CircleShape)
-                        .background(GuideLime),
-                )
-            }
-            Row(
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ZoomChip(".5", active = false)
-                ZoomChip("1x", active = true)
-                ZoomChip("2x", active = false)
-            }
-        }
+            val windowHeight = (maxWidth / aspect.ratioWtoH).coerceAtMost(maxHeight)
+            val barHeight = (maxHeight - windowHeight) / 2
 
-        Row(
-            modifier = Modifier
-                .padding(horizontal = 18.dp, vertical = 12.dp)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(Charcoal800)
-                .padding(horizontal = 14.dp, vertical = 11.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Box(modifier = Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(moodBrush(0)))
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Sage))
-                    Text("AI가 잡은 최적 구도 · 원 포인트", color = OnDarkHigh, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
+                    PreviewView(ctx).apply {
+                        scaleType = PreviewView.ScaleType.FILL_CENTER
+                        this.controller = controller.camera
+                        controller.bind(lifecycleOwner)
+                    }
+                },
+            )
+
+            Column(modifier = Modifier.fillMaxSize()) {
+                Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
+                Box(modifier = Modifier.fillMaxWidth().height(windowHeight)) {
+                    RuleOfThirds()
+                    Row(
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        ZoomChip(".5", active = false) { controller.setZoom(0.6f) }
+                        ZoomChip("1x", active = true) { controller.setZoom(1f) }
+                        ZoomChip("2x", active = false) { controller.setZoom(2f) }
+                    }
                 }
-                Text("장면을 분석해 최적의 구도를 표시했어요", color = OnDarkMuted, fontSize = 11.5.sp, modifier = Modifier.padding(top = 2.dp))
+                Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
             }
         }
 
+        // Bottom bar: album / shutter / flip
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 34.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                val thumb = lastThumb
                 Box(
                     modifier = Modifier
                         .size(44.dp)
@@ -136,7 +185,17 @@ fun CameraScreen(
                         .background(moodBrush(2))
                         .border(1.5.dp, Color(0x40FFFFFF), RoundedCornerShape(12.dp))
                         .clickable(onClick = onOpenAlbum),
-                )
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (thumb != null) {
+                        Image(
+                            bitmap = thumb.asImageBitmap(),
+                            contentDescription = "최근 촬영",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)),
+                        )
+                    }
+                }
                 Text("앨범", color = OnDarkMedium, fontSize = 10.sp)
             }
 
@@ -145,17 +204,42 @@ fun CameraScreen(
                     .size(76.dp)
                     .clip(CircleShape)
                     .border(4.dp, Color(0xE6FFFFFF), CircleShape)
-                    .clickable(onClick = onCaptured),
+                    .clickable(enabled = !capturing) {
+                        capturing = true
+                        scope.launch {
+                            try {
+                                val bitmap = controller.capture(context).centerCropToRatio(aspect.ratioWtoH)
+                                lastThumb = bitmap
+                                container.captureRepository.saveCameraCapture(bitmap)
+                            } catch (t: Throwable) {
+                                Log.e(TAG, "capture failed", t)
+                            } finally {
+                                capturing = false
+                            }
+                        }
+                    },
                 contentAlignment = Alignment.Center,
             ) {
-                Box(modifier = Modifier.size(60.dp).clip(CircleShape).background(OnDarkHigh))
+                Box(
+                    modifier = Modifier
+                        .size(60.dp)
+                        .clip(CircleShape)
+                        .background(if (capturing) OnDarkMuted else OnDarkHigh),
+                )
             }
 
             Box(
-                modifier = Modifier.size(44.dp).clip(CircleShape).background(Color(0xFF242822)),
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF242822))
+                    .clickable {
+                        controller.toggleLens()
+                        isFront = controller.isFront
+                    },
                 contentAlignment = Alignment.Center,
             ) {
-                Text("⟲", color = OnDarkMedium, fontSize = 18.sp)
+                Text("⟲", color = if (isFront) Sage else OnDarkMedium, fontSize = 18.sp)
             }
         }
     }
@@ -179,37 +263,15 @@ private fun RuleOfThirds() {
     }
 }
 
-/** An L-shaped bracket corner made of two arms — reliable across renderers. */
 @Composable
-private fun BoxScope.CornerMark(alignment: Alignment) {
-    val isTop = alignment == Alignment.TopStart || alignment == Alignment.TopEnd
-    val isLeft = alignment == Alignment.TopStart || alignment == Alignment.BottomStart
-    Box(modifier = Modifier.align(alignment).size(16.dp)) {
-        Box(
-            modifier = Modifier
-                .align(if (isTop) Alignment.TopStart else Alignment.BottomStart)
-                .fillMaxWidth()
-                .height(2.dp)
-                .background(GuideLime),
-        )
-        Box(
-            modifier = Modifier
-                .align(if (isLeft) Alignment.TopStart else Alignment.TopEnd)
-                .fillMaxHeight()
-                .width(2.dp)
-                .background(GuideLime),
-        )
-    }
-}
-
-@Composable
-private fun ZoomChip(label: String, active: Boolean) {
+private fun ZoomChip(label: String, active: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .size(if (active) 34.dp else 30.dp)
             .clip(CircleShape)
             .background(Color(0x99141614))
-            .then(if (active) Modifier.border(1.8.dp, GuideLime, CircleShape) else Modifier),
+            .then(if (active) Modifier.border(1.8.dp, GuideLime, CircleShape) else Modifier)
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
