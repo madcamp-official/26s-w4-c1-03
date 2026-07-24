@@ -68,12 +68,16 @@ def test_edit_job_transitions_to_fallback_without_sample_result() -> None:
         assert fallback.json()["failReason"] == "provider_not_ready"
 
 
-def test_reference_analysis_route_is_present_but_not_ready() -> None:
+def test_reference_analysis_is_synchronous_and_does_not_persist_upload() -> None:
     with TestClient(app) as client:
         response = client.post(
             "/api/v1/references/analyze",
             headers={"X-Device-Id": "test-device"},
             files={"image": ("reference.png", image_bytes(), "image/png")},
         )
-        assert response.status_code == 501
-        assert response.json()["code"] == "reference_analysis_not_ready"
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["analysis"]["peopleCount"] == 0
+        assert len(payload["analysis"]["palette"]) == 5
+        assert len(payload["analysis"]["luminanceHistogram"]) == 16
+        assert payload["targetComposition"]["targetAspectRatio"] in {"4:5", "1:1"}
