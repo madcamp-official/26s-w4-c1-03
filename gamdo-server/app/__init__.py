@@ -1,0 +1,1 @@
+"""GAMDO stateless processing server."""

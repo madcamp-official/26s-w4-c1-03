@@ -1,0 +1,79 @@
+from __future__ import annotations
+
+import io
+import json
+
+import pytest
+from fastapi.testclient import TestClient
+from PIL import Image
+
+from app import db, storage
+from app.main import app
+
+
+@pytest.fixture(autouse=True)
+def isolated_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setattr(db, "DEFAULT_DB_PATH", tmp_path / "gamdo.sqlite3")
+    monkeypatch.setattr(storage, "INPUT_DIR", tmp_path / "inputs")
+    monkeypatch.setattr(storage, "RESULT_DIR", tmp_path / "results")
+    monkeypatch.setattr(storage, "TMP_DIR", tmp_path / "tmp")
+
+
+def image_bytes() -> bytes:
+    output = io.BytesIO()
+    Image.new("RGB", (8, 8), (120, 140, 120)).save(output, format="PNG")
+    return output.getvalue()
+
+
+def test_health_and_presets() -> None:
+    with TestClient(app) as client:
+        assert client.get("/health").json() == {"status": "ok"}
+        response = client.get("/api/v1/presets", headers={"X-Device-Id": "test-device"})
+        assert response.status_code == 200
+        assert len(response.json()) == 6
+        assert response.headers["etag"]
+
+
+def test_missing_device_header_is_standardized() -> None:
+    with TestClient(app) as client:
+        response = client.get("/api/v1/presets")
+        assert response.status_code == 400
+        assert response.json()["code"] == "missing_device_id"
+
+
+def test_edit_job_transitions_to_fallback_without_sample_result() -> None:
+    headers = {"X-Device-Id": "test-device"}
+    form = {
+        "jobId": "job_test_001",
+        "captureRef": "cap_test_001",
+        "operations": json.dumps([{"type": "remove_objects", "auto": True}]),
+        "styleParams": json.dumps({"v": 1, "color": {"exposureBias": 0.1}}),
+        "resultCount": "2",
+    }
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/edit-jobs",
+            headers=headers,
+            data=form,
+            files={"image": ("input.png", image_bytes(), "image/png")},
+        )
+        assert created.status_code == 202, created.text
+        assert created.json() == {"jobId": "job_test_001", "status": "queued"}
+
+        assert client.get("/api/v1/edit-jobs/job_test_001", headers=headers).json()["status"] == "processing"
+        fallback = client.get("/api/v1/edit-jobs/job_test_001", headers=headers)
+        assert fallback.status_code == 200
+        assert fallback.json()["status"] == "fallback"
+        assert fallback.json()["results"] == []
+        assert fallback.json()["failReason"] == "provider_not_ready"
+
+
+def test_reference_analysis_route_is_present_but_not_ready() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/references/analyze",
+            headers={"X-Device-Id": "test-device"},
+            files={"image": ("reference.png", image_bytes(), "image/png")},
+        )
+        assert response.status_code == 501
+        assert response.json()["code"] == "reference_analysis_not_ready"
