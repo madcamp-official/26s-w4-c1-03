@@ -322,3 +322,10 @@
 - 변경 내용: `FrameFeatureCalculator → AlignmentEngine → OverlayProjection` 연결, `guide_config.json` 로딩, 목표 프레임·실루엣 표시, 정렬 시 흰색에서 세이지 색으로 전환.
 - 기존 수동 셔터·권한·내비게이션 흐름은 변경하지 않음. 텍스트 지시·화살표·일치도 게이지·자동 촬영은 추가하지 않음.
 - 검증: `:app:testDebugUnitTest` 통과. 실기기 시각 검증은 APK 설치 후 별도 진행.
+
+### 2026-07-24 — 5단계 구현 감사
+
+- 완료: `matchScore`·`StyleTarget` 변환, 카메라 오버레이 연결, 메모리 기반 레퍼런스 분석, 편집 큐 워커·입력 purge, `GenerativeEditProvider`·ComfyUI HTTP 어댑터·검증 fallback.
+- 자동 검증: Android `:app:testDebugUnitTest` 및 서버 `python -m pytest` 통과.
+- 외부 검증 대기: 연결된 Android 실기기가 없어 오버레이 시각 검증 미실행.
+- 외부 검증 대기: GPU/ComfyUI와 LaMa·InsightFace 모델이 준비되지 않아 실제 객체 제거·얼굴 검증 성공 경로 미실행. 공급자 미설정 시 결과를 만들지 않고 `fallback`으로 종료하는 것은 테스트 완료.
