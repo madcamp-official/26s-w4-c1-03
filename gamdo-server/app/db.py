@@ -91,6 +91,50 @@ class Database:
                 (job_id,),
             ).fetchall()
 
+    def get_input_file(self, job_id: str) -> sqlite3.Row | None:
+        with self.connect() as connection:
+            return connection.execute(
+                "SELECT * FROM edit_job_files WHERE job_id = ? AND role = 'input' LIMIT 1",
+                (job_id,),
+            ).fetchone()
+
+    def insert_result(
+        self,
+        *,
+        file_id: str,
+        job_id: str,
+        storage_path: str,
+        bytes_count: int,
+        seed: int,
+        validation_json: dict[str, Any],
+        kind: str = "generated",
+    ) -> None:
+        timestamp = now_ms()
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO edit_job_files(
+                    id, job_id, role, kind, generative, seed, rank,
+                    validation_status, validation_json, storage_path, bytes,
+                    exif_stripped, created_at, updated_at
+                ) VALUES (?, ?, 'result', ?, 1, ?,
+                          (SELECT COUNT(*) FROM edit_job_files WHERE job_id = ? AND role = 'result'),
+                          'passed', ?, ?, ?, 1, ?, ?)
+                """,
+                (
+                    file_id,
+                    job_id,
+                    kind,
+                    seed,
+                    job_id,
+                    json.dumps(validation_json, ensure_ascii=False, separators=(",", ":")),
+                    storage_path,
+                    bytes_count,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+
     def claim_next_queued(self) -> sqlite3.Row | None:
         timestamp = now_ms()
         with self.connect() as connection:

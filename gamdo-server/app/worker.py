@@ -1,18 +1,33 @@
 from __future__ import annotations
 
-import time
+import json
 from pathlib import Path
 from threading import Event
 
 from .db import Database
+from .generative import (
+    CandidateValidator,
+    GenerativeEditProvider,
+    ProviderNotReady,
+    UnavailableProvider,
+    candidate_id,
+)
 
 
 class JobWorker:
     """Single-consumer queue worker with a safe provider fallback."""
 
-    def __init__(self, database: Database | None = None, poll_seconds: float = 1.0) -> None:
+    def __init__(
+        self,
+        database: Database | None = None,
+        poll_seconds: float = 1.0,
+        provider: GenerativeEditProvider | None = None,
+        validator: CandidateValidator | None = None,
+    ) -> None:
         self.database = database or Database()
         self.poll_seconds = poll_seconds
+        self.provider = provider or UnavailableProvider()
+        self.validator = validator or CandidateValidator()
 
     def process_once(self) -> bool:
         job = self.database.claim_next_queued()
@@ -20,19 +35,37 @@ class JobWorker:
             self.purge_once()
             return False
 
-        # Provider integration is deliberately behind this boundary. Until a
-        # real provider is configured, never fabricate a result image.
-        self.database.transition_job(
-            job["id"],
-            "validating",
-            progress_stage="validating",
-        )
-        self.database.transition_job(
-            job["id"],
-            "fallback",
-            fail_reason="provider_not_ready",
-            progress_stage=None,
-        )
+        operations = json.loads(job["operations_json"])
+        input_row = self.database.get_input_file(job["id"])
+        try:
+            candidates = self.provider.remove_objects(
+                Path(input_row["storage_path"]), operations, job["result_count"]
+            )
+        except (ProviderNotReady, OSError, ValueError):
+            self.database.transition_job(job["id"], "fallback", fail_reason="provider_not_ready")
+            self.database.schedule_input_purge(job["id"])
+            self.purge_once()
+            return True
+
+        self.database.transition_job(job["id"], "validating", progress_stage="validating")
+        passed = 0
+        for candidate in candidates[: job["result_count"]]:
+            validation = self.validator.validate(Path(input_row["storage_path"]), candidate)
+            if not validation.passed:
+                continue
+            self.database.insert_result(
+                file_id=candidate_id(job["id"], candidate),
+                job_id=job["id"],
+                storage_path=str(candidate.path),
+                bytes_count=candidate.path.stat().st_size,
+                seed=candidate.seed,
+                validation_json=validation.validation,
+            )
+            passed += 1
+        if passed:
+            self.database.transition_job(job["id"], "done", progress_stage=None)
+        else:
+            self.database.transition_job(job["id"], "fallback", fail_reason="candidate_validation_failed")
         self.database.schedule_input_purge(job["id"])
         self.purge_once()
         return True
