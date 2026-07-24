@@ -38,7 +38,8 @@ class ComfyUiProvider(GenerativeEditProvider):
         if not self.base_url or self.workflow_path is None or not self.workflow_path.exists():
             raise ProviderNotReady("ComfyUI URL or workflow is not configured")
         workflow = json.loads(self.workflow_path.read_text(encoding="utf-8"))
-        workflow = _inject_workflow_inputs(workflow, image_path, operations, result_count)
+        input_name = self._upload_image(image_path)
+        workflow = _inject_workflow_inputs(workflow, input_name, operations, result_count)
         prompt = self._request_json("/prompt", {"prompt": workflow})
         prompt_id = prompt.get("prompt_id")
         if not prompt_id:
@@ -66,6 +67,31 @@ class ComfyUiProvider(GenerativeEditProvider):
                 return json.loads(response.read().decode("utf-8"))
         except (OSError, ValueError, TimeoutError) as exc:
             raise ProviderNotReady("ComfyUI request failed") from exc
+
+    def _upload_image(self, image_path: Path) -> str:
+        boundary = "----gamdo-comfyui-boundary"
+        data = image_path.read_bytes()
+        filename = image_path.name
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="image"; filename="{filename}"\r\n'
+            "Content-Type: application/octet-stream\r\n\r\n"
+        ).encode() + data + f"\r\n--{boundary}--\r\n".encode()
+        request = urllib.request.Request(
+            self.base_url + "/upload/image",
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except (OSError, ValueError, TimeoutError) as exc:
+            raise ProviderNotReady("ComfyUI input upload failed") from exc
+        name = result.get("name")
+        if not name:
+            raise ProviderNotReady("ComfyUI did not return an uploaded filename")
+        return str(name)
 
     def _download_outputs(
         self,
@@ -97,13 +123,26 @@ class ComfyUiProvider(GenerativeEditProvider):
 
 def _inject_workflow_inputs(
     workflow: dict[str, Any],
-    image_path: Path,
+    input_name: str,
     operations: list[dict[str, Any]],
     result_count: int,
 ) -> dict[str, Any]:
     """Inject only deployment-defined placeholders; arbitrary workflow nodes stay intact."""
-    serialized = json.dumps(workflow)
-    serialized = serialized.replace("${INPUT_IMAGE}", str(image_path))
-    serialized = serialized.replace("${RESULT_COUNT}", str(result_count))
-    serialized = serialized.replace("${OPERATIONS_JSON}", json.dumps(operations, ensure_ascii=False))
-    return json.loads(serialized)
+    def replace(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: replace(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [replace(item) for item in value]
+        if value == "${INPUT_IMAGE}":
+            return input_name
+        if value == "${RESULT_COUNT}":
+            return result_count
+        if value == "${OPERATIONS_JSON}":
+            return operations
+        if isinstance(value, str):
+            return value.replace("${INPUT_IMAGE}", input_name).replace(
+                "${RESULT_COUNT}", str(result_count)
+            )
+        return value
+
+    return replace(workflow)
