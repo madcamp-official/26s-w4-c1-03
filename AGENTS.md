@@ -29,7 +29,7 @@
 | D3 | 구도 제안 | 영뽀또식 **제안형**: 카메라를 들면 장면(리딩 라인·개방 공간·수평선)을 스캔해 최적 구도를 오버레이로 먼저 제안. 규칙 3개(삼분할 배치, 수평선 정렬, 여백 균형) × 사용자 프로필 점수화 | 불안정 시 정적 프리셋 프레임으로 다운그레이드 |
 | D4 | 계정·데이터 | **로그인 없음.** 디바이스 UUID만. **선호도·프로필·피드백·세션 기록은 전부 앱 로컬(Room) 저장** — 서버는 사용자를 저장하지 않는 무상태 처리기 | 앱 삭제 = 데이터 소실(온보딩에 고지) |
 | D5 | 서버 | FastAPI + SQLite(작업 추적 3테이블: edit_jobs, edit_job_files, schema_migrations) + 로컬 디스크 + DB 폴링 워커. **API 4개뿐**: `GET /presets`(정적 JSON), `POST /references/analyze`(무저장, 응답 후 즉시 파일 삭제), `POST /edit-jobs`, `GET /edit-jobs/{id}`(1초 폴링) | PostgreSQL·Redis·S3·로그인 API는 확장 시. 온보딩 프로필 생성·피드백 반영은 온디바이스 로직 |
-| D6 | 스타일 | 프로토타입 **6종**: Clean Social, Candid Feed, Bright Review, Soft Film, Casual Portrait, Night Street. StylePreset은 composition(구도)과 color(보정) 분리 구조의 JSON, 서버 정적 파일 + 앱 번들 폴백 | 2026-07-24 오너 확정(기존 3종 서술 폐기). `/presets`·번들 `presets.json`·P1_Plan과 일치 |
+| D6 | 스타일 | 프로토타입 **6종**: Clean Social, Candid Feed, Bright Review, Soft Film, Casual Portrait, Night Street. StylePreset은 composition(구도)과 color(보정) 분리 구조의 JSON, 서버 정적 파일 + 앱 번들 폴백 | 2026-07-24 오너 확정(기존 3종 서술 폐기). `/presets`·번들 `presets.json`·`P1_Plan_1.md`와 일치 |
 | D7 | 생성형 | 자체 GPU + ComfyUI headless. **객체 제거(LaMa) 1순위**, 큰 영역·여백 확장은 FLUX.1 Fill [dev](비상업 라이선스 — 상용화 시 교체). `GenerativeEditProvider` 인터페이스로 공급자 교체 가능. Day 1에 Gemini 무료 티어와 품질 비교 후 확정 | 명시적 실행 시에만 서버 업로드 |
 | D8 | 안전·개인정보 | 얼굴·신체·나이·인종 변경 기능 **자체를 만들지 않음**. 생성 결과는 얼굴 임베딩(InsightFace) 전후 비교로 검증, 실패 시 기본 보정 폴백(사용자에게 실패 미노출). 원본 비파괴, 서버 업로드분 즉시 삭제, EXIF 위치 스트립, 임베딩 저장 금지 | 스키마 차원에서도 강제됨 |
 | D9 | 촬영 범위 | 1인 인물 우선, 비율 4:5·1:1만 | 2인·음식·풍경 특화는 후속 |
@@ -58,17 +58,17 @@
 | 파일 | 내용 | 상태 |
 |---|---|---|
 | `AGENTS.md` | (이 파일) 프로젝트 컨텍스트·확정 결정 | 최신 |
-| `P1_Plan.md` | 담당 A 7일 상세 플랜 (일자별 체크리스트·완료 기준) | 최신, D2 반영됨 |
-| `P2_Plan.md` | 담당 B 7일 상세 플랜 (모듈 전달 일정 포함) | 최신, D2 반영됨 |
-| `감도_GAMDO_기능명세서_v1.0.md` | 모듈 M1~M15 기능 정의, API 계약(§10), 예외 규칙(§13) | 최신, D2·D4·D5 반영됨 |
-| `감도_GAMDO_DB스키마_v2.0.md` | 로컬 14테이블 + 서버 3테이블 DDL(SQLite 검증 완료), 동결 규약 | 최신 (v1.0은 폐기) |
-| `감도_GAMDO_PRD_v1.0.md` | 제품 요구사항 전체(정식 버전 범위 포함) | D2 반영됨. 스타일 6종 등 일부는 정식 버전 기준 — 프로토타입은 D6 우선 |
-| `MOODFRAME_착수_결정문서.md` | 초기 착수 결정 | **역사 문서** — D1(RN) 등 폐기된 결정 포함, 참고만 |
-| `MOODFRAME 서비스 제안서.pdf` | 최초 제안서(전체 비전) | 역사 문서 |
+| `P1_Plan_1.md` | 담당 A 7일 상세 플랜 (일자별 체크리스트·완료 기준) | 최신, D2·D11 반영 |
+| `P2_Plan_1.md` | 담당 B 7일 상세 플랜 (모듈 전달 일정·실제 파일 경로 포함) | 최신, D2·D4·D5 반영 |
+| `docs/감도_GAMDO_기능명세서_v1.0_3.md` | 모듈 M1~M15 기능 정의, API 계약(§10), 예외 규칙(§13) | 최신, D2·D4·D5 반영 |
+| `docs/감도_GAMDO_DB스키마_v2.0.md` | 로컬 14테이블 + 서버 3테이블 DDL(SQLite 검증 완료), 동결 규약 | 최신 (v1.0은 폐기) |
+| `docs/감도_GAMDO_PRD_v1.0_2.md` | 제품 요구사항 전체(정식 버전 범위 포함) | D2 반영됨. 프로토타입 범위는 D6·D11 우선 |
+| `docs/감도_GAMDO_디자인_참고서_v1.0.md` | 정보 구조·레이아웃 참고서 | 참고 자료 — D11과 충돌하는 탭/홈 구조는 채택하지 않음 |
+| `docs/MOODFRAME_2인_개발_로드맵.md` | 최초 2인 개발 로드맵 | 역사 자료 — D1(RN) 등 폐기된 결정 포함, 참고만 |
 
 ## 6. 문서 충돌 시 우선순위
 
-`AGENTS.md §3 확정 결정` > `P1/P2_Plan(§0 전제 표)` > `기능명세서` > `DB 스키마 v2.0`(데이터 구조에 한해 최우선) > `PRD` > 착수 결정 문서·제안서(역사 자료).
+`AGENTS.md §3 확정 결정` > `P1_Plan_1.md`/`P2_Plan_1.md`(§0 전제 표) > `docs/감도_GAMDO_기능명세서_v1.0_3.md` > `DB 스키마 v2.0`(데이터 구조에 한해 최우선) > `PRD` > 역사 자료.
 구버전 서술(자동 촬영, 텍스트 안내, 일치도 게이지, RN, 서버 프로필 API, **무드 탭·홈 화면·4탭 하단바·styleExplore·myStyle**(→ D11: 카메라가 홈), **프리셋 3종**(→ D6: 6종 확정))을 발견하면 이 파일 기준으로 정정하라.
 
 ## 7. 불변 규칙 (작업 중 위반 금지)
@@ -86,10 +86,10 @@
 **상태 (2026-07-24 기준): 담당 A(모바일) 앱 개발 진행 중.** 저장소·앱 코드 존재(`com.gamdo.app`, 브랜치 `main` 직커밋). 실기기(SM-G970N, Android 12)에서 검증 중.
 
 - **Day 1 완료(1-1~1-5):** 프로젝트 셋업 · 권한 처리 · 로컬 데이터(DeviceId·Room 14테이블·presets 시딩) · 화면 골격(t2 네비: onboarding→camera(홈)→album→result) · CameraX 프리뷰·촬영·저장(filesDir + MediaStore + captures)
-- **Day 2 진행 중:** 2-1 프레임 분석 파이프라인(ImageAnalysis·스로틀·디버그 HUD) 완료. 다음: 2-2 ML Kit 감지 래퍼
-- **담당 B(서버·CV·생성):** 별도 진행. 앱은 `presets.json` 번들 폴백으로 오프라인 동작 중 (B 확정본 도착 시 교체)
+- **Day 2 코드 완료 범위:** 2-1 프레임 분석 파이프라인(ImageAnalysis·스로틀·디버그 HUD), 2-2 ML Kit 얼굴·포즈 래퍼, 2-3 센서, 2-5 기본 오버레이 렌더러가 커밋되어 있다. 2-4 `FrameFeatureCalculator`와 `AlignmentEngine` 연결은 P2 전달 대기이며, Day 2 전체의 실기기 통합 판정은 아직이다.
+- **담당 B(서버·CV·생성):** 서버 디렉터리와 Kotlin 모듈 4개는 아직 저장소에 없다. 앱은 `app/src/main/assets/presets.json`의 6종 번들 폴백으로 오프라인 동작한다. 착수·전달 순서는 `P2_Plan_1.md` §0.5를 따른다.
 
-미해결/대기: B 산출물(FrameFeatureCalculator·AlignmentEngine·/edit-jobs 더미서버 등) 일정, 온보딩 카드 에셋, 테스트 사진 세트. (프리셋 종수는 6종으로 확정 — D6)
+미해결/대기: B 산출물(FrameFeatureCalculator·AlignmentEngine·`/edit-jobs` 계약 스텁/실서버 등) 일정, 온보딩 카드 에셋, 테스트 사진 세트. (프리셋 종수는 6종으로 확정 — D6)
 
 **빌드 방법:** `JAVA_HOME`을 Android Studio JBR(JDK 17)로 지정 후 `./gradlew :app:assembleDebug`. SDK는 `C:\android-sdk`. (환경 상세는 세션 메모리 참조)
 

@@ -1,6 +1,6 @@
-# P2_Plan — 담당 B: 백엔드·CV·생성 (7일 상세 로드맵)
+# P2_Plan_1 — 담당 B: 백엔드·CV·생성 (7일 상세 로드맵)
 
-> **기반 문서:** MOODFRAME 2인 개발 로드맵 · 감도(GAMDO) PRD v1.0 · 기능명세서 v1.0 · DB 스키마 v2.0
+> **기반 문서(우선순위 순):** `AGENTS.md` · `P1_Plan_1.md` · `docs/감도_GAMDO_기능명세서_v1.0_3.md` · `docs/감도_GAMDO_DB스키마_v2.0.md` · `docs/감도_GAMDO_PRD_v1.0_2.md` · `docs/MOODFRAME_2인_개발_로드맵.md`
 > **역할:** 스타일 구조·구도 점수·가이드 로직(온디바이스 Kotlin 모듈), FastAPI 서버, 편집 작업 큐, 생성형 편집 파이프라인, 결과 검증
 > **최종 산출물:** ① 앱에 탑재되는 로직 모듈 4개(Kotlin) ② 레퍼런스 분석·생성 복구가 실동작하는 서버
 
@@ -35,11 +35,31 @@
 - **Day 5 종료 시** 생성 API가 불안정하면: 고정 더미 이미지로 속이지 말고 **생성 기능을 기능 플래그로 숨기고** 기본 보정 데모를 완성한다.
 - **Day 6부터** 새 기능 추가 금지.
 
+### 0.5 현재 기준 실행 보드 (2026-07-24, 이 순서로 착수)
+
+현재 앱에는 `DetectionResult`(얼굴·포즈 정규화 좌표), `TiltReading`, `AnalysisStats`, CameraX 프리뷰와 기본 `CameraOverlay`가 있다. 내비게이션은 이미 `onboarding → camera → album → result`이며 카메라가 홈이다. 따라서 P2는 화면이나 별도 홈을 만들지 않고, 아래 계약을 지키는 순수 모듈·서버만 전달한다.
+
+| 순서 | P2가 만들 정확한 경로 | A가 연결할 기존 지점 | 통합 완료 기준 |
+|---|---|---|---|
+| 1 | `gamdo-server/app/main.py`, `gamdo-server/app/db.py`, `gamdo-server/app/routes/{presets,references,edit_jobs}.py`, `gamdo-server/migrations/001_initial.sql` | 앱의 네트워크 클라이언트 | 실기기에서 `/presets` 200, `/edit-jobs`가 queued→fallback 또는 done으로 전이 |
+| 2 | `app/src/main/java/com/gamdo/app/detect/FrameFeatureCalculator.kt`와 `app/src/test/java/com/gamdo/app/detect/FrameFeatureCalculatorTest.kt` | `detect/Detections.kt`, `detect/FrameAnalyzer.kt`, `sensor/TiltSensor.kt` | 합성 입력 10케이스 통과 후 프리뷰 디버그 값이 0~1/도 단위 범위를 벗어나지 않음 |
+| 3 | `app/src/main/java/com/gamdo/app/guide/AlignmentEngine.kt`, `app/src/main/assets/guide_config.json`, `app/src/test/java/com/gamdo/app/guide/AlignmentEngineTest.kt` | `ui/camera/CameraOverlay.kt` | 목표 프레임·실루엣·수평선만 렌더되고, aligned일 때만 세이지 색으로 전환 |
+| 4 | `app/src/main/java/com/gamdo/app/detect/ProblemDiagnoser.kt`, `app/src/test/java/com/gamdo/app/detect/ProblemDiagnoserTest.kt` | 앨범에서 선택한 사진의 기본 보정 흐름 | 기울어짐·노출·흐림 의심을 내부 진단하고 기본 보정 결과까지 도달 |
+| 5 | `app/src/main/java/com/gamdo/app/data/ProfileEngine.kt`, `app/src/main/assets/cards.json`, 해당 JVM 테스트 | 온보딩 카드 선택 → “내 감도 저장” | 추천 상위 3종이 카메라의 스타일 스트립 기본 순서에 반영되고, 별도 요약/홈 화면은 만들지 않음 |
+
+**모듈 경계는 먼저 고정한다.** `FrameFeatureCalculator`는 Android·ML Kit 타입을 받지 않는다. A의 어댑터가 `DetectionResult`·`TiltReading`·밝기 평균·흔들림 값을 `FrameFeatureInput`으로 변환하고, P2 모듈은 `primaryPersonBox`, `primaryFaceBox`, `personAreaRatio`, `headroomRatio`, `sideMargins`, `tiltDeg`, `brightnessMean`, `backlight`, `lowLight`, `poseConfidence`만 포함한 `FrameFeatures`를 반환한다. 다중 인물 처리는 방어용 주 피사체 선택일 뿐, UI 기능으로 노출하지 않는다.
+
+`AlignmentEngine`의 계약은 `FrameFeatures + StyleTarget + GuideConfig → OverlayState(targetFrame, silhouette, horizonY, visible, aligned)`로 한정한다. 내부 `matchScore`는 로그/튜닝용 별도 `GuideMetrics`에만 두며 UI 모델과 `OverlayState`에 넣지 않는다. 텍스트 지시, 화살표, 게이지, 자동 셔터를 추가하는 필드는 만들지 않는다.
+
+`ProblemDiagnoser` 역시 `Bitmap`을 직접 받지 않는다. A가 이미지에서 추출한 `ImageMetrics`(기울기·휘도 히스토그램·라플라시안 분산·여백)를 전달하면 P2 모듈은 코드·심각도·수치만 반환한다. 사용자 문구는 A의 UI 계층에서 일상 언어로 매핑하고, 수치·전문 용어는 디버그에만 둔다.
+
+서버의 Day 1 스텁은 고정 결과 이미지를 반환하지 않는다. `/edit-jobs`는 개발 중에도 실제 상태 전이만 검증하고, 생성 미구현 시 `fallback`으로 종료해 앱의 로컬 기본 보정 결과를 유지한다. `dummy:true`나 샘플 결과를 사용자에게 보여 주는 경로는 만들지 않는다. API 계약의 원본은 실행 중인 FastAPI OpenAPI(`/openapi.json`)이며, `gamdo-server/tests/`에 4개 엔드포인트 계약 테스트를 둔다.
+
 ---
 
 ## Day 1 — 서버 골격 + 생성 공급자 확정 + 계약 고정
 
-**당일 데모 완료 기준: A가 스타일을 선택해 사진을 찍고, 더미 /edit-jobs 호출로 결과 화면까지 연결된다.**
+**당일 데모 완료 기준: A가 스타일을 선택해 사진을 찍고, `/edit-jobs` 상태 전이 검증 뒤 로컬 결과 화면까지 연결된다.**
 
 ### 1-1. FastAPI 서버 골격
 
@@ -57,11 +77,12 @@
 - [ ] `GET /presets` — 정적 파일 서빙 + ETag. 동일 파일을 A에게 전달(앱 번들 폴백)
 - 완료 기준: JSON 스키마 검증 스크립트 통과, A 앱에서 6종 로드 확인
 
-### 1-3. 더미 /edit-jobs (A의 결과 화면 연결용)
+### 1-3. /edit-jobs 계약 스텁 (A의 결과 화면 연결용)
 
 - [ ] `POST /edit-jobs`: 요청 저장 후 `202 {jobId, status:"queued"}` 반환
-- [ ] `GET /edit-jobs/{id}`: 호출 2회째부터 `done` + 준비된 샘플 결과 이미지 2장 반환(더미임을 응답 필드 `dummy:true`로 명시 — Day 5에 제거)
-- 완료 기준: A의 Retrofit 연결 테스트 성공
+- [ ] `GET /edit-jobs/{id}`: 호출 2회째부터 `fallback` 반환. 생성 결과 이미지는 만들지 않으며 앱은 로컬 기본 보정 결과를 그대로 유지
+- [ ] 서버 계약 테스트: queued→processing→fallback 전이, 잘못된 jobId 404, 잘못된 요청 422를 `gamdo-server/tests/`에서 검증
+- 완료 기준: A의 네트워크 연결 테스트 성공 + 고정 이미지가 결과 화면에 노출되지 않음
 
 ### 1-4. 생성형 공급자 품질 비교 → 확정 (오후 최우선)
 
@@ -75,7 +96,7 @@
 ### 1-5. (저녁) A와 인터페이스 계약 고정 — 30분
 
 - [ ] `presets.json` 스키마 서명(이후 값 튜닝만 허용)
-- [ ] `FrameFeatures` 필드 명세 확정(Day 2 모듈의 출력 — P1_Plan Day 2-4와 동일 목록)
+- [ ] `FrameFeatures`/`FrameFeatureInput` 필드 명세 확정(`P2_Plan_1.md` §0.5를 구현 계약으로 사용)
 - [ ] `/references/analyze`, `/edit-jobs` 요청·응답 JSON 확정(기능명세서 §10) — OpenAPI 문서로 고정(`/docs` 자동 생성 확인)
 
 ---
@@ -118,7 +139,7 @@
 
 ### 3-1. AlignmentEngine.kt (순수 Kotlin — 정오까지 A에게 전달)
 
-- [ ] 입력: `FrameFeatures` + `StyleTarget` / 출력: `OverlayState(targetFrame: RectN, silhouette: SilhouetteSpec, horizonLine: Float, visible: Boolean)` + `matchScore: Float`(내부 기록 전용 — UI 표시 금지 계약)
+- [ ] 입력: `FrameFeatures` + `StyleTarget` + `GuideConfig` / 출력: `OverlayState(targetFrame: RectN, silhouette: SilhouetteSpec, horizonLine: Float, visible: Boolean, aligned: Boolean)`. `matchScore`는 별도 내부 `GuideMetrics`에만 기록(UI 표시 금지 계약)
 - [ ] 목표 프레임 산출: 프리셋 composition(anchor·scaleRange·headroomRange)을 현재 장면(개방 공간·인물 위치)에 투영해 실현 가능한 목표 영역 계산
 - [ ] 안정화 구현: 오버레이 좌표 이동평균(윈도 5프레임) + 재계산 히스테리시스(장면 대폭 변화 시에만 목표 갱신, 예: 전역 이동량 임계 초과) + 신뢰도 미달 시 마지막 안정값 유지 + 지속 불안정 시 `visible=false`
 - [ ] 인물 진입 판정: 인물 박스가 목표 프레임과 IoU 임계(기본 0.7) 이상이면 `aligned=true`(오버레이 색 전환용 — 유일한 피드백)
@@ -129,15 +150,15 @@
 ### 3-2. 오버레이 안정성 공동 튜닝
 
 - [ ] A와 함께 실기기에서 이동평균·히스테리시스 값 1차 튜닝(30분) — 좌표 튐/지연 트레이드오프 기록
-- [ ] **오후 6시 공동 판정**: 동적 오버레이 불안정 시 정적 프리셋 프레임으로 다운그레이드 결정(P1_Plan §0.4)
+- [ ] **오후 6시 공동 판정**: 동적 오버레이 불안정 시 정적 프리셋 프레임으로 다운그레이드 결정(`P1_Plan_1.md` §0.4)
 - 완료 기준: 판정 회의록 1줄 기록(동적 유지/정적 다운그레이드)
 
 ### 3-3. 서버: 편집 작업 큐 실구현 착수
 
 - [ ] 업로드 수신(multipart) → **EXIF 위치 정보 스트립** → `storage/inputs/` 저장 → `edit_jobs`/`edit_job_files` 기록
 - [ ] 워커 프로세스: `edit_jobs` 폴링(status='queued', 1초) → 순차 처리(동시 1건) → 상태 갱신(processing→validating→done)
-- [ ] 더미 처리부를 GenerativeEditProvider 호출로 교체할 자리 마련(인터페이스 연결)
-- 완료 기준: 업로드→큐→상태 전이→더미 결과까지 로그로 추적 가능
+- [ ] 상태 스텁을 `GenerativeEditProvider` 호출로 교체할 자리 마련(인터페이스 연결)
+- 완료 기준: 업로드→큐→상태 전이→fallback 또는 실제 결과까지 로그로 추적 가능
 
 ---
 
@@ -147,8 +168,8 @@
 
 ### 4-1. ProblemDiagnoser.kt (순수 Kotlin — 정오까지 A에게 전달)
 
-- [ ] 입력: 이미지 비트맵(축소본) + FrameFeatures(있으면) / 출력: `List<Problem>` — `TILT(각도)`, `UNDEREXPOSED(EV추정)`, `OVEREXPOSED`, `BLUR_SUSPECT(라플라시안 분산)`, `EXCESS_MARGIN`, `BACKLIGHT`
-- [ ] 각 Problem에 사용자 표시 문구 포함: "5.2° 기울어져 있어요" — 전문 용어 금지
+- [ ] 입력: A 어댑터가 만든 `ImageMetrics`(축소 이미지의 휘도·기울기·라플라시안 분산·여백) + `FrameFeatures`(있으면) / 출력: `List<Problem>` — `TILT`, `UNDEREXPOSED`, `OVEREXPOSED`, `BLUR_SUSPECT`, `EXCESS_MARGIN`, `BACKLIGHT`. Android `Bitmap` 타입에 의존하지 않음
+- [ ] 각 Problem은 코드·심각도·내부 수치만 포함. 사용자 표시 문구는 A UI에서 일상 언어로 매핑하고 전문 용어·수치 노출은 하지 않음
 - [ ] 단위 테스트: 문제 유형별 샘플 이미지 6장 → 기대 진단
 - 완료 기준: 테스트 통과, A의 사진 살리기 화면에 진단 칩 표시
 
@@ -191,7 +212,7 @@
 
 ### 5-2. /edit-jobs 실서비스 전환
 
-- [ ] 더미 응답 제거(`dummy:true` 삭제), 실제 파이프라인 연결 확인
+- [ ] Day 1의 fallback 상태 스텁을 실제 파이프라인으로 교체하고, 실제 생성 결과가 있을 때만 `done`으로 전이
 - [ ] 진행 상태 세분화: `progress_stage` 갱신(removing→validating), 폴링 응답에 포함
 - [ ] (여력 시) 여백 확장 operation: FLUX.1 Fill 아웃페인팅 — 상한 원본의 30%, 방향별(top/left/right)
 - [ ] 동시 요청 방어: 디바이스당 진행 중 job 1개 제한(초과 시 409)
@@ -211,10 +232,9 @@
 ### 6-1. ProfileEngine.kt (순수 Kotlin — 정오까지 A에게 전달)
 
 - [ ] 온보딩 프로필 생성: 카드 특성 벡터(`cards.json`) 가중 평균 + 차원별 확신도(분산 기반) → composition/color 분리 프로필
-- [ ] 요약 문구 생성: 특성값→일상 언어 템플릿("밝은 자연광과 넓은 배경을 좋아하시네요")
-- [ ] 추천 스타일: 프리셋 6종과 프로필 벡터 거리 → 정렬 후 상위 3종 반환
+- [ ] 추천 스타일: 프리셋 6종과 프로필 벡터 거리 → 정렬 후 상위 3종 반환. 반환값은 카메라 스타일 스트립의 기본 순서에만 반영하며, 별도 요약/내 스타일 화면을 만들지 않음
 - [ ] 피드백 반영: 5개 선택지 → 구도/색감 프로필 분리 반영(지수이동평균 α=0.3), "색감 별로"는 color만 조정
-- [ ] 단위 테스트: 상이한 카드 선택 2세트 → 상이한 요약·추천 / "색감 별로" 2회 → colorTemperature 보정치 변화
+- [ ] 단위 테스트: 상이한 카드 선택 2세트 → 상이한 추천 상위 3종 / "색감 별로" 2회 → colorTemperature 보정치 변화
 - 완료 기준: 테스트 통과, A의 온보딩·피드백 화면에서 실동작
 
 ### 6-2. cards.json + 온보딩 카드 에셋 마감
@@ -273,16 +293,16 @@
 
 **끝까지 지키는 것:** presets 6종, FrameFeatureCalculator, AlignmentEngine, 레퍼런스 분석, 객체 제거 1기능, 얼굴 검증·폴백, 업로드 자동 삭제.
 
-## 부록 B. A에게 전달하는 산출물 일정 (P1_Plan 부록 B와 동일 — 지연 시 즉시 공유)
+## 부록 B. A에게 전달하는 산출물 일정 (`P1_Plan_1.md` 부록 B와 동일 — 지연 시 즉시 공유)
 
 | 시점 | 전달물 | 완료 조건 |
 |---|---|---|
-| Day 1 저녁 | presets.json 6종 + /edit-jobs 더미 + API 계약(OpenAPI) | A 앱에서 호출 성공 |
-| Day 2 정오 | FrameFeatureCalculator.kt + 테스트 10케이스 | 테스트 전부 통과 |
-| Day 3 정오 | AlignmentEngine.kt + guide_config.json + 오버레이 좌표 테스트 4종 | 테스트 전부 통과 |
-| Day 4 정오 | ProblemDiagnoser.kt + 테스트 6케이스 | 테스트 전부 통과 |
-| Day 5 정오 | /references/analyze 실서버 + /edit-jobs 실서버 | 실기기 왕복 성공 |
-| Day 6 정오 | ProfileEngine.kt + cards.json + 카드 에셋 | 테스트 통과 + 커버 매트릭스 완성 |
+| Day 1 저녁 | `gamdo-server/` 골격, `presets.json` 6종, `/edit-jobs` 상태 스텁, `/openapi.json` | A 앱에서 `/presets` 호출 성공, 스텁은 fallback만 반환 |
+| Day 2 정오 | `detect/FrameFeatureCalculator.kt` + `FrameFeatureCalculatorTest.kt` | 테스트 10케이스 전부 통과 |
+| Day 3 정오 | `guide/AlignmentEngine.kt`, `assets/guide_config.json`, `AlignmentEngineTest.kt` | 오버레이 좌표 테스트 4종 전부 통과 |
+| Day 4 정오 | `detect/ProblemDiagnoser.kt` + `ProblemDiagnoserTest.kt` | 테스트 6케이스 전부 통과 |
+| Day 5 정오 | `/references/analyze` 실서버 + `/edit-jobs` 실서버 | 실기기 왕복 성공, 생성 실패는 fallback |
+| Day 6 정오 | `data/ProfileEngine.kt`, `assets/cards.json`, 카드 에셋·테스트 | 테스트 통과 + 카메라 스타일 스트립 순서 반영 |
 
 ## 부록 C. GPU·모델 준비물 (Day 1 오전에 확인)
 
