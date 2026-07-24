@@ -96,10 +96,17 @@
 
 ### 1-4. 화면 골격 (내비게이션만, 디자인 없이)
 
-- [ ] Navigation Compose 라우트 6개: `onboarding` `home` `camera` `result/{captureId}` `styleExplore` `myStyle`
-- [ ] 온보딩 골격: 소개 1화면 → 권한 → 카드 선택(그리드 자리만) → 완료
-- [ ] 홈 골격: [바로 촬영] [사진 살리기] [레퍼런스 따라 찍기] 버튼 3개 + 스타일 3종 카드
-- 완료 기준: 모든 화면 간 이동 가능(내용은 placeholder 허용)
+- [x] Navigation Compose 라우트: `onboarding` `camera`(홈) `album` `result/{captureId}` <!-- ⚠️ t2 디자인 채택(2026-07-24 사용자 결정)으로 재구성. 무드 home·styleExplore·myStyle 제외 — 카메라가 홈, 앨범 추가 -->
+- [x] 온보딩 골격: 취향 선택(2a) → 내 감도 저장(2b) → 완료 <!-- 소개 화면은 t2에 없음. 권한은 PermissionGate(§1-2) 전역 처리. onboarding_done 플래그로 재실행 시 카메라 직행 -->
+- [ ] ~~홈 골격: [바로 촬영] [사진 살리기] [레퍼런스 따라 찍기] 버튼 3개 + 스타일 3종 카드~~ <!-- t2 채택으로 대체됨 — 무드/홈 화면 없음, 카메라(2c)가 곧 홈 -->
+- 완료 기준: 모든 화면 간 이동 가능(내용은 placeholder 허용) <!-- ✅ 실기기: onboarding(2a→2b)→camera→album→result 전 화면 이동 확인. 상태바 inset·시작 분기 정상 -->
+
+### 1-4. 진행 메모 (t2 디자인 채택)
+- **디자인 방향 변경**: `감도 화면 디자인.dc.html`의 **t2(간결화)** 채택 — 무드/홈 제거, **카메라가 홈**, 하단바 없음. 흐름 `취향 선택 → 내 감도 저장 → 카메라 → 앨범 → 보정`
+- 팔레트: 차콜 `#151714`(메인)·`#0C0D0B`(카메라) + 세이지 단일 강조 `#A3BFA0`/버튼 `#8FAE8B`. ui/theme 반영
+- 파일: `ui/navigation/`(Routes·GamdoNavHost) · `ui/onboarding` · `ui/camera/CameraScreen`(정적 골격, 실 CameraX는 1-5) · `ui/album` · `ui/result`(보정 골격, 실 파이프라인은 Day4) · `ui/components`(pill 버튼·그라데이션 플레이스홀더) · `data/SettingsRepository`(onboarding_done)
+- 미반영/보류: Pretendard 폰트 번들(폴리싱 Day7), styleExplore·myStyle(t2 제외 — 필요 시 재도입), 카드 그리드는 그라데이션 플레이스홀더(실 카드 에셋은 §6-2)
+- 📌 **문서 정합성**: t2 채택은 무드홈/6라우트를 전제한 PRD·기능명세서 서술과 충돌. AGENTS.md 우선순위(사용자 결정 > 플랜)상 t2가 우선이나, 관련 문서 갱신 필요 여부는 사용자 확인 대기
 
 ### 1-5. CameraX 프리뷰 + 촬영 + 저장
 

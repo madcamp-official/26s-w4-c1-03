@@ -33,4 +33,6 @@ class AppContainer(context: Context) {
         presetsDao = database.presetsDao(),
         json = json,
     )
+
+    val settingsRepository: SettingsRepository = SettingsRepository(database.appSettingsDao())
 }

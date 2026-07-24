@@ -5,12 +5,12 @@
     android:viewportHeight="108">
     <!-- Aperture-style mark: mint ring with a center dot -->
     <path
-        android:fillColor="#4ADE80"
+        android:fillColor="#A3BFA0"
         android:pathData="M54,32 a22,22 0 1,0 0,44 a22,22 0 1,0 0,-44 z" />
     <path
-        android:fillColor="#0E0E10"
+        android:fillColor="#151714"
         android:pathData="M54,41 a13,13 0 1,0 0,26 a13,13 0 1,0 0,-26 z" />
     <path
-        android:fillColor="#4ADE80"
+        android:fillColor="#A3BFA0"
         android:pathData="M54,48 a6,6 0 1,0 0,12 a6,6 0 1,0 0,-12 z" />
 </vector>

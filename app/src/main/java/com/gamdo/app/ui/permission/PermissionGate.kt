@@ -1,5 +1,6 @@
 package com.gamdo.app.ui.permission
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,7 +44,9 @@ fun PermissionGate(
     var requested by rememberSaveable { mutableStateOf(false) }
 
     if (state.allPermissionsGranted) {
-        content()
+        // Apply [modifier] (carries Scaffold insets) so gated content sits below
+        // the system bars instead of drawing underneath them.
+        Box(modifier) { content() }
         return
     }
 

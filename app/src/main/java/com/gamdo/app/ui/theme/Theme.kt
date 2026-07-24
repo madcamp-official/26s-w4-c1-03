@@ -4,20 +4,22 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 
-// The app is dark-only by product decision (D10). No dynamic color, no light
-// scheme — the photo is the subject and the chrome stays charcoal.
+// Dark-only by product decision (D10): charcoal chrome, sage single accent, no
+// dynamic color, no light scheme — the photo is the subject.
 private val GamdoDarkColors = darkColorScheme(
-    primary = Mint,
-    onPrimary = Charcoal900,
-    secondary = MintDim,
-    onSecondary = Charcoal900,
+    primary = SageButton,
+    onPrimary = OnSage,
+    secondary = Sage,
+    onSecondary = OnSage,
+    tertiary = SageDim,
+    onTertiary = OnSage,
     background = Charcoal900,
     onBackground = OnDarkHigh,
-    surface = Charcoal800,
+    surface = Charcoal700,
     onSurface = OnDarkHigh,
-    surfaceVariant = Charcoal700,
+    surfaceVariant = Charcoal600,
     onSurfaceVariant = OnDarkMedium,
-    outline = Charcoal600,
+    outline = OutlineDim,
 )
 
 @Composable
