@@ -57,31 +57,43 @@
 
 ---
 
+### 0.6 구현 현황 (2026-07-24 최신 감사)
+
+| 작업 축 | 현재 상태 | 검증 근거 | 남은 판정 |
+|---|---|---|---|
+| 온디바이스 가이드 | `FrameFeatureCalculator`·`MatchScoreCalculator`·`AlignmentEngine`·`ProblemDiagnoser` 구현 | Android JVM 테스트 통과 | 실기기에서 오버레이 튐·정렬 색 전환 확인 |
+| 카메라 연결 | `guide_config.json` 로딩, CameraOverlay 목표 프레임·실루엣 연결 | Debug APK 빌드·단위 테스트 통과 | 연결 기기 없음 |
+| 레퍼런스 분석 | 무저장 `POST /references/analyze`, 팔레트·히스토그램·Target/Color 변환 구현 | 서버 계약 테스트 통과 | 10장 세트·5초 성능·MediaPipe 보강 |
+| 편집 큐·보관 | SQLite 큐, 워커, EXIF 스트립, 입력 purge 구현 | 서버 워커 테스트 통과 | 결과 수신 후 24h purge·운영 워커 기동 |
+| 생성·검증 | ComfyUI 업로드/프롬프트 어댑터, 후보 검증 경계·fallback 구현 | 공급자 미설정 fallback·검증 테스트 통과 | GPU·LaMa·InsightFace 배포 및 실제 후보 검증 |
+
+---
+
 ## Day 1 — 서버 골격 + 생성 공급자 확정 + 계약 고정
 
 **당일 데모 완료 기준: A가 스타일을 선택해 사진을 찍고, `/edit-jobs` 상태 전이 검증 뒤 로컬 결과 화면까지 연결된다.**
 
 ### 1-1. FastAPI 서버 골격
 
-- [ ] 프로젝트 생성: `gamdo-server/` — FastAPI + uvicorn + SQLAlchemy(or sqlite3 직접) + Pillow
-- [ ] SQLite 초기화 — **DB 스키마 v2.0 §4 그대로 3테이블**: `edit_jobs`, `edit_job_files`, `schema_migrations`. DDL 파일 `migrations/001_initial.sql`
-- [ ] 저장 디렉토리: `storage/inputs/`, `storage/results/`, `storage/tmp/`
-- [ ] `X-Device-Id` 헤더 미들웨어(없으면 400), 에러 응답 규격 `{code, message, retryable}`
+- [x] 프로젝트 생성: `gamdo-server/` — FastAPI + uvicorn + sqlite3 직접 + Pillow <!-- 2026-07-24: FastAPI 테스트 통과 -->
+- [x] SQLite 초기화 — **DB 스키마 v2.0 §4 그대로 3테이블**: `edit_jobs`, `edit_job_files`, `schema_migrations`. DDL 파일 `migrations/001_initial.sql`
+- [x] 저장 디렉토리: `storage/inputs/`, `storage/results/`, `storage/tmp/`
+- [x] `X-Device-Id` 헤더 미들웨어(없으면 400), 에러 응답 규격 `{code, message, retryable}`
 - [ ] 앱에서 접근 가능한 네트워크 구성 확인(같은 Wi-Fi, 방화벽) — **데모 환경에서도 유효한 방식으로**(핫스팟 대비)
 - 완료 기준: 실기기 앱에서 `GET /presets` 200 응답
 
 ### 1-2. 프리셋 6종 초안 + 정적 서빙
 
-- [ ] `presets.json` 작성 — 스키마는 기능명세서 M3-01, **6종**: Clean Social(정돈 배경·삼분할·따뜻한 색감), Candid Feed(즉흥 프레이밍·자연스러운 자세·약한 입자감), Bright Review(중앙 피사체·밝은 노출·선명), Soft Film(넓은 배경·중심 이탈 허용·낮은 대비·페이드·입자), Casual Portrait(멀리서 촬영·자연스러운 시선·배경 포함), Night Street(조명 강조·그림자 유지·높은 색 대비)
+- [x] `presets.json` 작성 — 스키마는 기능명세서 M3-01, **6종**: Clean Social(정돈 배경·삼분할·따뜻한 색감), Candid Feed(즉흥 프레이밍·자연스러운 자세·약한 입자감), Bright Review(중앙 피사체·밝은 노출·선명), Soft Film(넓은 배경·중심 이탈 허용·낮은 대비·페이드·입자), Casual Portrait(멀리서 촬영·자연스러운 시선·배경 포함), Night Street(조명 강조·그림자 유지·높은 색 대비)
 - [ ] 각 프리셋에 composition(subjectScaleRange, subjectAnchorX/Y, headroomRange, horizonPosition, cameraPitchRange)과 color(exposureBias, colorTemperature, contrast, saturation, grain, vignette, fade) 초기값 기입 — 근거 사진 1장씩 첨부(튜닝 기준점)
-- [ ] `GET /presets` — 정적 파일 서빙 + ETag. 동일 파일을 A에게 전달(앱 번들 폴백)
+- [x] `GET /presets` — 정적 파일 서빙 + ETag. 동일 파일을 A에게 전달(앱 번들 폴백) <!-- 서버 계약 테스트 통과 -->
 - 완료 기준: JSON 스키마 검증 스크립트 통과, A 앱에서 6종 로드 확인
 
 ### 1-3. /edit-jobs 계약 스텁 (A의 결과 화면 연결용)
 
-- [ ] `POST /edit-jobs`: 요청 저장 후 `202 {jobId, status:"queued"}` 반환
-- [ ] `GET /edit-jobs/{id}`: 호출 2회째부터 `fallback` 반환. 생성 결과 이미지는 만들지 않으며 앱은 로컬 기본 보정 결과를 그대로 유지
-- [ ] 서버 계약 테스트: queued→processing→fallback 전이, 잘못된 jobId 404, 잘못된 요청 422를 `gamdo-server/tests/`에서 검증
+- [x] `POST /edit-jobs`: 요청 저장 후 `202 {jobId, status:"queued"}` 반환
+- [x] `GET /edit-jobs/{id}`: 호출 2회째부터 `fallback` 반환. 생성 결과 이미지는 만들지 않으며 앱은 로컬 기본 보정 결과를 그대로 유지
+- [x] 서버 계약 테스트: queued→processing→fallback 전이, 잘못된 jobId 404, 잘못된 요청 422를 `gamdo-server/tests/`에서 검증
 - 완료 기준: A의 네트워크 연결 테스트 성공 + 고정 이미지가 결과 화면에 노출되지 않음
 
 ### 1-4. 생성형 공급자 품질 비교 → 확정 (오후 최우선)
@@ -90,14 +102,14 @@
 - [ ] 비교 테스트: 동일한 "망한 사진" 5장(행인·전봇대 포함)으로 ①ComfyUI(LaMa/FLUX) ②Gemini 이미지 편집 무료 티어 실행
 - [ ] 판정 기준표 작성·기록: 얼굴 불변 여부 / 제거 흔적 자연스러움 / 응답 시간 / 호출 제한이 리허설(30회+)을 버티는가
 - [ ] **공급자 확정 문서화**(`docs/provider_decision.md`) — 이후 변경 금지
-- [ ] `GenerativeEditProvider` 인터페이스 정의: `remove_objects(image, masks) -> candidates`, `outpaint(image, direction, ratio) -> candidates` — 구현체 교체 가능 구조
+- [ ] `GenerativeEditProvider` 인터페이스 정의: `remove_objects(image, masks) -> candidates`, `outpaint(image, direction, ratio) -> candidates` — 구현체 교체 가능 구조 <!-- `remove_objects`와 ComfyUI 어댑터만 구현. outpaint·실제 모델 배포 대기 -->
 - 완료 기준: 확정 공급자로 객체 제거 1장 성공 샘플 확보
 
 ### 1-5. (저녁) A와 인터페이스 계약 고정 — 30분
 
 - [ ] `presets.json` 스키마 서명(이후 값 튜닝만 허용)
-- [ ] `FrameFeatures`/`FrameFeatureInput` 필드 명세 확정(`P2_Plan_1.md` §0.5를 구현 계약으로 사용)
-- [ ] `/references/analyze`, `/edit-jobs` 요청·응답 JSON 확정(기능명세서 §10) — OpenAPI 문서로 고정(`/docs` 자동 생성 확인)
+- [x] `FrameFeatures`/`FrameFeatureInput` 필드 명세 확정(`P2_Plan_1.md` §0.5를 구현 계약으로 사용) <!-- Kotlin 구현·JVM 테스트 완료 -->
+- [x] `/references/analyze`, `/edit-jobs` 요청·응답 JSON 구현·계약 테스트 <!-- FastAPI OpenAPI 자동 생성, 서버 테스트 통과 -->
 
 ---
 
@@ -107,19 +119,19 @@
 
 ### 2-1. FrameFeatureCalculator.kt (순수 Kotlin — 정오까지 A에게 전달)
 
-- [ ] 입력: ML Kit 얼굴/포즈 결과(정규화 좌표), 센서 tilt, 프레임 밝기 샘플 / 출력: `FrameFeatures` 데이터 클래스
-- [ ] 계산 구현: personBox(포즈 랜드마크 외접), personCenter, personAreaRatio, headroom(얼굴 상단↔프레임 상단), sideMargins, tiltDeg, brightnessMean, backlightFlag(얼굴 영역 대비 배경 밝기 비 1.8배 이상), lowLightFlag, poseConfidence
-- [ ] 다중 인물 시 주 피사체 규칙: 면적 최대 + 중앙 근접 가중(1인 우선 범위지만 방어 코드)
-- [ ] JVM 단위 테스트 10케이스+ (합성 좌표 입력 → 기대값): 중앙 인물, 좌측 치우침, 큰 얼굴, headroom 과다, 역광 등
+- [x] 입력: ML Kit 얼굴/포즈 결과(정규화 좌표), 센서 tilt, 프레임 밝기 샘플 / 출력: `FrameFeatures` 데이터 클래스
+- [x] 계산 구현: personBox(포즈 랜드마크 외접), personCenter, personAreaRatio, headroom(얼굴 상단↔프레임 상단), sideMargins, tiltDeg, brightnessMean, backlightFlag(얼굴 영역 대비 배경 밝기 비 1.8배 이상), lowLightFlag, poseConfidence
+- [x] 다중 인물 시 주 피사체 규칙: 면적 최대 + 중앙 근접 가중(1인 우선 범위지만 방어 코드)
+- [x] JVM 단위 테스트 10케이스+ (합성 좌표 입력 → 기대값): 중앙 인물, 좌측 치우침, 큰 얼굴, headroom 과다, 역광 등
 - 완료 기준: 테스트 전부 통과, A 통합 후 실기기 값이 상식적으로 동작
 
 ### 2-2. matchScore 계산기 (FrameFeatureCalculator에 포함)
 
-- [ ] 로드맵 §4.2 공식 그대로 구현(설명 가능성 우선):
+- [x] 로드맵 §4.2 공식 그대로 구현(설명 가능성 우선):
   `matchScore = 0.35*composition + 0.25*subjectScale + 0.15*headroom + 0.15*horizon + 0.10*lighting`
-- [ ] 각 항은 0~1 정규화: 목표 범위 내=1, 범위 밖은 거리 비례 감쇠(선형, 컷오프 2배 거리)
-- [ ] `StyleTarget` 변환기: `presets.json`의 composition → 목표값 객체(A의 AlignmentEngine 입력)
-- [ ] 단위 테스트: 프리셋 6종 × 장면 4종 조합의 점수 스냅샷 테스트
+- [x] 각 항은 0~1 정규화: 목표 범위 내=1, 범위 밖은 거리 비례 감쇠(선형, 컷오프 2배 거리)
+- [x] `StyleTarget` 변환기: `presets.json`의 composition → 목표값 객체(A의 AlignmentEngine 입력)
+- [x] 단위 테스트: 프리셋 6종 × 장면 4종 조합의 점수 스냅샷 테스트
 - 완료 기준: 같은 프레임에 프리셋을 바꾸면 점수가 다르게 나온다(테스트로 증명)
 
 ### 2-3. 서버: 레퍼런스 분석 파이프라인 착수 (Day 5 완성 목표의 절반)
@@ -139,12 +151,12 @@
 
 ### 3-1. AlignmentEngine.kt (순수 Kotlin — 정오까지 A에게 전달)
 
-- [ ] 입력: `FrameFeatures` + `StyleTarget` + `GuideConfig` / 출력: `OverlayState(targetFrame: RectN, silhouette: SilhouetteSpec, horizonLine: Float, visible: Boolean, aligned: Boolean)`. `matchScore`는 별도 내부 `GuideMetrics`에만 기록(UI 표시 금지 계약)
-- [ ] 목표 프레임 산출: 프리셋 composition(anchor·scaleRange·headroomRange)을 현재 장면(개방 공간·인물 위치)에 투영해 실현 가능한 목표 영역 계산
-- [ ] 안정화 구현: 오버레이 좌표 이동평균(윈도 5프레임) + 재계산 히스테리시스(장면 대폭 변화 시에만 목표 갱신, 예: 전역 이동량 임계 초과) + 신뢰도 미달 시 마지막 안정값 유지 + 지속 불안정 시 `visible=false`
-- [ ] 인물 진입 판정: 인물 박스가 목표 프레임과 IoU 임계(기본 0.7) 이상이면 `aligned=true`(오버레이 색 전환용 — 유일한 피드백)
-- [ ] **`guide_config.json`**: 이동평균 윈도·IoU 임계·재계산 임계 등 전부 외부화(현장 튜닝용) — 기본값 명시
-- [ ] 단위 테스트 4종: 중앙 장면→기대 목표 좌표 / 인물 진입→aligned 전환 / 흔들리는 입력→좌표 분산 임계 이하(안정화 증명) / 신뢰도 미달→visible 유지 로직
+- [x] 입력: `FrameFeatures` + `StyleTarget` + `GuideConfig` / 출력: `OverlayState(targetFrame: RectN, silhouette: SilhouetteSpec, horizonLine: Float, visible: Boolean, aligned: Boolean)`. `matchScore`는 별도 내부 `GuideMetrics`에만 기록(UI 표시 금지 계약)
+- [x] 목표 프레임 산출: 프리셋 composition(anchor·scaleRange·headroomRange)을 현재 장면(개방 공간·인물 위치)에 투영해 실현 가능한 목표 영역 계산 <!-- 현재는 프리셋 기반, 장면 구조 스캔은 후속 -->
+- [x] 안정화 구현: 오버레이 좌표 이동평균(윈도 5프레임) + 재계산 히스테리시스(장면 대폭 변화 시에만 목표 갱신, 예: 전역 이동량 임계 초과) + 신뢰도 미달 시 마지막 안정값 유지 + 지속 불안정 시 `visible=false`
+- [x] 인물 진입 판정: 인물 박스가 목표 프레임과 IoU 임계(기본 0.7) 이상이면 `aligned=true`(오버레이 색 전환용 — 유일한 피드백)
+- [x] **`guide_config.json`**: 이동평균 윈도·IoU 임계·재계산 임계 등 전부 외부화(현장 튜닝용) — 기본값 명시
+- [x] 단위 테스트 4종: 중앙 장면→기대 목표 좌표 / 인물 진입→aligned 전환 / 흔들리는 입력→좌표 분산 임계 이하(안정화 증명) / 신뢰도 미달→visible 유지 로직
 - 완료 기준: 테스트 4종 통과 + 실기기에서 오버레이 깜빡임 없음(A와 저녁 판정)
 
 ### 3-2. 오버레이 안정성 공동 튜닝
@@ -155,9 +167,9 @@
 
 ### 3-3. 서버: 편집 작업 큐 실구현 착수
 
-- [ ] 업로드 수신(multipart) → **EXIF 위치 정보 스트립** → `storage/inputs/` 저장 → `edit_jobs`/`edit_job_files` 기록
-- [ ] 워커 프로세스: `edit_jobs` 폴링(status='queued', 1초) → 순차 처리(동시 1건) → 상태 갱신(processing→validating→done)
-- [ ] 상태 스텁을 `GenerativeEditProvider` 호출로 교체할 자리 마련(인터페이스 연결)
+- [x] 업로드 수신(multipart) → **EXIF 위치 정보 스트립** → `storage/inputs/` 저장 → `edit_jobs`/`edit_job_files` 기록
+- [x] 워커 프로세스: `edit_jobs` 폴링(status='queued', 1초) → 순차 처리(동시 1건) → 상태 갱신(processing→validating→done) <!-- `python -m app.worker`; 실제 공급자 미설정 시 fallback -->
+- [x] 상태 스텁을 `GenerativeEditProvider` 호출로 교체할 자리 마련(인터페이스 연결)
 - 완료 기준: 업로드→큐→상태 전이→fallback 또는 실제 결과까지 로그로 추적 가능
 
 ---
@@ -168,9 +180,9 @@
 
 ### 4-1. ProblemDiagnoser.kt (순수 Kotlin — 정오까지 A에게 전달)
 
-- [ ] 입력: A 어댑터가 만든 `ImageMetrics`(축소 이미지의 휘도·기울기·라플라시안 분산·여백) + `FrameFeatures`(있으면) / 출력: `List<Problem>` — `TILT`, `UNDEREXPOSED`, `OVEREXPOSED`, `BLUR_SUSPECT`, `EXCESS_MARGIN`, `BACKLIGHT`. Android `Bitmap` 타입에 의존하지 않음
-- [ ] 각 Problem은 코드·심각도·내부 수치만 포함. 사용자 표시 문구는 A UI에서 일상 언어로 매핑하고 전문 용어·수치 노출은 하지 않음
-- [ ] 단위 테스트: 문제 유형별 샘플 이미지 6장 → 기대 진단
+- [x] 입력: A 어댑터가 만든 `ImageMetrics`(축소 이미지의 휘도·기울기·라플라시안 분산·여백) + `FrameFeatures`(있으면) / 출력: `List<Problem>` — `TILT`, `UNDEREXPOSED`, `OVEREXPOSED`, `BLUR_SUSPECT`, `EXCESS_MARGIN`, `BACKLIGHT`. Android `Bitmap` 타입에 의존하지 않음
+- [x] 각 Problem은 코드·심각도·내부 수치만 포함. 사용자 표시 문구는 A UI에서 일상 언어로 매핑하고 전문 용어·수치 노출은 하지 않음
+- [x] 단위 테스트: 문제 유형별 합성 수치 6케이스 → 기대 진단 <!-- 실제 이미지 어댑터·UI 연결은 A 통합 대기 -->
 - 완료 기준: 테스트 통과, A의 사진 살리기 화면에 진단 칩 표시
 
 ### 4-2. 객체 제거 파이프라인 (생성 기능 1순위 — 실구현)
@@ -192,8 +204,8 @@
 
 ### 4-4. 보관 정책 구현
 
-- [ ] job 종료 시 입력 파일 `purge_after=now`, 결과는 `delivered_at`+24h
-- [ ] 삭제 배치(1분 주기): purge 대상 파일 삭제 + `purged_at` 기록
+- [ ] job 종료 시 입력 파일 `purge_after=now`, 결과는 `delivered_at`+24h <!-- 입력 즉시 purge는 구현·테스트 완료, 결과 수신 확인 후 24h는 미구현 -->
+- [x] 삭제 배치(1분 주기): purge 대상 파일 삭제 + `purged_at` 기록 <!-- 워커 tick에서 purge 처리; 실제 1분 서비스 기동 검증 대기 -->
 - 완료 기준: job 완료 1분 후 `storage/inputs/`가 비어 있음을 확인하는 테스트 스크립트 통과
 
 ---
@@ -204,10 +216,10 @@
 
 ### 5-1. POST /references/analyze 완성
 
-- [ ] Day 2-3 분석 함수를 API로 노출: multipart 수신 → 분석 → 응답(기능명세서 §10.2 스키마: analysis + targetComposition + colorTarget) → **임시 파일 즉시 삭제**(DB 기록 없음)
-- [ ] 응답 시간 5초 이내(초과 시 분석 해상도 축소), 타임아웃·비인물 사진(인물 0명) 응답 처리
-- [ ] targetComposition 변환: 레퍼런스의 인물 배치·비율 → StyleTarget 형식(A의 AlignmentEngine이 그대로 소비)
-- [ ] colorTarget 변환: 팔레트·색온도 → A의 스타일 단계 파라미터 매핑표
+- [x] Day 2-3 분석 함수를 API로 노출: multipart 수신 → 분석 → 응답(기능명세서 §10.2 스키마: analysis + targetComposition + colorTarget) → **임시 파일 즉시 삭제**(DB 기록 없음) <!-- Pillow 메모리 분석 구현 -->
+- [x] 응답 시간 5초 이내(초과 시 분석 해상도 축소), 타임아웃·비인물 사진(인물 0명) 응답 처리 <!-- 소형 테스트 이미지 계약 테스트; 10장 성능 검증은 대기 -->
+- [x] targetComposition 변환: 레퍼런스의 인물 배치·비율 → StyleTarget 형식(A의 AlignmentEngine이 그대로 소비)
+- [x] colorTarget 변환: 팔레트·색온도 → A의 스타일 단계 파라미터 매핑표
 - 완료 기준: A의 레퍼런스 모드에서 분석→실루엣 오버레이 표시가 실동작(저녁 통합 테스트)
 
 ### 5-2. /edit-jobs 실서비스 전환
