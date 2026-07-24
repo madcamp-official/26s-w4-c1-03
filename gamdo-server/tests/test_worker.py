@@ -85,3 +85,56 @@ def test_worker_done_requires_provider_and_identity_validation(tmp_path: Path, m
     assert job is not None
     assert job["status"] == "done"
     assert len(database.get_results("job_worker_001")) == 1
+
+
+def test_result_delivery_schedules_24_hour_purge(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("app.db.DEFAULT_DB_PATH", tmp_path / "gamdo.sqlite3")
+    database = Database()
+    database.initialize()
+    input_path = tmp_path / "inputs" / "job_worker_001.png"
+    input_path.parent.mkdir()
+    seed_job(database, input_path)
+    output_path = tmp_path / "results" / "candidate.png"
+    output_path.parent.mkdir()
+    worker = JobWorker(database, provider=CopyProvider(output_path), validator=CandidateValidator(SameIdentity()))
+    assert worker.process_once() is True
+    database.mark_results_delivered("job_worker_001")
+    result = database.get_results("job_worker_001")[0]
+    assert result["delivered_at"] is not None
+    assert result["purge_after"] - result["delivered_at"] == 24 * 60 * 60 * 1000
+    with database.connect() as connection:
+        connection.execute("UPDATE edit_job_files SET purge_after = 1 WHERE id = ?", (result["id"],))
+    assert worker.purge_once() == 1
+    assert not output_path.exists()
+    assert database.get_results("job_worker_001")[0]["purged_at"] is not None
+
+
+def test_stale_processing_job_is_failed_by_worker(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("app.db.DEFAULT_DB_PATH", tmp_path / "gamdo.sqlite3")
+    database = Database()
+    database.initialize()
+    input_path = tmp_path / "inputs" / "job_worker_001.png"
+    input_path.parent.mkdir()
+    seed_job(database, input_path)
+    assert database.claim_next_queued() is not None
+    with database.connect() as connection:
+        connection.execute("UPDATE edit_jobs SET updated_at = 1 WHERE id = ?", ("job_worker_001",))
+    worker = JobWorker(database)
+    assert worker.process_once() is False
+    job = database.get_job("job_worker_001")
+    assert job["status"] == "failed"
+    assert job["fail_reason"] == "processing_timeout"
+
+
+def test_old_terminal_job_metadata_is_purged_after_seven_days(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("app.db.DEFAULT_DB_PATH", tmp_path / "gamdo.sqlite3")
+    database = Database()
+    database.initialize()
+    input_path = tmp_path / "inputs" / "job_worker_001.png"
+    input_path.parent.mkdir()
+    seed_job(database, input_path)
+    database.transition_job("job_worker_001", "fallback", fail_reason="provider_not_ready")
+    with database.connect() as connection:
+        connection.execute("UPDATE edit_jobs SET finished_at = 1, updated_at = 1 WHERE id = ?", ("job_worker_001",))
+    assert JobWorker(database).purge_once() == 1
+    assert database.get_job("job_worker_001") is None

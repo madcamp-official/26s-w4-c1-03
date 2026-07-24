@@ -15,6 +15,10 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+RESULT_RETENTION_MS = 24 * 60 * 60 * 1000
+JOB_METADATA_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+
+
 class Database:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or DEFAULT_DB_PATH
@@ -206,6 +210,35 @@ class Database:
                 (timestamp, timestamp, job_id),
             )
 
+    def mark_results_delivered(self, job_id: str) -> None:
+        timestamp = now_ms()
+        with self.connect() as connection:
+            connection.execute(
+                """
+                UPDATE edit_job_files
+                SET delivered_at = COALESCE(delivered_at, ?),
+                    purge_after = COALESCE(purge_after, ?), updated_at = ?
+                WHERE job_id = ? AND role = 'result' AND purged_at IS NULL
+                """,
+                (timestamp, timestamp + RESULT_RETENTION_MS, timestamp, job_id),
+            )
+
+    def recover_stale_jobs(self, timeout_ms: int) -> int:
+        cutoff = now_ms() - timeout_ms
+        timestamp = now_ms()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE edit_jobs
+                SET status = 'failed', fail_reason = 'processing_timeout',
+                    finished_at = ?, updated_at = ?
+                WHERE status IN ('processing', 'validating')
+                  AND updated_at <= ?
+                """,
+                (timestamp, timestamp, cutoff),
+            )
+            return cursor.rowcount
+
     def expired_files(self) -> list[sqlite3.Row]:
         with self.connect() as connection:
             return connection.execute(
@@ -223,3 +256,19 @@ class Database:
                 "UPDATE edit_job_files SET purged_at = ?, updated_at = ? WHERE id = ?",
                 (timestamp, timestamp, file_id),
             )
+
+    def purge_old_job_metadata(self, retention_ms: int = JOB_METADATA_RETENTION_MS) -> int:
+        cutoff = now_ms() - retention_ms
+        with self.connect() as connection:
+            old_jobs = connection.execute(
+                """
+                SELECT id FROM edit_jobs
+                WHERE status IN ('done', 'failed', 'fallback', 'canceled')
+                  AND finished_at IS NOT NULL AND finished_at <= ?
+                """,
+                (cutoff,),
+            ).fetchall()
+            for job in old_jobs:
+                connection.execute("DELETE FROM edit_job_files WHERE job_id = ?", (job["id"],))
+                connection.execute("DELETE FROM edit_jobs WHERE id = ?", (job["id"],))
+            return len(old_jobs)

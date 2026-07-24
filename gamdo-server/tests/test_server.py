@@ -34,6 +34,15 @@ def test_health_and_presets() -> None:
         assert response.headers["etag"]
 
 
+def test_presets_have_six_complete_composition_and_color_profiles() -> None:
+    with TestClient(app) as client:
+        response = client.get("/api/v1/presets", headers={"X-Device-Id": "test-device"})
+    assert response.status_code == 200
+    for preset in response.json():
+        assert {"subjectScaleRange", "subjectPosition", "headroomRange", "horizonPosition", "cameraPitchRange"} <= set(preset["composition"])
+        assert {"exposureBias", "colorTemperature", "contrast", "saturation", "grain", "vignette", "fade"} <= set(preset["color"])
+
+
 def test_missing_device_header_is_standardized() -> None:
     with TestClient(app) as client:
         response = client.get("/api/v1/presets")
@@ -81,3 +90,20 @@ def test_reference_analysis_is_synchronous_and_does_not_persist_upload() -> None
         assert len(payload["analysis"]["palette"]) == 5
         assert len(payload["analysis"]["luminanceHistogram"]) == 16
         assert payload["targetComposition"]["targetAspectRatio"] in {"4:5", "1:1"}
+
+
+def test_edit_job_rejects_large_edit_area() -> None:
+    form = {
+        "jobId": "job_area_limit",
+        "captureRef": "cap_area_limit",
+        "operations": json.dumps([{"type": "remove_objects", "maskAreaRatio": 0.31}]),
+    }
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/edit-jobs",
+            headers={"X-Device-Id": "area-device"},
+            data=form,
+            files={"image": ("input.png", image_bytes(), "image/png")},
+        )
+    assert response.status_code == 422
+    assert response.json()["code"] == "edit_area_limit_exceeded"

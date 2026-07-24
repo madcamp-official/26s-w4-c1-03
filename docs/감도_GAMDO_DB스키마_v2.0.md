@@ -355,7 +355,7 @@ CREATE TABLE schema_migrations (
 
 ## 8. 시드·초기화
 
-1. 앱 번들: `cards.json`(카드 20장 메타), 프리셋 6종 기본값(서버 미접속 시 폴백)
+1. 앱 번들: `cards.json`(현재 카드 메타 16장, 실제 이미지·라이선스 확인 후 15~20장 범위로 마감), 프리셋 6종 기본값(서버 미접속 시 폴백)
 2. 서버: `schema_migrations` '001_initial', 정적 `presets.json` 파일 배치
 3. 앱 최초 실행: `app_settings`에 device_uuid 생성, `style_profile` 기본 행(id=1) 삽입
 

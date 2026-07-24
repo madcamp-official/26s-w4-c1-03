@@ -57,15 +57,16 @@
 
 ---
 
-### 0.6 구현 현황 (2026-07-24 최신 감사)
+### 0.6 구현 현황 (2026-07-25 최신 감사)
 
 | 작업 축 | 현재 상태 | 검증 근거 | 남은 판정 |
 |---|---|---|---|
 | 온디바이스 가이드 | `FrameFeatureCalculator`·`MatchScoreCalculator`·`AlignmentEngine`·`ProblemDiagnoser` 구현 | Android JVM 테스트 통과 | 실기기에서 오버레이 튐·정렬 색 전환 확인 |
 | 카메라 연결 | `guide_config.json` 로딩, CameraOverlay 목표 프레임·실루엣 연결 | Debug APK 빌드·단위 테스트 통과 | 연결 기기 없음 |
-| 레퍼런스 분석 | 무저장 `POST /references/analyze`, 팔레트·히스토그램·Target/Color 변환 구현 | 서버 계약 테스트 통과 | 10장 세트·5초 성능·MediaPipe 보강 |
-| 편집 큐·보관 | SQLite 큐, 워커, EXIF 스트립, 입력 purge 구현 | 서버 워커 테스트 통과 | 결과 수신 후 24h purge·운영 워커 기동 |
-| 생성·검증 | ComfyUI 업로드/프롬프트 어댑터, 후보 검증 경계·fallback 구현 | 공급자 미설정 fallback·검증 테스트 통과 | GPU·LaMa·InsightFace 배포 및 실제 후보 검증 |
+| 레퍼런스 분석 | 무저장 `POST /references/analyze`, 팔레트·히스토그램·Target/Color 변환 구현 | 계약 테스트 + 합성 10장 벤치마크(최대 약 136ms) | 실제 사진 10장·MediaPipe 보강 |
+| 편집 큐·보관 | SQLite 큐, 워커, EXIF 스트립, 입력 즉시 purge, 결과 24h·job 메타 7일 purge 구현 | 서버 워커 purge/timeout/fallback 테스트 통과 | 운영 워커 기동·실제 전달 확인 |
+| 생성·검증 | ComfyUI 업로드/프롬프트 어댑터, 후보 검증 경계·fallback·요청/이미지/마스크 제한 구현 | 공급자 미설정 fallback·검증 테스트 통과 | GPU·LaMa·InsightFace 배포 및 실제 후보 검증 |
+| 개인화·지표 | `ProfileEngine`, v1 카드 메타 16장, 로컬 KPI 집계 스크립트 구현 | Android JVM·카드 검증·SQLite fixture 테스트 통과 | 실제 카드 에셋·Room/UI 통합·실기기 지표 수집 |
 
 ---
 
@@ -85,7 +86,7 @@
 ### 1-2. 프리셋 6종 초안 + 정적 서빙
 
 - [x] `presets.json` 작성 — 스키마는 기능명세서 M3-01, **6종**: Clean Social(정돈 배경·삼분할·따뜻한 색감), Candid Feed(즉흥 프레이밍·자연스러운 자세·약한 입자감), Bright Review(중앙 피사체·밝은 노출·선명), Soft Film(넓은 배경·중심 이탈 허용·낮은 대비·페이드·입자), Casual Portrait(멀리서 촬영·자연스러운 시선·배경 포함), Night Street(조명 강조·그림자 유지·높은 색 대비)
-- [ ] 각 프리셋에 composition(subjectScaleRange, subjectAnchorX/Y, headroomRange, horizonPosition, cameraPitchRange)과 color(exposureBias, colorTemperature, contrast, saturation, grain, vignette, fade) 초기값 기입 — 근거 사진 1장씩 첨부(튜닝 기준점)
+- [x] 각 프리셋에 앱 계약(`subjectPosition`) 기준 composition(subjectScaleRange, headroomRange, horizonPosition, cameraPitchRange)과 color(exposureBias, colorTemperature, contrast, saturation, grain, vignette, fade) 초기값 기입 — `scripts/validate_presets.py`로 6종 스키마 검증 완료(근거 사진 튜닝은 외부 콘텐츠 작업 대기)
 - [x] `GET /presets` — 정적 파일 서빙 + ETag. 동일 파일을 A에게 전달(앱 번들 폴백) <!-- 서버 계약 테스트 통과 -->
 - 완료 기준: JSON 스키마 검증 스크립트 통과, A 앱에서 6종 로드 확인
 
@@ -102,12 +103,13 @@
 - [ ] 비교 테스트: 동일한 "망한 사진" 5장(행인·전봇대 포함)으로 ①ComfyUI(LaMa/FLUX) ②Gemini 이미지 편집 무료 티어 실행
 - [ ] 판정 기준표 작성·기록: 얼굴 불변 여부 / 제거 흔적 자연스러움 / 응답 시간 / 호출 제한이 리허설(30회+)을 버티는가
 - [ ] **공급자 확정 문서화**(`docs/provider_decision.md`) — 이후 변경 금지
-- [ ] `GenerativeEditProvider` 인터페이스 정의: `remove_objects(image, masks) -> candidates`, `outpaint(image, direction, ratio) -> candidates` — 구현체 교체 가능 구조 <!-- `remove_objects`와 ComfyUI 어댑터만 구현. outpaint·실제 모델 배포 대기 -->
+- [x] `GenerativeEditProvider.remove_objects(image, operations, resultCount) -> candidates` 인터페이스와 ComfyUI 어댑터 구현 — 구현체 교체 가능 구조
+- [ ] `outpaint(image, direction, ratio) -> candidates` 인터페이스·실제 모델 배포 — 여백 확장 범위 대기
 - 완료 기준: 확정 공급자로 객체 제거 1장 성공 샘플 확보
 
 ### 1-5. (저녁) A와 인터페이스 계약 고정 — 30분
 
-- [ ] `presets.json` 스키마 서명(이후 값 튜닝만 허용)
+- [x] `presets.json` 스키마 서명(이후 값 튜닝만 허용) — `scripts/validate_presets.py` 자동 검증 추가
 - [x] `FrameFeatures`/`FrameFeatureInput` 필드 명세 확정(`P2_Plan_1.md` §0.5를 구현 계약으로 사용) <!-- Kotlin 구현·JVM 테스트 완료 -->
 - [x] `/references/analyze`, `/edit-jobs` 요청·응답 JSON 구현·계약 테스트 <!-- FastAPI OpenAPI 자동 생성, 서버 테스트 통과 -->
 
@@ -138,7 +140,7 @@
 
 - [ ] Python 분석 스택 셋업: MediaPipe(포즈·얼굴) + Pillow/OpenCV(팔레트·수평·히스토그램)
 - [ ] 분석 함수 v1: 인물 수, 인물 박스, 얼굴 크기, 인물 점유율, headroom, 수평 추정, 주조색 팔레트(k-means 5색), 색온도 추정, 명암 히스토그램
-- [ ] 테스트 이미지 10장으로 결과 JSON 눈검증
+- [x] 테스트 이미지 10장으로 결과 JSON 눈검증 — `scripts/reference_benchmark.py` 합성 10장 전부 통과, 최대 5초 기준 통과
 - 완료 기준: 10장 전부 예외 없이 구조화 JSON 출력
 
 ---
@@ -198,13 +200,13 @@
 - [ ] InsightFace 임베딩: 편집 전후 주 피사체 얼굴 거리 계산, **임계 초과 시 해당 후보 폐기**(임계 초기값은 동일인 테스트 셋으로 캘리브레이션 — 오전 30분)
 - [ ] 얼굴 보호 마스크: 편집 마스크와 얼굴 박스 교차 시 얼굴 영역 제외(팽창 마진 10%)
 - [ ] 휴리스틱 검사: 결과 인물 수 ≠ 기대 인물 수 → 폐기, 극단 색상 변화(히스토그램 거리) → 폐기
-- [ ] 전 후보 폐기 시: `status='fallback'` + failReason 기록 (앱은 기본 보정 유지 — A와 계약된 동작)
-- [ ] 임베딩은 **메모리에서만 사용 후 폐기** — DB·파일 저장 금지(validation_json에 거리값만)
+- [x] 전 후보 폐기·공급자 미준비 시: `status='fallback'` + failReason 기록 (앱은 기본 보정 유지 — A와 계약된 동작)
+- [x] 임베딩은 **메모리에서만 사용 후 폐기** — DB·파일 저장 금지(validation_json에 거리값만) <!-- 스키마·검증 인터페이스에서 영구 저장 경로 없음. InsightFace 실제 구현 대기 -->
 - 완료 기준: 얼굴이 바뀐 결과가 후보에 포함되지 않음(의도적 변형 샘플로 검증)
 
 ### 4-4. 보관 정책 구현
 
-- [ ] job 종료 시 입력 파일 `purge_after=now`, 결과는 `delivered_at`+24h <!-- 입력 즉시 purge는 구현·테스트 완료, 결과 수신 확인 후 24h는 미구현 -->
+- [x] job 종료 시 입력 파일 `purge_after=now`, 결과는 `delivered_at`+24h — 결과 응답 시 delivered/purge 예약 및 삭제 배치 테스트 완료
 - [x] 삭제 배치(1분 주기): purge 대상 파일 삭제 + `purged_at` 기록 <!-- 워커 tick에서 purge 처리; 실제 1분 서비스 기동 검증 대기 -->
 - 완료 기준: job 완료 1분 후 `storage/inputs/`가 비어 있음을 확인하는 테스트 스크립트 통과
 
@@ -225,9 +227,9 @@
 ### 5-2. /edit-jobs 실서비스 전환
 
 - [ ] Day 1의 fallback 상태 스텁을 실제 파이프라인으로 교체하고, 실제 생성 결과가 있을 때만 `done`으로 전이
-- [ ] 진행 상태 세분화: `progress_stage` 갱신(removing→validating), 폴링 응답에 포함
+- [x] 진행 상태 세분화: `progress_stage` 갱신(removing→validating), 폴링 응답에 포함
 - [ ] (여력 시) 여백 확장 operation: FLUX.1 Fill 아웃페인팅 — 상한 원본의 30%, 방향별(top/left/right)
-- [ ] 동시 요청 방어: 디바이스당 진행 중 job 1개 제한(초과 시 409)
+- [x] 동시 요청 방어: 디바이스당 진행 중 job 1개 제한(초과 시 409)
 - 완료 기준: 실기기에서 업로드→처리→후보 2개 수신→"AI 생성 보완" 뱃지 표시까지 관찰
 
 ### 5-3. (오후 6시) A와 공동 판정
@@ -243,30 +245,31 @@
 
 ### 6-1. ProfileEngine.kt (순수 Kotlin — 정오까지 A에게 전달)
 
-- [ ] 온보딩 프로필 생성: 카드 특성 벡터(`cards.json`) 가중 평균 + 차원별 확신도(분산 기반) → composition/color 분리 프로필
-- [ ] 추천 스타일: 프리셋 6종과 프로필 벡터 거리 → 정렬 후 상위 3종 반환. 반환값은 카메라 스타일 스트립의 기본 순서에만 반영하며, 별도 요약/내 스타일 화면을 만들지 않음
-- [ ] 피드백 반영: 5개 선택지 → 구도/색감 프로필 분리 반영(지수이동평균 α=0.3), "색감 별로"는 color만 조정
-- [ ] 단위 테스트: 상이한 카드 선택 2세트 → 상이한 추천 상위 3종 / "색감 별로" 2회 → colorTemperature 보정치 변화
+- [x] 온보딩 프로필 생성: 카드 특성 벡터(`cards.json`) 가중 평균 + 차원별 확신도(분산 기반) → composition/color 분리 프로필
+- [x] 추천 스타일: 프리셋 6종과 프로필 벡터 거리 → 정렬 후 상위 3종 반환. 반환값은 카메라 스타일 스트립의 기본 순서에만 반영하며, 별도 요약/내 스타일 화면을 만들지 않음
+- [x] 피드백 반영: 색감 관련 선택지 → 구도/색감 프로필 분리 반영(지수이동평균 α=0.3), 색감 불만은 color만 조정
+- [x] 단위 테스트: 상이한 카드 선택 2세트 → 상이한 추천 / 색감 불만 → colorTemperature 보정치 변화
 - 완료 기준: 테스트 통과, A의 온보딩·피드백 화면에서 실동작
 
 ### 6-2. cards.json + 온보딩 카드 에셋 마감
 
-- [ ] 카드 15~20장 최종 선정(Unsplash/Pexels 라이선스 확인 기록), 8개 차원 커버 매트릭스 표 작성
-- [ ] 각 카드 특성 벡터 기입(§5.1 CardFeature 스키마) — 눈대중 아닌 기준표(밝기 히스토그램 실측 등)로
+- [x] 카드 메타데이터 16장과 8개 차원 커버 구조 작성 — `app/src/main/assets/cards.json`, `scripts/validate_cards.py` 검증
+- [ ] 실제 카드 이미지 15~20장 최종 선정(Unsplash/Pexels 라이선스 확인 기록) — 외부 콘텐츠 작업 대기
+- [x] 각 카드 특성 벡터 기입(§5.1 CardFeature 스키마) — v1 범위·값 검증 완료
 - 완료 기준: 커버 매트릭스에 빈 차원 없음, A에게 에셋+JSON 전달
 
 ### 6-3. 서버 신뢰성 마감
 
-- [ ] 실패 대체 총점검: 워커 크래시 복구(processing 5분 초과 job → failed), GPU 미응답 타임아웃, 폴백 경로 재확인
-- [ ] 요청 제한: 디바이스당 시간당 job 10건, 이미지 최대 해상도 4096px(초과 시 축소), 편집 영역 크기 제한
-- [ ] 로그 정리: job 처리 시간·실패 사유 집계 스크립트(`scripts/job_stats.py`) — 데모 후 회고용
-- [ ] API 키·자격 증명이 앱에 없는지 최종 확인(서버 환경 변수만)
+- [x] 실패 대체 총점검: 워커 stale job(처리 5분 초과) → `failed`, provider 미준비 → `fallback` 로컬 테스트 완료 — GPU 미응답 실환경 검증은 외부 환경 대기
+- [x] 요청 제한: 디바이스당 시간당 job 10건, 진행 중 job 1건, 이미지 최대 12MB·최대 변 4096px, 편집 영역 30% 제한 구현 및 검증
+- [x] 로그 정리: job 처리 시간·상태·purge 대기 파일 집계 스크립트(`gamdo-server/scripts/job_stats.py`) 추가
+- [x] API 키·자격 증명이 앱/서버 소스에 없는지 패턴 스캔 완료(환경 변수 주입 구조 유지)
 - 완료 기준: 워커 강제 종료→재시작 테스트에서 job이 유실 없이 failed/재개 처리
 
 ### 6-4. 이벤트·피드백 저장 확인 (로컬)
 
 - [ ] A와 함께: `feedback`·`session_guides`·`events` 로컬 기록이 쌓이는지 확인(데모 후 지표 산출용)
-- [ ] 지표 추출 스크립트(로컬 DB 파일 → 첫 촬영 완료율·저장률·오버레이 on/off 촬영 간 구도 개선율 계산) 준비
+- [x] 지표 추출 스크립트(`gamdo-server/scripts/local_metrics.py`) 준비 — 첫 촬영·저장·피드백·가이드 해결률 산출 및 SQLite fixture 테스트
 - 완료 기준: 통합 테스트 3회 후 스크립트가 지표 3종을 출력
 
 ---
@@ -326,6 +329,31 @@
 ---
 
 ## 작업 기록
+
+### 2026-07-25 — 문서 상태 동기화
+
+- `AGENTS.md` §8, 기능명세서 M11·M12·M14, DB 스키마 v2.0의 현황을 현재 P2 작업 트리와 동기화했다.
+- 완료 표시는 로컬 코드·자동 테스트로 확인한 범위로 한정했다. 실기기 시각 검증, 앱↔서버 왕복, GPU 생성·InsightFace, 실제 카드 이미지·라이선스는 대기 상태로 유지한다.
+- P1 계획 파일은 수정하지 않았다.
+
+### 2026-07-25 — 로컬 독립 작업 진행
+
+- `gamdo-server/scripts/validate_presets.py`: 6종 프리셋 필수 composition/color 필드와 범위 자동 검증.
+- `gamdo-server/scripts/reference_benchmark.py`: 외부 파일·서버 없이 합성 레퍼런스 10장 분석 및 5초 기준 측정. 10/10 통과(최대 약 136ms).
+- 결과 파일은 클라이언트 전달 시점에 `delivered_at`과 24시간 후 `purge_after`를 기록하고, 기존 삭제 배치로 제거되도록 연결. 서버 테스트로 파일 삭제까지 확인.
+- 워커에 stale `processing/validating` job 복구(`processing_timeout`)와 fallback 테스트를 추가.
+- `/edit-jobs`에 디바이스별 동시/시간당 요청, 업로드 크기·해상도, 편집 영역 제한을 추가.
+- `scripts/job_stats.py` 및 자격 증명 패턴 스캔으로 로컬 운영 점검 경로 추가.
+- 검증: `python -m pytest -q` 15 passed, 프리셋 검증 통과, 레퍼런스 10/10 통과. GPU·실기기 검증은 수행하지 않음.
+
+### 2026-07-25 — P2 개인화·운영 지표 작업
+
+- `app/src/main/java/com/gamdo/app/data/ProfileEngine.kt` 추가: 카드 벡터 평균·분산 확신도, composition/color 분리, 프리셋 추천 상위 3종, 색감 피드백 EMA 반영.
+- `app/src/test/java/com/gamdo/app/data/ProfileEngineTest.kt` 추가: 상이한 카드 추천, 충돌 카드 확신도, 색감 피드백 분리 테스트.
+- `app/src/main/assets/cards.json`에 v1 카드 메타데이터 16장 추가. 실제 이미지 파일과 라이선스 확인은 외부 콘텐츠 작업으로 남김. `gamdo-server/scripts/validate_cards.py` 통과.
+- 서버 job 메타데이터 7일 purge(`Database.purge_old_job_metadata`)와 worker 테스트 추가. 파일 purge와 별도로 terminal job/file 행을 삭제한다.
+- `gamdo-server/scripts/local_metrics.py`와 SQLite fixture 테스트 추가.
+- 검증: 서버 `17 passed`, Android `:app:testDebugUnitTest` BUILD SUCCESSFUL.
 
 ### 2026-07-24 — P2 가이드 연결 작업
 

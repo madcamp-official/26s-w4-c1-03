@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import io
+import os
 import re
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from PIL import Image
 
 from ..db import Database
 from ..storage import save_exif_stripped_input
@@ -23,6 +27,11 @@ ALLOWED_OPERATIONS = {
     "deblur_light",
     "skin_tone_even",
 }
+MAX_UPLOAD_BYTES = int(os.getenv("GAMDO_MAX_UPLOAD_BYTES", str(12 * 1024 * 1024)))
+MAX_IMAGE_DIMENSION = int(os.getenv("GAMDO_MAX_IMAGE_DIMENSION", "4096"))
+MAX_EDIT_AREA_RATIO = float(os.getenv("GAMDO_MAX_EDIT_AREA_RATIO", "0.30"))
+MAX_JOBS_PER_HOUR = int(os.getenv("GAMDO_MAX_JOBS_PER_HOUR", "10"))
+MAX_ACTIVE_JOBS = int(os.getenv("GAMDO_MAX_ACTIVE_JOBS", "1"))
 
 
 def parse_json_object(raw: str, field: str) -> dict[str, Any]:
@@ -65,6 +74,13 @@ def parse_operations(raw: str) -> list[dict[str, Any]]:
                 "message": "operation type is not allowed",
                 "retryable": False,
             })
+        area = operation.get("maskAreaRatio")
+        if area is not None and (not isinstance(area, (int, float)) or not 0 <= area <= MAX_EDIT_AREA_RATIO):
+            raise HTTPException(status_code=422, detail={
+                "code": "edit_area_limit_exceeded",
+                "message": f"maskAreaRatio must be between 0 and {MAX_EDIT_AREA_RATIO}",
+                "retryable": False,
+            })
     return value
 
 
@@ -99,6 +115,28 @@ async def create_edit_job(
     parsed_operations = parse_operations(operations)
     parsed_style_params = parse_json_object(style_params, "styleParams")
     database = Database()
+    now = int(time.time() * 1000)
+    with database.connect() as connection:
+        active = connection.execute(
+            "SELECT COUNT(*) FROM edit_jobs WHERE device_uuid = ? AND status IN ('queued','processing','validating')",
+            (device_id,),
+        ).fetchone()[0]
+        recent = connection.execute(
+            "SELECT COUNT(*) FROM edit_jobs WHERE device_uuid = ? AND created_at >= ?",
+            (device_id, now - 60 * 60 * 1000),
+        ).fetchone()[0]
+    if active >= MAX_ACTIVE_JOBS:
+        raise HTTPException(status_code=409, detail={
+            "code": "active_job_limit",
+            "message": "one edit job is already in progress",
+            "retryable": True,
+        })
+    if recent >= MAX_JOBS_PER_HOUR:
+        raise HTTPException(status_code=429, detail={
+            "code": "hourly_job_limit",
+            "message": "hourly edit job limit exceeded",
+            "retryable": True,
+        })
     existing = database.get_job(job_id)
     if existing is not None:
         raise HTTPException(status_code=409, detail={
@@ -113,7 +151,16 @@ async def create_edit_job(
             "message": "image is required",
             "retryable": False,
         })
+    if len(payload) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail={
+            "code": "image_size_limit_exceeded",
+            "message": f"image must be at most {MAX_UPLOAD_BYTES} bytes",
+            "retryable": False,
+        })
     try:
+        with Image.open(io.BytesIO(payload)) as decoded:
+            if max(decoded.size) > MAX_IMAGE_DIMENSION:
+                raise ValueError("image dimensions exceed limit")
         storage_path, bytes_count = save_exif_stripped_input(job_id, payload)
     except Exception as exc:
         raise HTTPException(status_code=415, detail={
@@ -160,6 +207,8 @@ def get_edit_job(job_id: str, _: str = Depends(require_device_id)) -> dict[str, 
         database.schedule_input_purge(job_id)
         job = database.get_job(job_id)
     results = database.get_results(job_id)
+    if job["status"] == "done" and results:
+        database.mark_results_delivered(job_id)
     return {
         "jobId": job["id"],
         "status": job["status"],

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from threading import Event
 
@@ -28,8 +29,10 @@ class JobWorker:
         self.poll_seconds = poll_seconds
         self.provider = provider or UnavailableProvider()
         self.validator = validator or CandidateValidator()
+        self.processing_timeout_ms = int(os.getenv("GAMDO_PROCESSING_TIMEOUT_MS", "300000"))
 
     def process_once(self) -> bool:
+        self.database.recover_stale_jobs(self.processing_timeout_ms)
         job = self.database.claim_next_queued()
         if job is None:
             self.purge_once()
@@ -82,7 +85,7 @@ class JobWorker:
             except OSError:
                 # Keep the audit row pending so a later tick can retry safely.
                 continue
-        return purged
+        return purged + self.database.purge_old_job_metadata()
 
     def run_forever(self, stop_event: Event | None = None) -> None:
         stop_event = stop_event or Event()
