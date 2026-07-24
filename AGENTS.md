@@ -83,13 +83,13 @@
 
 ## 8. 현재 상태와 다음 작업
 
-**상태 (2026-07-24 기준): 담당 A(모바일) 앱 개발 진행 중.** 저장소·앱 코드 존재(`com.gamdo.app`, 브랜치 `main` 직커밋). 실기기(SM-G970N, Android 12)에서 검증 중.
+**상태 (2026-07-24 기준): 담당 A(모바일) 앱과 담당 B(P2) 핵심 모듈 구현 진행 중.** 저장소·앱 코드 존재(`com.gamdo.app`, 브랜치 `main` 직커밋). P2 브랜치에서 가이드·분석·서버 경계까지 구현했으며, 실기기(SM-G970N, Android 12) 연결 후 최종 시각 검증이 필요하다.
 
 - **Day 1 완료(1-1~1-5):** 프로젝트 셋업 · 권한 처리 · 로컬 데이터(DeviceId·Room 14테이블·presets 시딩) · 화면 골격(t2 네비: onboarding→camera(홈)→album→result) · CameraX 프리뷰·촬영·저장(filesDir + MediaStore + captures)
-- **Day 2 코드 완료 범위:** 2-1 프레임 분석 파이프라인(ImageAnalysis·스로틀·디버그 HUD), 2-2 ML Kit 얼굴·포즈 래퍼, 2-3 센서, 2-5 기본 오버레이 렌더러가 커밋되어 있다. 2-4 `FrameFeatureCalculator`와 `AlignmentEngine` 연결은 P2 전달 대기이며, Day 2 전체의 실기기 통합 판정은 아직이다.
+- **P2 구현 완료 범위:** `FrameFeatureCalculator`·`matchScore`·`AlignmentEngine`·`ProblemDiagnoser`와 JVM 테스트, `guide_config.json` 파싱, 카메라 오버레이 연결, 메모리 기반 `/references/analyze`, 편집 큐 워커·입력 purge, `GenerativeEditProvider`·ComfyUI HTTP 어댑터·검증 fallback이 P2 브랜치에 구현되어 있다. Android 단위 테스트와 서버 테스트는 통과했다.
 - **담당 B(서버·CV·생성):** 서버 디렉터리와 Kotlin 모듈 4개는 아직 저장소에 없다. 앱은 `app/src/main/assets/presets.json`의 6종 번들 폴백으로 오프라인 동작한다. 착수·전달 순서는 `P2_Plan_1.md` §0.5를 따른다.
 
-미해결/대기: B 산출물(FrameFeatureCalculator·AlignmentEngine·`/edit-jobs` 계약 스텁/실서버 등) 일정, 온보딩 카드 에셋, 테스트 사진 세트. (프리셋 종수는 6종으로 확정 — D6)
+미해결/대기: 연결된 실기기가 없어 오버레이 시각 검증 미실행, GPU/ComfyUI·LaMa·InsightFace 배포가 없어 실제 생성·얼굴 검증 성공 경로 미실행, 온보딩 카드 에셋·테스트 사진 세트. 공급자 미설정 시 결과를 만들지 않고 fallback하는 경로는 테스트 완료. (프리셋 종수는 6종으로 확정 — D6)
 
 **빌드 방법:** `JAVA_HOME`을 Android Studio JBR(JDK 17)로 지정 후 `./gradlew :app:assembleDebug`. SDK는 `C:\android-sdk`. (환경 상세는 세션 메모리 참조)
 
