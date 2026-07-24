@@ -99,10 +99,10 @@
 
 ### 1-4. 생성형 공급자 품질 비교 → 확정 (오후 최우선)
 
-- [ ] GPU 서버에 ComfyUI headless 설치, 모델 배치: **LaMa**(객체 제거) + **FLUX.1 Fill [dev]**(VRAM 16GB 미만이면 FP8/GGUF 양자화)
+- [x] GPU 서버에 ComfyUI headless 설치, **LaMa**(객체 제거) + **InsightFace buffalo_l** 배치 — CAMP-2 RTX 3090에서 CUDA 로드 확인. **FLUX.1 Fill은 프로토타입 후순위로 명시적 보류**
 - [ ] 비교 테스트: 동일한 "망한 사진" 5장(행인·전봇대 포함)으로 ①ComfyUI(LaMa/FLUX) ②Gemini 이미지 편집 무료 티어 실행
 - [ ] 판정 기준표 작성·기록: 얼굴 불변 여부 / 제거 흔적 자연스러움 / 응답 시간 / 호출 제한이 리허설(30회+)을 버티는가
-- [ ] **공급자 확정 문서화**(`docs/provider_decision.md`) — 이후 변경 금지
+- [x] **공급자 확정 문서화**(`docs/provider_decision.md`) — LaMa 1순위, FLUX 후순위로 기록
 - [x] `GenerativeEditProvider.remove_objects(image, operations, resultCount) -> candidates` 인터페이스와 ComfyUI 어댑터 구현 — 구현체 교체 가능 구조
 - [ ] `outpaint(image, direction, ratio) -> candidates` 인터페이스·실제 모델 배포 — 여백 확장 범위 대기
 - 완료 기준: 확정 공급자로 객체 제거 1장 성공 샘플 확보
@@ -197,7 +197,7 @@
 
 ### 4-3. 결과 검증기
 
-- [x] InsightFace 임베딩: 편집 전후 주 피사체 얼굴 거리 계산, **임계 초과 시 해당 후보 폐기** — `InsightFaceVerifier` 구현 및 CAMP-2 `buffalo_l` CUDA provider 로드 확인. 동일인 테스트 셋 캘리브레이션은 대기
+- [x] InsightFace 임베딩: 편집 전후 주 피사체 얼굴 거리 계산, **임계 초과 시 해당 후보 폐기** — `InsightFaceVerifier` 구현 및 CAMP-2 `buffalo_l` CUDA provider 로드 확인. 동일 이미지·밝기 변경·얼굴 미검출 sanity check 통과. 실제 인물 5장 formal calibration은 대기
 - [ ] 얼굴 보호 마스크: 편집 마스크와 얼굴 박스 교차 시 얼굴 영역 제외(팽창 마진 10%)
 - [ ] 휴리스틱 검사: 결과 인물 수 ≠ 기대 인물 수 → 폐기, 극단 색상 변화(히스토그램 거리) → 폐기
 - [x] 전 후보 폐기·공급자 미준비 시: `status='fallback'` + failReason 기록 (앱은 기본 보정 유지 — A와 계약된 동작)
@@ -321,9 +321,9 @@
 
 ## 부록 C. GPU·모델 준비물 (Day 1 오전에 확인)
 
-- [ ] GPU 서버 VRAM 용량 확인 → FLUX.1 Fill 원본/양자화 결정 기록
-- [ ] 모델 다운로드: LaMa, FLUX.1 Fill [dev](비상업 라이선스 — 상용 전환 시 교체 대상임을 provider_decision.md에 명기), InsightFace 모델
-- [ ] ComfyUI headless 기동 스크립트, FastAPI에서 호출 가능한 내부 주소 확인
+- [x] GPU 서버 VRAM 용량 확인 — CAMP-2 RTX 3090 24GB. FLUX.1 Fill은 후순위로 보류
+- [x] 모델 다운로드: LaMa, InsightFace 모델 — FLUX.1 Fill은 이번 범위에서 보류
+- [x] ComfyUI headless 기동 unit, FastAPI provider 환경변수 factory, SSH 터널 경유 호출 확인
 - [ ] 비교용 Gemini API 키 발급(무료 티어) — 비교 테스트 후 사용 여부 결정
 
 ---
@@ -342,6 +342,15 @@
 - `gamdo-server/scripts/reference_benchmark.py`: 외부 파일·서버 없이 합성 레퍼런스 10장 분석 및 5초 기준 측정. 10/10 통과(최대 약 136ms).
 - 결과 파일은 클라이언트 전달 시점에 `delivered_at`과 24시간 후 `purge_after`를 기록하고, 기존 삭제 배치로 제거되도록 연결. 서버 테스트로 파일 삭제까지 확인.
 - 워커에 stale `processing/validating` job 복구(`processing_timeout`)와 fallback 테스트를 추가.
+
+### 2026-07-25 — CAMP-2 GPU 실환경 마감 작업
+
+- CAMP-2의 종료된 VibeCutter 리소스와 `/root/glm-model`을 정리하고 Dure 관리 영역은 보존했다.
+- ComfyUI 0.28.0 + PyTorch CUDA 2.11.0+cu128 + LaMa + InsightFace buffalo_l을 `/opt/gamdo`에 격리 배치했다.
+- `gamdo-comfyui.service`를 enable 상태로 설치해 재부팅 후 자동 기동되도록 했다.
+- LaMa 5-case GPU smoke benchmark를 실행해 각 케이스에서 seed 0·1 후보 2개 생성을 확인했다.
+- 환경변수 provider factory와 `GAMDO_INSIGHTFACE_ENABLED` 경계를 구현했다. 서버 테스트 21개 통과.
+- 남은 GPU 품질 게이트는 실제 인물 사진 5장 평가와 InsightFace 동일인 임계값 캘리브레이션이다.
 - `/edit-jobs`에 디바이스별 동시/시간당 요청, 업로드 크기·해상도, 편집 영역 제한을 추가.
 - `scripts/job_stats.py` 및 자격 증명 패턴 스캔으로 로컬 운영 점검 경로 추가.
 - 검증: `python -m pytest -q` 15 passed, 프리셋 검증 통과, 레퍼런스 10/10 통과. GPU·실기기 검증은 수행하지 않음.

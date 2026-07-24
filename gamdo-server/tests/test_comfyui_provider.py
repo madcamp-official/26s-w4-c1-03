@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from app.comfyui_provider import ComfyUiProvider, _inject_workflow_inputs, _masked_upload_path
+from app.comfyui_provider import (
+    ComfyUiProvider,
+    _inject_workflow_inputs,
+    _masked_upload_path,
+    provider_from_environment,
+)
 from app.generative import ProviderNotReady
 
 
@@ -46,3 +51,20 @@ def test_masked_upload_uses_transient_alpha_mask(tmp_path: Path) -> None:
             assert image.getpixel((90, 70))[3] == 255
     finally:
         masked.unlink(missing_ok=True)
+
+
+def test_provider_from_environment_defaults_to_safe_fallback(monkeypatch) -> None:
+    monkeypatch.delenv("GAMDO_COMFYUI_URL", raising=False)
+    monkeypatch.delenv("GAMDO_COMFYUI_WORKFLOW", raising=False)
+    assert provider_from_environment().__class__.__name__ == "UnavailableProvider"
+
+
+def test_provider_from_environment_builds_comfy_provider(monkeypatch, tmp_path: Path) -> None:
+    workflow = tmp_path / "workflow.json"
+    workflow.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("GAMDO_COMFYUI_URL", "http://127.0.0.1:18188")
+    monkeypatch.setenv("GAMDO_COMFYUI_WORKFLOW", str(workflow))
+    monkeypatch.setenv("GAMDO_GENERATED_OUTPUT_DIR", str(tmp_path / "results"))
+    provider = provider_from_environment()
+    assert isinstance(provider, ComfyUiProvider)
+    assert provider.base_url == "http://127.0.0.1:18188"

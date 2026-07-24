@@ -6,6 +6,7 @@ from pathlib import Path
 from threading import Event
 
 from .db import Database
+from .comfyui_provider import provider_from_environment
 from .generative import (
     CandidateValidator,
     GenerativeEditProvider,
@@ -28,7 +29,7 @@ class JobWorker:
     ) -> None:
         self.database = database or Database()
         self.poll_seconds = poll_seconds
-        self.provider = provider or UnavailableProvider()
+        self.provider = provider or provider_from_environment()
         self.validator = validator or CandidateValidator(InsightFaceVerifier.from_environment())
         self.processing_timeout_ms = int(os.getenv("GAMDO_PROCESSING_TIMEOUT_MS", "300000"))
 

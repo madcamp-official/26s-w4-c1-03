@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import time
 import urllib.parse
@@ -10,7 +11,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
-from .generative import GeneratedCandidate, GenerativeEditProvider, ProviderNotReady
+from .generative import GeneratedCandidate, GenerativeEditProvider, ProviderNotReady, UnavailableProvider
 
 
 class ComfyUiProvider(GenerativeEditProvider):
@@ -140,6 +141,20 @@ class ComfyUiProvider(GenerativeEditProvider):
                     raise ProviderNotReady("ComfyUI output download failed") from exc
                 candidates.append(GeneratedCandidate(path=path, seed=seed + index, operation="remove_objects"))
         return candidates
+
+
+def provider_from_environment() -> GenerativeEditProvider:
+    """Build the configured provider without making an unconfigured server call."""
+    base_url = os.getenv("GAMDO_COMFYUI_URL")
+    workflow_value = os.getenv("GAMDO_COMFYUI_WORKFLOW")
+    if not base_url or not workflow_value:
+        return UnavailableProvider()
+    return ComfyUiProvider(
+        base_url=base_url,
+        workflow_path=Path(workflow_value),
+        output_dir=Path(os.getenv("GAMDO_GENERATED_OUTPUT_DIR", "storage/results")),
+        timeout_seconds=float(os.getenv("GAMDO_COMFYUI_TIMEOUT_SECONDS", "120")),
+    )
 
 
 def _inject_workflow_inputs(
