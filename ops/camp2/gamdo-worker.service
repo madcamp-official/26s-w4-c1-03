@@ -1,0 +1,17 @@
+[Unit]
+Description=GAMDO edit worker on CAMP-2
+After=network-online.target gamdo-comfyui.service gamdo-server.service
+Wants=network-online.target
+Requires=gamdo-comfyui.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/gamdo/server
+EnvironmentFile=/etc/gamdo/gamdo.env
+ExecStart=/opt/gamdo/server-venv/bin/python -m app.worker
+Restart=on-failure
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

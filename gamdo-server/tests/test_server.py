@@ -50,7 +50,7 @@ def test_missing_device_header_is_standardized() -> None:
         assert response.json()["code"] == "missing_device_id"
 
 
-def test_edit_job_transitions_to_fallback_without_sample_result() -> None:
+def test_edit_job_polling_does_not_force_fallback() -> None:
     headers = {"X-Device-Id": "test-device"}
     form = {
         "jobId": "job_test_001",
@@ -69,12 +69,14 @@ def test_edit_job_transitions_to_fallback_without_sample_result() -> None:
         assert created.status_code == 202, created.text
         assert created.json() == {"jobId": "job_test_001", "status": "queued"}
 
-        assert client.get("/api/v1/edit-jobs/job_test_001", headers=headers).json()["status"] == "processing"
-        fallback = client.get("/api/v1/edit-jobs/job_test_001", headers=headers)
-        assert fallback.status_code == 200
-        assert fallback.json()["status"] == "fallback"
-        assert fallback.json()["results"] == []
-        assert fallback.json()["failReason"] == "provider_not_ready"
+        first = client.get("/api/v1/edit-jobs/job_test_001", headers=headers)
+        assert first.status_code == 200
+        assert first.json()["status"] == "queued"
+        second = client.get("/api/v1/edit-jobs/job_test_001", headers=headers)
+        assert second.status_code == 200
+        assert second.json()["status"] == "queued"
+        assert second.json()["results"] == []
+        assert second.json()["failReason"] is None
 
 
 def test_reference_analysis_is_synchronous_and_does_not_persist_upload() -> None:

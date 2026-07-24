@@ -226,7 +226,7 @@
 
 ### 5-2. /edit-jobs 실서비스 전환
 
-- [ ] Day 1의 fallback 상태 스텁을 실제 파이프라인으로 교체하고, 실제 생성 결과가 있을 때만 `done`으로 전이 — provider/워크플로 연결 완료, FastAPI 프로세스↔CAMP-2 네트워크 연결은 대기
+- [x] Day 1의 fallback 상태 스텁을 실제 파이프라인으로 교체하고, 실제 생성 결과가 있을 때만 `done`으로 전이 — CAMP-2 내부 FastAPI E2E에서 `queued→processing→validating→done`, InsightFace 통과 후보 2개 확인
 - [x] 진행 상태 세분화: `progress_stage` 갱신(removing→validating), 폴링 응답에 포함
 - [ ] (여력 시) 여백 확장 operation: FLUX.1 Fill 아웃페인팅 — 상한 원본의 30%, 방향별(top/left/right)
 - [x] 동시 요청 방어: 디바이스당 진행 중 job 1개 제한(초과 시 409)
@@ -350,6 +350,7 @@
 - `gamdo-comfyui.service`를 enable 상태로 설치해 재부팅 후 자동 기동되도록 했다.
 - LaMa 5-case GPU smoke benchmark를 실행해 각 케이스에서 seed 0·1 후보 2개 생성을 확인했다.
 - 환경변수 provider factory와 `GAMDO_INSIGHTFACE_ENABLED` 경계를 구현했다. 서버 테스트 21개 통과.
+- CAMP-2 내부 FastAPI + worker E2E: `job_gpu_e2e_7ea4f560be`가 후보 2개(`validation=passed`, seed 0·1)로 `done` 전이했다.
 - 남은 GPU 품질 게이트는 실제 인물 사진 5장 평가와 InsightFace 동일인 임계값 캘리브레이션이다.
 - `/edit-jobs`에 디바이스별 동시/시간당 요청, 업로드 크기·해상도, 편집 영역 제한을 추가.
 - `scripts/job_stats.py` 및 자격 증명 패턴 스캔으로 로컬 운영 점검 경로 추가.

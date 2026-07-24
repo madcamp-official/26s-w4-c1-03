@@ -199,13 +199,6 @@ def get_edit_job(job_id: str, _: str = Depends(require_device_id)) -> dict[str, 
             "message": "job was not found",
             "retryable": False,
         })
-    if job["status"] == "queued":
-        database.transition_job(job_id, "processing")
-        job = database.get_job(job_id)
-    elif job["status"] == "processing":
-        database.transition_job(job_id, "fallback", fail_reason="provider_not_ready")
-        database.schedule_input_purge(job_id)
-        job = database.get_job(job_id)
     results = database.get_results(job_id)
     if job["status"] == "done" and results:
         database.mark_results_delivered(job_id)
