@@ -19,13 +19,19 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.gamdo.app.data.AppContainer
+import com.gamdo.app.data.local.entity.Captures
 import com.gamdo.app.ui.components.PrimaryPillButton
 import com.gamdo.app.ui.components.moodBrush
 import com.gamdo.app.ui.theme.Charcoal600
@@ -35,6 +41,7 @@ import com.gamdo.app.ui.theme.OnDarkMuted
 import com.gamdo.app.ui.theme.OnSage
 import com.gamdo.app.ui.theme.OutlineDim
 import com.gamdo.app.ui.theme.Sage
+import java.io.File
 
 /**
  * Edit / result (t2 2f skeleton) — top bar, image, filter strip, sliders (static),
@@ -42,9 +49,14 @@ import com.gamdo.app.ui.theme.Sage
  */
 @Composable
 fun ResultScreen(
+    container: AppContainer,
     captureId: String,
     onBack: () -> Unit,
 ) {
+    val capture by produceState<Captures?>(initialValue = null, captureId, container) {
+        value = container.database.capturesDao().get(captureId)
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -68,6 +80,19 @@ fun ResultScreen(
                 .clip(RoundedCornerShape(16.dp))
                 .background(moodBrush(0)),
         ) {
+            capture?.let { selectedCapture ->
+                AsyncImage(
+                    model = File(selectedCapture.filePath),
+                    contentDescription = "선택한 사진",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } ?: Text(
+                text = "사진을 불러오는 중이에요",
+                color = OnDarkMuted,
+                fontSize = 12.sp,
+                modifier = Modifier.align(Alignment.Center),
+            )
             Box(
                 modifier = Modifier
                     .padding(12.dp)

@@ -138,6 +138,7 @@ fun CameraScreen(
     }
 
     var aspect by rememberSaveable { mutableStateOf(CaptureAspect.RATIO_4_5) }
+    var selectedZoom by rememberSaveable { mutableStateOf(1f) }
     var isFront by remember { mutableStateOf(false) }
     var capturing by remember { mutableStateOf(false) }
     var lastThumb by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
@@ -286,9 +287,18 @@ fun CameraScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        ZoomChip(".5", active = false) { controller.setZoom(0.6f) }
-                        ZoomChip("1x", active = true) { controller.setZoom(1f) }
-                        ZoomChip("2x", active = false) { controller.setZoom(2f) }
+                        ZoomChip("0.6x", active = isZoomSelected(selectedZoom, 0.6f)) {
+                            selectedZoom = 0.6f
+                            controller.setZoom(selectedZoom)
+                        }
+                        ZoomChip("1x", active = isZoomSelected(selectedZoom, 1f)) {
+                            selectedZoom = 1f
+                            controller.setZoom(selectedZoom)
+                        }
+                        ZoomChip("2x", active = isZoomSelected(selectedZoom, 2f)) {
+                            selectedZoom = 2f
+                            controller.setZoom(selectedZoom)
+                        }
                     }
                 }
                 Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
@@ -472,3 +482,6 @@ private fun ZoomChip(label: String, active: Boolean, onClick: () -> Unit) {
         )
     }
 }
+
+private fun isZoomSelected(current: Float, target: Float): Boolean =
+    kotlin.math.abs(current - target) < 0.05f

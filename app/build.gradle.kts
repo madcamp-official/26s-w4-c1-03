@@ -10,12 +10,20 @@ android {
     namespace = "com.gamdo.app"
     compileSdk = 35
 
+    val gamdoApiBaseUrl = providers.gradleProperty("gamdoApiBaseUrl")
+        .orElse("http://10.0.2.2:8000/api/v1/")
+        .get()
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+
     defaultConfig {
         applicationId = "com.gamdo.app"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+
+        buildConfigField("String", "GAMDO_API_BASE_URL", "\"$gamdoApiBaseUrl\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }

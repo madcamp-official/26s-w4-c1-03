@@ -88,6 +88,7 @@ fun GamdoNavHost(
         ) { entry ->
             val captureId = entry.arguments?.getString(Routes.ARG_CAPTURE_ID).orEmpty()
             ResultScreen(
+                container = container,
                 captureId = captureId,
                 onBack = { navController.popBackStack() },
             )

@@ -2,8 +2,10 @@ package com.gamdo.app.data
 
 import android.content.Context
 import androidx.room.Room
+import com.gamdo.app.BuildConfig
 import com.gamdo.app.core.DeviceIdStore
 import com.gamdo.app.data.local.GamdoDatabase
+import com.gamdo.app.data.network.GamdoApiClient
 import kotlinx.serialization.json.Json
 
 /**
@@ -27,6 +29,12 @@ class AppContainer(context: Context) {
     ).build()
 
     val deviceIdStore: DeviceIdStore = DeviceIdStore(appContext)
+
+    val apiClient: GamdoApiClient = GamdoApiClient(
+        baseUrl = BuildConfig.GAMDO_API_BASE_URL,
+        deviceIdStore = deviceIdStore,
+        json = json,
+    )
 
     val presetRepository: PresetRepository = PresetRepository(
         context = appContext,
