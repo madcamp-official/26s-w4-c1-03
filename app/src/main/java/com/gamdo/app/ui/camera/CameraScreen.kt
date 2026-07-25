@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
-import androidx.compose.material3.Slider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -167,9 +166,7 @@ fun CameraScreen(
     }
 
     var aspect by rememberSaveable { mutableStateOf(CaptureAspect.RATIO_4_5) }
-    var selectedZoom by rememberSaveable { mutableStateOf(1f) }
     val actualZoom by controller.zoomRatio.collectAsState()
-    val zoomBounds by controller.zoomBounds.collectAsState()
     var isFront by remember { mutableStateOf(false) }
     var capturing by remember { mutableStateOf(false) }
     var lastThumb by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
@@ -336,26 +333,14 @@ fun CameraScreen(
                         modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            listOf(0.6f, 1f, 2f)
-                                .filter { it in zoomBounds.min..zoomBounds.max }
-                                .forEach { preset ->
-                                    ZoomChip(formatZoom(preset), active = isZoomSelected(actualZoom, preset)) {
-                                        selectedZoom = preset
-                                        controller.setZoom(selectedZoom)
-                                    }
-                                }
-                            Text(text = formatZoom(actualZoom), color = GuideLime, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        }
-                        if (zoomBounds.max > zoomBounds.min) {
-                            Slider(
-                                value = actualZoom.coerceIn(zoomBounds.min, zoomBounds.max),
-                                onValueChange = controller::setZoom,
-                                valueRange = zoomBounds.min..zoomBounds.max,
-                                steps = (((zoomBounds.max - zoomBounds.min) * 10f).toInt() - 1).coerceAtLeast(0),
-                                modifier = Modifier.width(190.dp),
-                            )
-                        }
+                        // Galaxy Camera-style readout: pinch on the preview to zoom;
+                        // keep one fixed indicator instead of adding a second slider.
+                        Text(
+                            text = formatZoom(actualZoom),
+                            color = GuideLime,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
                     }
                 }
                 Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
@@ -459,8 +444,8 @@ fun CameraScreen(
                     .clickable {
                         controller.toggleLens()
                         isFront = controller.isFront
-                        // Rebinding the lens resets CameraX zoom to 1x.
-                        selectedZoom = 1f
+                        // Rebinding the lens resets CameraX zoom to 1x; the observer
+                        // updates the fixed readout when the new camera is ready.
                     },
                 contentAlignment = Alignment.Center,
             ) {
@@ -590,27 +575,5 @@ private fun DetectionBadge(text: String) {
 }
 
 @Composable
-private fun ZoomChip(label: String, active: Boolean, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .size(if (active) 34.dp else 30.dp)
-            .clip(CircleShape)
-            .background(Color(0x99141614))
-            .then(if (active) Modifier.border(1.8.dp, GuideLime, CircleShape) else Modifier)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = label,
-            color = if (active) GuideLime else Color(0xBFFFFFFF),
-            fontSize = if (active) 11.sp else 10.5.sp,
-            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-        )
-    }
-}
-
-private fun isZoomSelected(current: Float, target: Float): Boolean =
-    kotlin.math.abs(current - target) < 0.05f
-
 private fun formatZoom(value: Float): String =
-    "%.1fx".format((value * 10f).toInt() / 10f)
+    "%.1fx".format(value.coerceAtLeast(0f))

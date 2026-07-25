@@ -107,6 +107,9 @@ class CameraController(context: Context) {
         isFront = !isFront
         camera.cameraSelector =
             if (isFront) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
+        // CameraX replaces cameraInfo when the lens changes; reconnect the
+        // observer so the fixed on-screen readout follows the new lens.
+        mainHandler.postDelayed(attachZoomRunnable, 300L)
     }
 
     /** Sets zoom, clamped to the device's supported range (e.g. no ultra-wide → min 1.0). */
