@@ -395,6 +395,15 @@
 
 ## 작업 기록
 
+### 2026-07-25 — 테스트 경로 정비·실측 검증 (`docs/P2_테스트_가이드.md`)
+
+- 추가: `gamdo-server/scripts/smoke_test.py` — 실행 중인 서버에 실 HTTP로 4개 엔드포인트·에러 계약을 왕복 검증하고 값을 출력한다(`tests/`는 in-process라 URL 접두사·헤더 게이트를 못 잡는다). 실제 사진으로 전부 통과.
+- 추가: `app/src/test/java/com/gamdo/app/harness/P2ValueDumpTest.kt` — APK에 들어가는 `presets.json`·`cards.json`·`guide_config.json`을 그대로 읽어 모듈 4개의 출력값을 전부 출력한다. `app/build.gradle.kts`에 `testOptions`로 테스트 stdout 노출 추가.
+- 수정: `CameraScreen`이 하드코딩된 `StyleTarget`(clean_social 값 복붙) 대신 `PresetRepository.loadBundledPresets()` + 기존 `toStyleTarget()`을 사용하도록 교체. 프리셋 전환 시 `AlignmentEngine.reset()`.
+- 추가(디버그 빌드 전용): HUD에 `FrameFeatures`·`aligned`·IoU·matchScore 표시와 프리셋 순환 칩. 제품 UI에는 텍스트 안내·게이지·자동 촬영을 추가하지 않았고 `matchScore`는 `BuildConfig.DEBUG`에서만 계산·표시한다.
+- 실측: Android 31 tests / 서버 17 tests 통과, `/references/analyze` 실사진 0.14~0.21초, `/edit-jobs` queued→processing→fallback, 실기기 프레임 119~123ms·9fps.
+- **결정 필요(가이드 §4에 상세):** ① `alignedIouThreshold 0.7`은 전신 인물에서 IoU 최대 0.39로 트리거 불가 ② `MatchScoreCalculator` 미연결(metrics의 matchScore는 IoU) ③ `ProfileEngine` 추천이 Kelvin 미정규화로 색온도에 지배됨 ④ `PresetProfile` 매핑 미정의 ⑤ UNDEREXPOSED value가 `shadowClipRatio` 미제공 시 항상 0 ⑥ 앱 네트워크 클라이언트·ProfileEngine·ProblemDiagnoser 미연결 ⑦ `backlightFlag` 실기기 상시 false ⑧ 기기→PC 서브넷 상이(`adb reverse` 권장).
+
 ### 2026-07-25 — 문서 상태 동기화
 
 - `AGENTS.md` §8, 기능명세서 M11·M12·M14, DB 스키마 v2.0의 현황을 현재 P2 작업 트리와 동기화했다.

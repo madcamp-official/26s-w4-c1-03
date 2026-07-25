@@ -25,8 +25,7 @@ class PresetRepository(
         val existing = presetsDao.systemCount()
         if (existing > 0) return existing
 
-        val text = context.assets.open(ASSET_NAME).bufferedReader().use { it.readText() }
-        val presets = json.decodeFromString<List<StylePreset>>(text)
+        val presets = loadBundledPresets()
         val now = System.currentTimeMillis()
         val rows = presets.map { preset ->
             Presets(
@@ -43,6 +42,16 @@ class PresetRepository(
         }
         presetsDao.upsertAll(rows)
         return rows.size
+    }
+
+    /**
+     * Decodes the bundled 6 presets straight from assets. The camera guide needs the
+     * composition block synchronously while building its first frame, before the Room
+     * seed has necessarily completed, so it reads the bundle rather than the table.
+     */
+    fun loadBundledPresets(): List<StylePreset> {
+        val text = context.assets.open(ASSET_NAME).bufferedReader().use { it.readText() }
+        return json.decodeFromString<List<StylePreset>>(text)
     }
 
     suspend fun count(): Int = presetsDao.count()

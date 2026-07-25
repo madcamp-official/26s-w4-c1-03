@@ -1,6 +1,7 @@
 package com.gamdo.app.ui.camera
 
 import android.util.Log
+import android.widget.Toast
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -24,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.Slider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,24 +45,30 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.gamdo.app.BuildConfig
 import com.gamdo.app.camera.AnalysisStats
 import com.gamdo.app.camera.CameraController
 import com.gamdo.app.camera.FrameAnalyzer
 import com.gamdo.app.camera.ShakeMeter
 import com.gamdo.app.camera.TiltSensor
 import com.gamdo.app.camera.centerCropToRatio
+import com.gamdo.app.camera.lumaMean
+import com.gamdo.app.camera.scaledToMaxSide
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.detect.MlKitFaceDetector
 import com.gamdo.app.detect.MlKitPoseDetector
 import com.gamdo.app.detect.BrightnessSample
 import com.gamdo.app.detect.FrameFeatureCalculator
+import com.gamdo.app.detect.FrameFeatures
 import com.gamdo.app.detect.SceneDetector
 import com.gamdo.app.detect.toAnalysisFrame
 import com.gamdo.app.guide.GuideConfig
+import com.gamdo.app.guide.MatchScoreCalculator
 import com.gamdo.app.guide.StyleTarget
 import com.gamdo.app.guide.AlignmentEngine
 import com.gamdo.app.guide.parseGuideConfig
 import com.gamdo.app.guide.toProjection
+import com.gamdo.app.guide.toStyleTarget
 import com.gamdo.app.ui.components.moodBrush
 import com.gamdo.app.ui.theme.Charcoal950
 import com.gamdo.app.ui.theme.OnDarkHigh
@@ -69,8 +77,10 @@ import com.gamdo.app.ui.theme.OnDarkMuted
 import com.gamdo.app.ui.theme.Sage
 import java.util.concurrent.Executors
 import kotlin.math.abs
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val GuideLime = Color(0xFFCDD69A)
 private val GridLine = Color(0x47FFFFFF)
@@ -80,6 +90,15 @@ enum class CaptureAspect(val label: String, val ratioWtoH: Float) {
     RATIO_4_5("4:5", 4f / 5f),
     RATIO_1_1("1:1", 1f),
 }
+
+/** Debug HUD snapshot of the guide chain. Never rendered in release builds. */
+private data class GuideDebug(
+    val features: FrameFeatures,
+    val aligned: Boolean,
+    val visible: Boolean,
+    val iou: Float,
+    val matchScore: Float,
+)
 
 /**
  * Camera = home (§1-5): real CameraX preview + capture. Shutter captures and
@@ -100,6 +119,7 @@ fun CameraScreen(
     val scene = remember { SceneDetector(MlKitFaceDetector(), MlKitPoseDetector()) }
     val featureCalculator = remember { FrameFeatureCalculator() }
     val alignmentEngine = remember { AlignmentEngine() }
+    val matchScoreCalculator = remember { MatchScoreCalculator() }
     val guideConfig = remember {
         runCatching {
             context.assets.open("guide_config.json").bufferedReader().use { reader ->
@@ -107,27 +127,35 @@ fun CameraScreen(
             }
         }.getOrDefault(GuideConfig())
     }
-    val styleTarget = remember {
-        StyleTarget(
-            targetAspectRatio = 4f / 5f,
-            subjectScaleRange = 0.35f..0.55f,
-            subjectAnchorX = 0.5f,
-            headroomRange = 0.05f..0.12f,
-            horizonPosition = 0.5f,
-            cameraPitchRange = -5f..5f,
-        )
+    // The guide target comes from preset data (assets/presets.json = GET /presets),
+    // never from values copied into this file.
+    val presets = remember {
+        runCatching { container.presetRepository.loadBundledPresets() }.getOrDefault(emptyList())
     }
+    var presetIndex by rememberSaveable { mutableStateOf(0) }
+    val activePreset = presets.getOrNull(presetIndex)
+    // The analyzer runs off the composition thread, so the target is published
+    // through a flow instead of being captured once by the analyzer closure.
+    val styleTargetFlow = remember { MutableStateFlow(activePreset?.toStyleTarget() ?: StyleTarget()) }
     val tiltSensor = remember { TiltSensor(context) }
     val shakeMeter = remember { ShakeMeter(context) }
     val statsFlow = remember { MutableStateFlow<AnalysisStats?>(null) }
     val detectionFlow = remember { MutableStateFlow("") }
     val overlayFlow = remember { MutableStateFlow<OverlayData?>(null) }
+    val guideDebugFlow = remember { MutableStateFlow<GuideDebug?>(null) }
     val stats by statsFlow.collectAsState()
     val detection by detectionFlow.collectAsState()
     val overlay by overlayFlow.collectAsState()
+    val guideDebug by guideDebugFlow.collectAsState()
     val tilt by tiltSensor.reading.collectAsState()
     val shake by shakeMeter.shake.collectAsState()
-    var showHud by rememberSaveable { mutableStateOf(true) }
+    var showHud by rememberSaveable { mutableStateOf(BuildConfig.DEBUG) }
+
+    // A preset switch invalidates the smoothing window and the last stable target.
+    LaunchedEffect(presetIndex) {
+        presets.getOrNull(presetIndex)?.let { styleTargetFlow.value = it.toStyleTarget() }
+        alignmentEngine.reset()
+    }
 
     DisposableEffect(Unit) {
         tiltSensor.start()
@@ -155,6 +183,7 @@ fun CameraScreen(
                 targetFps = 12,
                 onStats = { statsFlow.value = it },
                 onFrame = { imageProxy ->
+                    val luma = imageProxy.lumaMean()
                     imageProxy.toAnalysisFrame()?.let { frame ->
                         val result = scene.detect(frame)
                         val faceN = result.faces.size
@@ -164,13 +193,23 @@ fun CameraScreen(
                             input = com.gamdo.app.detect.FrameFeatureInput(
                                 detection = result,
                                 tilt = tiltSensor.reading.value,
-                                brightness = BrightnessSample(frameMean = 0.5f),
+                                brightness = BrightnessSample(frameMean = luma),
                                 shake = shakeMeter.shake.value,
                             ),
                         )
+                        val target = styleTargetFlow.value
                         val guide = alignmentEngine
-                            .align(frameFeatures, styleTarget, guideConfig)
+                            .align(frameFeatures, target, guideConfig)
                             .toProjection()
+                        if (BuildConfig.DEBUG) {
+                            guideDebugFlow.value = GuideDebug(
+                                features = frameFeatures,
+                                aligned = guide.aligned,
+                                visible = guide.visible,
+                                iou = alignmentEngine.metrics().matchScore,
+                                matchScore = matchScoreCalculator.calculate(frameFeatures, target),
+                            )
+                        }
                         overlayFlow.value = OverlayData(
                             faces = result.faces.map { it.box },
                             personCenter = result.pose?.landmarks
@@ -186,7 +225,7 @@ fun CameraScreen(
                             guide = guide,
                         )
                         val f = result.faces.firstOrNull()
-                        Log.d(
+                        if (BuildConfig.DEBUG) Log.d(
                             TAG,
                             "faces=$faceN pose=$poseN " +
                                 "poseConf=%.2f ".format(result.pose?.averageInFrameLikelihood ?: 0f) +
@@ -281,6 +320,14 @@ fun CameraScreen(
                 },
             )
 
+            // Drawn under the aspect mask so boxes/guides never spill onto the bars.
+            CameraOverlay(
+                overlay = overlay,
+                rollDeg = tilt.rollDeg,
+                pitchDeg = tilt.pitchDeg,
+                modifier = Modifier.fillMaxSize(),
+            )
+
             Column(modifier = Modifier.fillMaxSize()) {
                 Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
                 Box(modifier = Modifier.fillMaxWidth().height(windowHeight)) {
@@ -314,13 +361,6 @@ fun CameraScreen(
                 Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
             }
 
-            CameraOverlay(
-                overlay = overlay,
-                rollDeg = tilt.rollDeg,
-                pitchDeg = tilt.pitchDeg,
-                modifier = Modifier.fillMaxSize(),
-            )
-
             if (showHud) {
                 Column(
                     modifier = Modifier.align(Alignment.TopStart).padding(10.dp),
@@ -329,6 +369,18 @@ fun CameraScreen(
                     stats?.let { DebugHud(stats = it) }
                     if (detection.isNotEmpty()) DetectionBadge(detection)
                     TiltBadge(rollDeg = tilt.rollDeg, pitchDeg = tilt.pitchDeg, shake = shake)
+                    if (BuildConfig.DEBUG) {
+                        // Debug-only: cycles the 6 presets so the guide target can be
+                        // checked against every preset before the style strip exists.
+                        PresetBadge(
+                            label = activePreset?.let { "${it.displayName} (${presetIndex + 1}/${presets.size})" }
+                                ?: "presets.json 로드 실패",
+                            onClick = {
+                                if (presets.isNotEmpty()) presetIndex = (presetIndex + 1) % presets.size
+                            },
+                        )
+                        guideDebug?.let { GuideDebugBadge(it) }
+                    }
                 }
             }
         }
@@ -371,11 +423,19 @@ fun CameraScreen(
                         capturing = true
                         scope.launch {
                             try {
-                                val bitmap = controller.capture(context).centerCropToRatio(aspect.ratioWtoH)
-                                lastThumb = bitmap
+                                // Heavy bitmap work stays off the main thread; the
+                                // thumb is a downscaled copy so we never retain a
+                                // full-resolution bitmap for a 44dp preview.
+                                val bitmap = withContext(Dispatchers.Default) {
+                                    controller.capture().centerCropToRatio(aspect.ratioWtoH)
+                                }
+                                lastThumb = withContext(Dispatchers.Default) {
+                                    bitmap.scaledToMaxSide(256)
+                                }
                                 container.captureRepository.saveCameraCapture(bitmap)
                             } catch (t: Throwable) {
                                 Log.e(TAG, "capture failed", t)
+                                Toast.makeText(context, "촬영에 실패했어요", Toast.LENGTH_SHORT).show()
                             } finally {
                                 capturing = false
                             }
@@ -399,6 +459,8 @@ fun CameraScreen(
                     .clickable {
                         controller.toggleLens()
                         isFront = controller.isFront
+                        // Rebinding the lens resets CameraX zoom to 1x.
+                        selectedZoom = 1f
                     },
                 contentAlignment = Alignment.Center,
             ) {
@@ -458,6 +520,60 @@ private fun TiltBadge(rollDeg: Float, pitchDeg: Float, shake: Float) {
             fontSize = 10.sp,
             fontWeight = FontWeight.Medium,
         )
+    }
+}
+
+/**
+ * Debug-only readout of the P2 guide chain: what [FrameFeatureCalculator] measured,
+ * what [AlignmentEngine] decided, and both scores. `matchScore` stays out of the
+ * product UI by contract (§0.5) — this badge is compiled into debug builds only.
+ */
+@Composable
+private fun GuideDebugBadge(debug: GuideDebug) {
+    val f = debug.features
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color(0x99000000))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text(
+                text = "aligned=%s visible=%s · IoU %.2f · match %.2f".format(
+                    debug.aligned, debug.visible, debug.iou, debug.matchScore,
+                ),
+                color = if (debug.aligned) Sage else GuideLime,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(
+                text = "area %.2f · headroom %.2f · margins %.2f/%.2f".format(
+                    f.personAreaRatio, f.headroom, f.sideMargins.left, f.sideMargins.right,
+                ),
+                color = OnDarkMedium,
+                fontSize = 10.sp,
+            )
+            Text(
+                text = "luma %.2f · poseConf %.2f · backlight=%s lowLight=%s".format(
+                    f.brightnessMean, f.poseConfidence, f.backlightFlag, f.lowLightFlag,
+                ),
+                color = OnDarkMedium,
+                fontSize = 10.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PresetBadge(label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color(0x99000000))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        Text(text = "preset: $label ▸", color = GuideLime, fontSize = 10.sp, fontWeight = FontWeight.Medium)
     }
 }
 

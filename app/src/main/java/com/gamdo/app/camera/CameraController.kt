@@ -13,13 +13,14 @@ import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.view.LifecycleCameraController
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.Observer
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LiveData
 import android.os.Handler
 import android.os.Looper
 import java.util.concurrent.Executor
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -108,6 +109,7 @@ class CameraController(context: Context) {
             if (isFront) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
     }
 
+    /** Sets zoom, clamped to the device's supported range (e.g. no ultra-wide → min 1.0). */
     fun setZoom(ratio: Float) {
         val bounds = _zoomBounds.value
         val stepped = (ratio * 10f).roundToInt() / 10f
@@ -125,17 +127,24 @@ class CameraController(context: Context) {
 
     /**
      * Captures a photo and returns an upright bitmap (rotation baked into pixels,
-     * front camera mirrored to match the preview). Cropping to aspect ratio is
-     * left to the caller.
+     * front camera mirrored to match the preview). The viewport cropRect —
+     * attached by LifecycleCameraController from the PreviewView — is applied
+     * first so the result contains exactly what the preview showed (WYSIWYG).
+     * Cropping to the selected aspect ratio is left to the caller.
+     *
+     * Decode/rotate run on a background dispatcher, not the main thread: a
+     * full-resolution JPEG decode is hundreds of ms and ~50MB per copy.
      */
-    suspend fun capture(context: Context): Bitmap =
+    suspend fun capture(): Bitmap =
         suspendCancellableCoroutine { cont ->
             camera.takePicture(
-                ContextCompat.getMainExecutor(context),
+                Dispatchers.Default.asExecutor(),
                 object : ImageCapture.OnImageCapturedCallback() {
                     override fun onCaptureSuccess(image: ImageProxy) {
                         try {
-                            var bitmap = image.toBitmap().rotated(image.imageInfo.rotationDegrees)
+                            var bitmap = image.toBitmap()
+                                .cropped(image.cropRect)
+                                .rotated(image.imageInfo.rotationDegrees)
                             if (isFront) bitmap = bitmap.mirroredHorizontally()
                             cont.resume(bitmap)
                         } catch (t: Throwable) {

@@ -2,6 +2,7 @@ package com.gamdo.app.ui.camera
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -48,6 +49,11 @@ fun CameraOverlay(
     pitchDeg: Float,
     modifier: Modifier = Modifier,
 ) {
+    // Hysteresis (55° show / 65° hide) so the line doesn't flicker right at the
+    // posture boundary.
+    val horizonGate = remember { HorizonGate() }
+    val showHorizon = horizonGate.update(pitchDeg)
+
     Canvas(modifier = modifier) {
         val vw = size.width
         val vh = size.height
@@ -55,7 +61,7 @@ fun CameraOverlay(
         // Horizon indicator — a line through center rotated by roll. Only shown in
         // a shooting posture; near-flat (|pitch| large) has no meaningful horizon,
         // and roll there is undefined (would spin).
-        if (abs(pitchDeg) < 60f) {
+        if (showHorizon) {
             val level = abs(rollDeg) <= 1.5f
             val horizonColor = if (level) Sage else HorizonRed
             rotate(degrees = -rollDeg, pivot = Offset(vw / 2f, vh / 2f)) {
@@ -147,6 +153,20 @@ private fun mapRect(rect: RectN, data: OverlayData, vw: Float, vh: Float): RectN
         right = max(topLeft.x, bottomRight.x),
         bottom = max(topLeft.y, bottomRight.y),
     )
+}
+
+/** Show/hide gate for the horizon with hysteresis around the posture boundary. */
+private class HorizonGate(
+    private val showBelowDeg: Float = 55f,
+    private val hideAboveDeg: Float = 65f,
+) {
+    private var visible = true
+
+    fun update(pitchDeg: Float): Boolean {
+        val p = abs(pitchDeg)
+        visible = if (visible) p < hideAboveDeg else p < showBelowDeg
+        return visible
+    }
 }
 
 // Kept internal-visible for potential future use.
