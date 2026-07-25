@@ -264,7 +264,7 @@
 
 - [x] InsightFace 임베딩: 편집 전후 주 피사체 얼굴 거리 계산, **임계 초과 시 해당 후보 폐기** — `InsightFaceVerifier` 구현 및 CAMP-2 `buffalo_l` CUDA provider 로드 확인. 동일 이미지·밝기 변경·얼굴 미검출 sanity check 통과. 실제 인물 5장 formal calibration은 대기
 - [x] 얼굴 보호 마스크: 편집 마스크와 얼굴 박스 교차 시 얼굴 영역 제외(팽창 마진 10%) <!-- CAMP-2에서 face_mask_protected fallback·안전 영역 done 확인 -->
-- [ ] 휴리스틱 검사: 결과 인물 수 ≠ 기대 인물 수 → 폐기, 극단 색상 변화(히스토그램 거리) → 폐기
+- [x] 휴리스틱 검사: 결과 인물 수 ≠ 기대 인물 수 → 폐기, 극단 색상 변화(히스토그램 거리) → 폐기 <!-- face_count_changed·extreme_color_change 경로와 단위 테스트 완료 -->
 - [x] 전 후보 폐기·공급자 미준비 시: `status='fallback'` + failReason 기록 (앱은 기본 보정 유지 — A와 계약된 동작)
 - [x] 임베딩은 **메모리에서만 사용 후 폐기** — DB·파일 저장 금지(validation_json에 거리값만) <!-- 스키마·검증 인터페이스에서 영구 저장 경로 없음. InsightFace 실제 구현 대기 -->
 - 완료 기준: 얼굴이 바뀐 결과가 후보에 포함되지 않음(의도적 변형 샘플로 검증)
@@ -498,3 +498,4 @@
 - 핀치 자동 판정 시도 결과, 연결 기기는 `adb shell` 단일 포인터 명령만 제공하고 `/dev/input/event2` 직접 멀티터치 주입은 `Permission denied`였다. 따라서 이 항목은 코드 미구현이 아니라 실제 손가락 입력을 통한 수동 검증 대기로 남긴다.
 - 실제 인물 사진 5쌍이 준비되면 `gamdo-server/scripts/calibrate_face_threshold.py`로 InsightFace cosine similarity와 후보 임계값별 정확도를 측정할 수 있도록 도구를 추가했다. 도구는 임계값·임베딩을 저장하거나 운영 기본값을 변경하지 않는다. 실제 5쌍 캘리브레이션 실행은 사진 세트 준비 대기다.
 - 얼굴 보호 마스크를 CAMP-2에 배포했다. 레퍼런스 분석으로 얻은 얼굴 영역 마스크는 `fallback(face_mask_protected)`로 종료되고, 얼굴에서 떨어진 마스크는 실제 `done`·후보 2개로 처리되는 것을 확인했다. ComfyUI는 재시작하지 않고 FastAPI·worker만 재기동했다.
+- 생성 전후 얼굴 수가 달라진 후보를 `face_count_changed`로 폐기하는 휴리스틱을 추가했다. 최신 worker 배포 후 얼굴에서 떨어진 마스크 요청이 `done`·후보 2개로 유지되는 것을 확인했다.

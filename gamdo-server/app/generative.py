@@ -134,6 +134,18 @@ class InsightFaceVerifier:
             # validator, which fails closed when identity cannot be verified.
             return False
 
+    def face_count_matches(self, original: Image.Image, candidate: Image.Image) -> bool:
+        """Reject candidates that add or remove detected faces."""
+        try:
+            import numpy as np
+            from insightface.app import FaceAnalysis
+
+            return len(self._faces(original, FaceAnalysis, np)) == len(
+                self._faces(candidate, FaceAnalysis, np)
+            )
+        except (ImportError, OSError, RuntimeError, ValueError, TypeError, AttributeError):
+            return False
+
     def _faces(self, image: Image.Image, face_analysis: Any, numpy: Any) -> list[Any]:
         if self._app is None:
             providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
@@ -173,6 +185,13 @@ class CandidateValidator:
                     return ValidationResult(
                         False,
                         "extreme_color_change",
+                        {"histogramDistance": histogram_distance},
+                    )
+                count_guard = getattr(self.identity_verifier, "face_count_matches", None)
+                if count_guard is not None and not count_guard(original, generated):
+                    return ValidationResult(
+                        False,
+                        "face_count_changed",
                         {"histogramDistance": histogram_distance},
                     )
                 identity_ok = self.identity_verifier.verify(original, generated)

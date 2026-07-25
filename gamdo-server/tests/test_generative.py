@@ -13,14 +13,18 @@ class SameIdentity:
 
 
 class FaceMaskGuard:
-    def __init__(self, intersects: bool) -> None:
+    def __init__(self, intersects: bool, same_face_count: bool = True) -> None:
         self.intersects = intersects
+        self.same_face_count = same_face_count
 
     def verify(self, original: Image.Image, candidate: Image.Image) -> bool:
         return True
 
     def mask_intersects_face(self, original: Image.Image, operations: list[dict]) -> bool:
         return self.intersects
+
+    def face_count_matches(self, original: Image.Image, candidate: Image.Image) -> bool:
+        return self.same_face_count
 
 
 def test_candidate_validator_requires_identity_verifier(tmp_path: Path) -> None:
@@ -71,3 +75,17 @@ def test_candidate_validator_allows_mask_away_from_face(tmp_path: Path) -> None:
         original,
         [{"type": "remove_objects", "masks": [{"rect": {"x": 0.8, "y": 0.8, "width": 0.1, "height": 0.1}}]}],
     ) is True
+
+
+def test_candidate_validator_rejects_changed_face_count(tmp_path: Path) -> None:
+    original = tmp_path / "original.png"
+    candidate = tmp_path / "candidate.png"
+    Image.new("RGB", (16, 16), (120, 140, 120)).save(original)
+    Image.new("RGB", (16, 16), (125, 140, 118)).save(candidate)
+
+    result = CandidateValidator(FaceMaskGuard(False, same_face_count=False)).validate(
+        original, GeneratedCandidate(candidate, 3)
+    )
+
+    assert result.passed is False
+    assert result.reason == "face_count_changed"
