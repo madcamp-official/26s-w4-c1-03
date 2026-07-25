@@ -190,12 +190,13 @@ fun ResultScreen(
             modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth().weight(1f)
                 .clip(RoundedCornerShape(16.dp)).background(Charcoal950),
         ) {
+            val displayBitmap = generated ?: edited ?: source
             // Show the untouched source immediately while the full-resolution
             // local edit is still being computed. Waiting for `edited` here
             // made a valid gallery photo look like a placeholder on device.
-            (generated ?: edited ?: source)?.let {
+            if (displayBitmap != null) {
                 Image(
-                    bitmap = it.asImageBitmap(),
+                    bitmap = displayBitmap.asImageBitmap(),
                     contentDescription = "보정 결과",
                     contentScale = ContentScale.Fit,
                     modifier = Modifier
@@ -262,7 +263,8 @@ fun ResultScreen(
                         )
                     }
                 }
-            } ?: run {
+            }
+            if (displayBitmap == null) {
                 Text("사진을 불러오는 중이에요", color = OnDarkMuted, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center))
             }
             Box(
