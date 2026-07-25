@@ -2,8 +2,9 @@ package com.gamdo.app.data.network
 
 import com.gamdo.app.core.DeviceIdStore
 import com.gamdo.app.data.preset.StylePreset
-import kotlinx.serialization.SerialName
+import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -19,7 +20,6 @@ import retrofit2.http.Multipart
 import retrofit2.http.POST
 import retrofit2.http.Part
 import retrofit2.http.Path
-import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import java.io.File
 
 /**
@@ -47,11 +47,11 @@ interface GamdoApiService {
     @POST("edit-jobs")
     suspend fun createEditJob(
         @Header("X-Device-Id") deviceId: String,
-        @Part jobId: okhttp3.RequestBody,
-        @Part captureRef: okhttp3.RequestBody,
-        @Part operations: okhttp3.RequestBody,
-        @Part styleParams: okhttp3.RequestBody,
-        @Part resultCount: okhttp3.RequestBody,
+        @Part("jobId") jobId: okhttp3.RequestBody,
+        @Part("captureRef") captureRef: okhttp3.RequestBody,
+        @Part("operations") operations: okhttp3.RequestBody,
+        @Part("styleParams") styleParams: okhttp3.RequestBody,
+        @Part("resultCount") resultCount: okhttp3.RequestBody,
         @Part image: MultipartBody.Part,
     ): EditJobAccepted
 
