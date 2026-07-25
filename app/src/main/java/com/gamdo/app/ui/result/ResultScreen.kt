@@ -48,6 +48,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.local.entity.Captures
+import com.gamdo.app.detect.ImageMetricsExtractor
+import com.gamdo.app.detect.Problem
+import com.gamdo.app.detect.ProblemCode
+import com.gamdo.app.detect.ProblemDiagnoser
+import com.gamdo.app.detect.ProblemSeverity
 import com.gamdo.app.edit.LocalEditParams
 import com.gamdo.app.edit.LocalEditor
 import com.gamdo.app.edit.LocalFilter
@@ -157,6 +162,13 @@ fun ResultScreen(
             }
         }
     }
+    val diagnosedProblems by produceState<List<Problem>>(emptyList(), source) {
+        value = source?.let { bitmap ->
+            withContext(Dispatchers.Default) {
+                ProblemDiagnoser().diagnose(ImageMetricsExtractor.extract(bitmap))
+            }
+        }.orEmpty()
+    }
 
     Column(modifier = Modifier.fillMaxSize().background(Charcoal900)) {
         Row(
@@ -255,6 +267,18 @@ fun ResultScreen(
                     .background(Sage).padding(horizontal = 8.dp, vertical = 3.dp),
             ) {
                 Text(selectedFilter.label, color = OnSage, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+
+        if (diagnosedProblems.isNotEmpty()) {
+            Row(
+                modifier = Modifier.padding(start = 20.dp, top = 10.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                diagnosedProblems.forEach { problem ->
+                    DiagnosticChip(problem)
+                }
             }
         }
 
@@ -401,6 +425,26 @@ fun ResultScreen(
                 },
             )
         }
+    }
+}
+
+@Composable
+private fun DiagnosticChip(problem: Problem) {
+    val label = when (problem.code) {
+        ProblemCode.UNDEREXPOSED -> "조금 어두워요"
+        ProblemCode.OVEREXPOSED -> "빛이 강해요"
+        ProblemCode.BLUR_SUSPECT -> "선명도를 확인해보세요"
+        ProblemCode.TILT -> "기울기를 확인해보세요"
+        ProblemCode.EXCESS_MARGIN -> "여백이 넓어요"
+        ProblemCode.BACKLIGHT -> "뒤에서 빛이 들어와요"
+    }
+    val color = if (problem.severity == ProblemSeverity.HIGH) OnDarkHigh else OnDarkMedium
+    Box(
+        modifier = Modifier.clip(RoundedCornerShape(8.dp))
+            .background(Charcoal700)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    ) {
+        Text(label, color = color, fontSize = 11.sp)
     }
 }
 
