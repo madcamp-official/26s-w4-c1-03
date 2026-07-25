@@ -41,6 +41,11 @@ class AppContainer(context: Context) {
         json = json,
     )
 
+    val cardRepository: CardRepository = CardRepository(
+        context = appContext,
+        json = json,
+    )
+
     val presetRepository: PresetRepository = PresetRepository(
         context = appContext,
         presetsDao = database.presetsDao(),
@@ -49,5 +54,9 @@ class AppContainer(context: Context) {
 
     val settingsRepository: SettingsRepository = SettingsRepository(database.appSettingsDao())
 
-    val captureRepository: CaptureRepository = CaptureRepository(appContext, database.capturesDao())
+    val captureRepository: CaptureRepository = CaptureRepository(
+        context = appContext,
+        capturesDao = database.capturesDao(),
+        editStackRecorder = RoomEditStackRecorder(database.captureEditStackDao()),
+    )
 }

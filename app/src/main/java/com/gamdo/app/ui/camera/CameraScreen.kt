@@ -9,6 +9,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -43,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.gamdo.app.BuildConfig
 import com.gamdo.app.camera.AnalysisStats
@@ -54,19 +56,14 @@ import com.gamdo.app.camera.centerCropToRatio
 import com.gamdo.app.camera.lumaMean
 import com.gamdo.app.camera.scaledToMaxSide
 import com.gamdo.app.data.AppContainer
+import com.gamdo.app.detect.BrightnessSample
+import com.gamdo.app.detect.DetectionResult
 import com.gamdo.app.detect.MlKitFaceDetector
 import com.gamdo.app.detect.MlKitPoseDetector
-import com.gamdo.app.detect.BrightnessSample
-import com.gamdo.app.detect.FrameFeatureCalculator
-import com.gamdo.app.detect.FrameFeatures
 import com.gamdo.app.detect.SceneDetector
 import com.gamdo.app.detect.toAnalysisFrame
 import com.gamdo.app.guide.GuideConfig
-import com.gamdo.app.guide.MatchScoreCalculator
-import com.gamdo.app.guide.StyleTarget
-import com.gamdo.app.guide.AlignmentEngine
 import com.gamdo.app.guide.parseGuideConfig
-import com.gamdo.app.guide.toProjection
 import com.gamdo.app.guide.toStyleTarget
 import com.gamdo.app.ui.components.moodBrush
 import com.gamdo.app.ui.theme.Charcoal950
@@ -77,7 +74,6 @@ import com.gamdo.app.ui.theme.Sage
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -90,24 +86,31 @@ enum class CaptureAspect(val label: String, val ratioWtoH: Float) {
     RATIO_1_1("1:1", 1f),
 }
 
-/** Debug HUD snapshot of the guide chain. Never rendered in release builds. */
-private data class GuideDebug(
-    val features: FrameFeatures,
-    val aligned: Boolean,
-    val visible: Boolean,
-    val iou: Float,
-    val matchScore: Float,
-)
-
 /**
  * Camera = home (§1-5): real CameraX preview + capture. Shutter captures and
  * stays here (t2 flow — editing happens from the album); the shot is written to
  * the app dir, exported to the gallery, and recorded in `captures`.
+ *
+ * This is the **host**: it owns the camera/sensor resources and the analysis
+ * wiring, keeps per-frame state in [CameraViewModel], and renders the screen out
+ * of the private section composables below. Two extension slots are published
+ * for other verticals; both default to empty so the host stands alone.
+ *
+ * @param referenceLayer drawn inside the preview box, above the camera preview
+ *   and below the guide overlay — the reference translucent overlay (§5-2)
+ *   mounts here. Receives [BoxScope] so it can size and align itself against the
+ *   preview.
+ * @param demoControls trailing element of the top status row — the demo-mode
+ *   toggle (§7-3) mounts here. Kept out of the preview area so it can never
+ *   overlap the guide.
  */
 @Composable
 fun CameraScreen(
     container: AppContainer,
     onOpenAlbum: () -> Unit,
+    modifier: Modifier = Modifier,
+    referenceLayer: @Composable BoxScope.() -> Unit = {},
+    demoControls: @Composable () -> Unit = {},
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -116,9 +119,8 @@ fun CameraScreen(
     val controller = remember { CameraController(context) }
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
     val scene = remember { SceneDetector(MlKitFaceDetector(), MlKitPoseDetector()) }
-    val featureCalculator = remember { FrameFeatureCalculator() }
-    val alignmentEngine = remember { AlignmentEngine() }
-    val matchScoreCalculator = remember { MatchScoreCalculator() }
+    // Thresholds come from assets only (CFG-1); the data-class defaults are the
+    // fallback for a missing/!unparseable file.
     val guideConfig = remember {
         runCatching {
             context.assets.open("guide_config.json").bufferedReader().use { reader ->
@@ -126,6 +128,8 @@ fun CameraScreen(
             }
         }.getOrDefault(GuideConfig())
     }
+    val viewModel = remember { CameraViewModel(guideConfig = guideConfig) }
+
     // The guide target comes from preset data (assets/presets.json = GET /presets),
     // never from values copied into this file.
     val presets = remember {
@@ -133,27 +137,28 @@ fun CameraScreen(
     }
     var presetIndex by rememberSaveable { mutableStateOf(0) }
     val activePreset = presets.getOrNull(presetIndex)
-    // The analyzer runs off the composition thread, so the target is published
-    // through a flow instead of being captured once by the analyzer closure.
-    val styleTargetFlow = remember { MutableStateFlow(activePreset?.toStyleTarget() ?: StyleTarget()) }
+
     val tiltSensor = remember { TiltSensor(context) }
     val shakeMeter = remember { ShakeMeter(context) }
-    val statsFlow = remember { MutableStateFlow<AnalysisStats?>(null) }
-    val detectionFlow = remember { MutableStateFlow("") }
-    val overlayFlow = remember { MutableStateFlow<OverlayData?>(null) }
-    val guideDebugFlow = remember { MutableStateFlow<GuideDebug?>(null) }
-    val stats by statsFlow.collectAsState()
-    val detection by detectionFlow.collectAsState()
-    val overlay by overlayFlow.collectAsState()
-    val guideDebug by guideDebugFlow.collectAsState()
+
+    val stats by viewModel.stats.collectAsState()
+    val detection by viewModel.detectionLabel.collectAsState()
+    val overlay by viewModel.overlay.collectAsState()
+    val guideDebug by viewModel.guideDebug.collectAsState()
     val tilt by tiltSensor.reading.collectAsState()
     val shake by shakeMeter.shake.collectAsState()
+    // The debug read-outs must stay unreachable in release. Gate the toggle *and*
+    // the render: `showHud` is rememberSaveable, so a value restored from a bundle
+    // written by a debug build must not be able to surface them either.
+    // BuildConfig.DEBUG is a compile-time constant, so the whole HUD branch is
+    // dead code in release. (§7-2's developer-gesture entry point is wave 3.)
+    val hudAvailable = BuildConfig.DEBUG
     var showHud by rememberSaveable { mutableStateOf(BuildConfig.DEBUG) }
 
-    // A preset switch invalidates the smoothing window and the last stable target.
+    // A preset switch invalidates the smoothing window and the last stable target
+    // (handled inside setStyleTarget).
     LaunchedEffect(presetIndex) {
-        presets.getOrNull(presetIndex)?.let { styleTargetFlow.value = it.toStyleTarget() }
-        alignmentEngine.reset()
+        presets.getOrNull(presetIndex)?.let { viewModel.setStyleTarget(it.toStyleTarget()) }
     }
 
     DisposableEffect(Unit) {
@@ -174,69 +179,26 @@ fun CameraScreen(
     DisposableEffect(controller) {
         // Attach the analysis pipeline (§2-1) running ML Kit face + pose (§2-2).
         // FrameAnalyzer times onFrame, so the HUD reflects real detection cost.
+        // Platform conversion stays here; the reduction happens in the ViewModel.
         controller.setAnalyzer(
             analysisExecutor,
             FrameAnalyzer(
                 targetFps = 12,
-                onStats = { statsFlow.value = it },
+                onStats = viewModel::onStats,
                 onFrame = { imageProxy ->
                     val luma = imageProxy.lumaMean()
                     imageProxy.toAnalysisFrame()?.let { frame ->
                         val result = scene.detect(frame)
-                        val faceN = result.faces.size
-                        val poseN = result.pose?.landmarks?.size ?: 0
-                        detectionFlow.value = "얼굴 $faceN · 포즈 $poseN"
-                        val frameFeatures = featureCalculator.calculate(
-                            input = com.gamdo.app.detect.FrameFeatureInput(
-                                detection = result,
-                                tilt = tiltSensor.reading.value,
-                                brightness = BrightnessSample(frameMean = luma),
-                                shake = shakeMeter.shake.value,
-                            ),
-                        )
-                        val target = styleTargetFlow.value
-                        val guide = alignmentEngine
-                            .align(frameFeatures, target, guideConfig)
-                            .toProjection()
-                        if (BuildConfig.DEBUG) {
-                            guideDebugFlow.value = GuideDebug(
-                                features = frameFeatures,
-                                aligned = guide.aligned,
-                                visible = guide.visible,
-                                iou = alignmentEngine.metrics().matchScore,
-                                matchScore = matchScoreCalculator.calculate(frameFeatures, target),
-                            )
-                        }
-                        overlayFlow.value = OverlayData(
-                            faces = result.faces.map { it.box },
-                            personCenter = result.pose?.landmarks
-                                ?.filter { it.inFrameLikelihood > 0.3f }
-                                ?.takeIf { it.isNotEmpty() }
-                                ?.let { lm ->
-                                    lm.map { it.x }.average().toFloat() to lm.map { it.y }.average().toFloat()
-                                }
-                                ?: result.faces.firstOrNull()?.box?.let { it.centerX to it.centerY },
+                        viewModel.onFrameAnalyzed(
+                            detection = result,
+                            tilt = tiltSensor.reading.value,
+                            brightness = BrightnessSample(frameMean = luma),
+                            shake = shakeMeter.shake.value,
                             frameWidth = frame.width,
                             frameHeight = frame.height,
                             mirror = controller.isFront,
-                            guide = guide,
                         )
-                        val f = result.faces.firstOrNull()
-                        if (BuildConfig.DEBUG) Log.d(
-                            TAG,
-                            "faces=$faceN pose=$poseN " +
-                                "poseConf=%.2f ".format(result.pose?.averageInFrameLikelihood ?: 0f) +
-                                if (f != null) {
-                                    "face0 box=(%.2f,%.2f,%.2f,%.2f) eyeL=%s eyeR=%s rollZ=%.1f".format(
-                                        f.box.left, f.box.top, f.box.right, f.box.bottom,
-                                        f.leftEyeOpenProbability?.let { "%.2f".format(it) } ?: "?",
-                                        f.rightEyeOpenProbability?.let { "%.2f".format(it) } ?: "?",
-                                        f.headEulerAngleZ,
-                                    )
-                                } else {
-                                    "no-face"
-                                },
-                        )
+                        if (BuildConfig.DEBUG) logDetection(result)
                     }
                 },
             ),
@@ -246,218 +208,368 @@ fun CameraScreen(
             controller.unbind()
             scene.close()
             analysisExecutor.shutdown()
+            viewModel.onAnalyzerDetached()
         }
     }
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .background(Charcoal950),
     ) {
-        // Status chip
-        Box(modifier = Modifier.fillMaxWidth().padding(top = 10.dp), contentAlignment = Alignment.Center) {
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xE6242822))
-                    .clickable { showHud = !showHud }
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-            ) {
-                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Sage))
-                Text("내 감도 적용 중", color = OnDarkHigh, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            }
-        }
+        CameraStatusBar(
+            hudToggleEnabled = hudAvailable,
+            onToggleHud = { showHud = !showHud },
+            demoControls = demoControls,
+        )
 
-        // Aspect ratio toggle
-        Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Color(0x66242822))
-                    .padding(3.dp),
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                CaptureAspect.entries.forEach { option ->
-                    val selected = option == aspect
-                    Text(
-                        text = option.label,
-                        color = if (selected) Charcoal950 else OnDarkMedium,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(if (selected) Sage else Color.Transparent)
-                            .clickable { aspect = option }
-                            .padding(horizontal = 14.dp, vertical = 5.dp),
-                    )
-                }
-            }
-        }
+        AspectSelector(selected = aspect, onSelect = { aspect = it })
 
-        // Preview + aspect mask + grid
-        BoxWithConstraints(
+        CameraPreviewPane(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
                 .padding(top = 8.dp),
-        ) {
-            val windowHeight = (maxWidth / aspect.ratioWtoH).coerceAtMost(maxHeight)
-            val barHeight = (maxHeight - windowHeight) / 2
-
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { ctx ->
-                    PreviewView(ctx).apply {
-                        scaleType = PreviewView.ScaleType.FILL_CENTER
-                        this.controller = controller.camera
-                        controller.bind(lifecycleOwner)
-                    }
-                },
-            )
-
-            // Drawn under the aspect mask so boxes/guides never spill onto the bars.
-            CameraOverlay(
-                overlay = overlay,
-                rollDeg = tilt.rollDeg,
-                pitchDeg = tilt.pitchDeg,
-                modifier = Modifier.fillMaxSize(),
-            )
-
-            Column(modifier = Modifier.fillMaxSize()) {
-                Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
-                Box(modifier = Modifier.fillMaxWidth().height(windowHeight)) {
-                    RuleOfThirds()
-                    Row(
-                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        ZoomChip("0.6x", active = isZoomSelected(selectedZoom, 0.6f)) {
-                            selectedZoom = 0.6f
-                            controller.setZoom(selectedZoom)
-                        }
-                        ZoomChip("1x", active = isZoomSelected(selectedZoom, 1f)) {
-                            selectedZoom = 1f
-                            controller.setZoom(selectedZoom)
-                        }
-                        ZoomChip("2x", active = isZoomSelected(selectedZoom, 2f)) {
-                            selectedZoom = 2f
-                            controller.setZoom(selectedZoom)
-                        }
-                    }
-                }
-                Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
-            }
-
-            if (showHud) {
-                Column(
-                    modifier = Modifier.align(Alignment.TopStart).padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    stats?.let { DebugHud(stats = it) }
-                    if (detection.isNotEmpty()) DetectionBadge(detection)
-                    TiltBadge(rollDeg = tilt.rollDeg, pitchDeg = tilt.pitchDeg, shake = shake)
-                    if (BuildConfig.DEBUG) {
-                        // Debug-only: cycles the 6 presets so the guide target can be
-                        // checked against every preset before the style strip exists.
-                        PresetBadge(
-                            label = activePreset?.let { "${it.displayName} (${presetIndex + 1}/${presets.size})" }
-                                ?: "presets.json 로드 실패",
-                            onClick = {
-                                if (presets.isNotEmpty()) presetIndex = (presetIndex + 1) % presets.size
-                            },
-                        )
-                        guideDebug?.let { GuideDebugBadge(it) }
-                    }
-                }
-            }
-        }
-
-        // Bottom bar: album / shutter / flip
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 34.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                val thumb = lastThumb
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(moodBrush(2))
-                        .border(1.5.dp, Color(0x40FFFFFF), RoundedCornerShape(12.dp))
-                        .clickable(onClick = onOpenAlbum),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (thumb != null) {
-                        Image(
-                            bitmap = thumb.asImageBitmap(),
-                            contentDescription = "최근 촬영",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)),
-                        )
-                    }
-                }
-                Text("앨범", color = OnDarkMedium, fontSize = 10.sp)
-            }
-
-            Box(
-                modifier = Modifier
-                    .size(76.dp)
-                    .clip(CircleShape)
-                    .border(4.dp, Color(0xE6FFFFFF), CircleShape)
-                    .clickable(enabled = !capturing) {
-                        capturing = true
-                        scope.launch {
-                            try {
-                                // Heavy bitmap work stays off the main thread; the
-                                // thumb is a downscaled copy so we never retain a
-                                // full-resolution bitmap for a 44dp preview.
-                                val bitmap = withContext(Dispatchers.Default) {
-                                    controller.capture().centerCropToRatio(aspect.ratioWtoH)
-                                }
-                                lastThumb = withContext(Dispatchers.Default) {
-                                    bitmap.scaledToMaxSide(256)
-                                }
-                                container.captureRepository.saveCameraCapture(bitmap)
-                            } catch (t: Throwable) {
-                                Log.e(TAG, "capture failed", t)
-                                Toast.makeText(context, "촬영에 실패했어요", Toast.LENGTH_SHORT).show()
-                            } finally {
-                                capturing = false
+            controller = controller,
+            lifecycleOwner = lifecycleOwner,
+            aspect = aspect,
+            overlay = overlay,
+            rollDeg = tilt.rollDeg,
+            pitchDeg = tilt.pitchDeg,
+            selectedZoom = selectedZoom,
+            onSelectZoom = { zoom ->
+                selectedZoom = zoom
+                controller.setZoom(zoom)
+            },
+            referenceLayer = referenceLayer,
+            hud = {
+                if (hudAvailable && showHud) {
+                    CameraHud(
+                        modifier = Modifier.align(Alignment.TopStart),
+                        stats = stats,
+                        detection = detection,
+                        rollDeg = tilt.rollDeg,
+                        pitchDeg = tilt.pitchDeg,
+                        shake = shake,
+                        guideDebug = guideDebug,
+                        presetLabel = activePreset
+                            ?.let { "${it.displayName} (${presetIndex + 1}/${presets.size})" }
+                            ?: "presets.json 로드 실패",
+                        onCyclePreset = {
+                            if (presets.isNotEmpty()) {
+                                presetIndex = (presetIndex + 1) % presets.size
                             }
-                        }
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(60.dp)
-                        .clip(CircleShape)
-                        .background(if (capturing) OnDarkMuted else OnDarkHigh),
-                )
-            }
+                        },
+                    )
+                }
+            },
+        )
 
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF242822))
-                    .clickable {
-                        controller.toggleLens()
-                        isFront = controller.isFront
-                        // Rebinding the lens resets CameraX zoom to 1x.
-                        selectedZoom = 1f
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("⟲", color = if (isFront) Sage else OnDarkMedium, fontSize = 18.sp)
+        CameraBottomBar(
+            lastThumb = lastThumb,
+            capturing = capturing,
+            isFront = isFront,
+            onOpenAlbum = onOpenAlbum,
+            onFlipLens = {
+                controller.toggleLens()
+                isFront = controller.isFront
+                // Rebinding the lens resets CameraX zoom to 1x.
+                selectedZoom = 1f
+            },
+            onShutter = {
+                capturing = true
+                scope.launch {
+                    try {
+                        // Heavy bitmap work stays off the main thread; the thumb
+                        // is a downscaled copy so we never retain a
+                        // full-resolution bitmap for a 44dp preview.
+                        val bitmap = withContext(Dispatchers.Default) {
+                            controller.capture().centerCropToRatio(aspect.ratioWtoH)
+                        }
+                        lastThumb = withContext(Dispatchers.Default) {
+                            bitmap.scaledToMaxSide(256)
+                        }
+                        container.captureRepository.saveCameraCapture(bitmap)
+                    } catch (t: Throwable) {
+                        Log.e(TAG, "capture failed", t)
+                        Toast.makeText(context, "촬영에 실패했어요", Toast.LENGTH_SHORT).show()
+                    } finally {
+                        capturing = false
+                    }
+                }
+            },
+        )
+    }
+}
+
+/**
+ * Top status row. [demoControls] is the §7-3 extension slot (trailing).
+ *
+ * The chip is a product status indicator; its tap exists solely as the debug-HUD
+ * affordance, so when [hudToggleEnabled] is false it carries no click target at
+ * all — no dead tap area and no ripple in release.
+ */
+@Composable
+private fun CameraStatusBar(
+    hudToggleEnabled: Boolean,
+    onToggleHud: () -> Unit,
+    demoControls: @Composable () -> Unit,
+) {
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color(0xE6242822))
+                .then(
+                    if (hudToggleEnabled) Modifier.clickable(onClick = onToggleHud) else Modifier,
+                )
+                .padding(horizontal = 14.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Sage))
+            Text("내 감도 적용 중", color = OnDarkHigh, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Box(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp)) {
+            demoControls()
+        }
+    }
+}
+
+/** 4:5 / 1:1 only (D9). */
+@Composable
+private fun AspectSelector(selected: CaptureAspect, onSelect: (CaptureAspect) -> Unit) {
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color(0x66242822))
+                .padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            CaptureAspect.entries.forEach { option ->
+                val isSelected = option == selected
+                Text(
+                    text = option.label,
+                    color = if (isSelected) Charcoal950 else OnDarkMedium,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(if (isSelected) Sage else Color.Transparent)
+                        .clickable { onSelect(option) }
+                        .padding(horizontal = 14.dp, vertical = 5.dp),
+                )
             }
         }
     }
+}
+
+/**
+ * Preview + guide overlay + aspect mask + zoom chips.
+ *
+ * Layer order is load-bearing: camera preview → [referenceLayer] → guide overlay
+ * → aspect mask → [hud]. The guide must stay readable on top of any reference
+ * image, and the mask must clip both so nothing spills onto the letterbox bars.
+ */
+@Composable
+private fun CameraPreviewPane(
+    modifier: Modifier,
+    controller: CameraController,
+    lifecycleOwner: LifecycleOwner,
+    aspect: CaptureAspect,
+    overlay: OverlayData?,
+    rollDeg: Float,
+    pitchDeg: Float,
+    selectedZoom: Float,
+    onSelectZoom: (Float) -> Unit,
+    referenceLayer: @Composable BoxScope.() -> Unit,
+    hud: @Composable BoxScope.() -> Unit,
+) {
+    BoxWithConstraints(modifier = modifier) {
+        val windowHeight = (maxWidth / aspect.ratioWtoH).coerceAtMost(maxHeight)
+        val barHeight = (maxHeight - windowHeight) / 2
+
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                PreviewView(ctx).apply {
+                    scaleType = PreviewView.ScaleType.FILL_CENTER
+                    this.controller = controller.camera
+                    controller.bind(lifecycleOwner)
+                }
+            },
+        )
+
+        referenceLayer()
+
+        // Drawn under the aspect mask so boxes/guides never spill onto the bars.
+        CameraOverlay(
+            overlay = overlay,
+            rollDeg = rollDeg,
+            pitchDeg = pitchDeg,
+            modifier = Modifier.fillMaxSize(),
+        )
+
+        Column(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
+            Box(modifier = Modifier.fillMaxWidth().height(windowHeight)) {
+                RuleOfThirds()
+                ZoomChipRow(
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
+                    selectedZoom = selectedZoom,
+                    onSelectZoom = onSelectZoom,
+                )
+            }
+            Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
+        }
+
+        hud()
+    }
+}
+
+@Composable
+private fun ZoomChipRow(
+    modifier: Modifier,
+    selectedZoom: Float,
+    onSelectZoom: (Float) -> Unit,
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ZoomChip("0.6x", active = isZoomSelected(selectedZoom, 0.6f)) { onSelectZoom(0.6f) }
+        ZoomChip("1x", active = isZoomSelected(selectedZoom, 1f)) { onSelectZoom(1f) }
+        ZoomChip("2x", active = isZoomSelected(selectedZoom, 2f)) { onSelectZoom(2f) }
+    }
+}
+
+/** Bottom bar: album / shutter / flip. */
+@Composable
+private fun CameraBottomBar(
+    lastThumb: android.graphics.Bitmap?,
+    capturing: Boolean,
+    isFront: Boolean,
+    onOpenAlbum: () -> Unit,
+    onFlipLens: () -> Unit,
+    onShutter: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 34.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(moodBrush(2))
+                    .border(1.5.dp, Color(0x40FFFFFF), RoundedCornerShape(12.dp))
+                    .clickable(onClick = onOpenAlbum),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (lastThumb != null) {
+                    Image(
+                        bitmap = lastThumb.asImageBitmap(),
+                        contentDescription = "최근 촬영",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)),
+                    )
+                }
+            }
+            Text("앨범", color = OnDarkMedium, fontSize = 10.sp)
+        }
+
+        // D2: the shutter is manual only — capture is reachable from this
+        // clickable lambda and nowhere else.
+        Box(
+            modifier = Modifier
+                .size(76.dp)
+                .clip(CircleShape)
+                .border(4.dp, Color(0xE6FFFFFF), CircleShape)
+                .clickable(enabled = !capturing, onClick = onShutter),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(60.dp)
+                    .clip(CircleShape)
+                    .background(if (capturing) OnDarkMuted else OnDarkHigh),
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF242822))
+                .clickable(onClick = onFlipLens),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("⟲", color = if (isFront) Sage else OnDarkMedium, fontSize = 18.sp)
+        }
+    }
+}
+
+/** Debug read-outs. Assembled by the host and mounted inside the preview box. */
+@Composable
+private fun CameraHud(
+    modifier: Modifier,
+    stats: AnalysisStats?,
+    detection: String,
+    rollDeg: Float,
+    pitchDeg: Float,
+    shake: Float,
+    guideDebug: GuideDebug?,
+    presetLabel: String,
+    onCyclePreset: () -> Unit,
+) {
+    Column(
+        modifier = modifier.padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        stats?.let { DebugHud(stats = it) }
+        if (detection.isNotEmpty()) DetectionBadge(detection)
+        TiltBadge(rollDeg = rollDeg, pitchDeg = pitchDeg, shake = shake)
+        if (BuildConfig.DEBUG) {
+            // Debug-only: cycles the 6 presets so the guide target can be
+            // checked against every preset before the style strip exists.
+            PresetBadge(label = presetLabel, onClick = onCyclePreset)
+            guideDebug?.let { GuideDebugBadge(it) }
+        }
+    }
+}
+
+private fun logDetection(result: DetectionResult) {
+    val faceN = result.faces.size
+    val poseN = result.pose?.landmarks?.size ?: 0
+    val f = result.faces.firstOrNull()
+    Log.d(
+        TAG,
+        "faces=$faceN pose=$poseN " +
+            "poseConf=%.2f ".format(result.pose?.averageInFrameLikelihood ?: 0f) +
+            if (f != null) {
+                "face0 box=(%.2f,%.2f,%.2f,%.2f) eyeL=%s eyeR=%s rollZ=%.1f".format(
+                    f.box.left, f.box.top, f.box.right, f.box.bottom,
+                    f.leftEyeOpenProbability?.let { "%.2f".format(it) } ?: "?",
+                    f.rightEyeOpenProbability?.let { "%.2f".format(it) } ?: "?",
+                    f.headEulerAngleZ,
+                )
+            } else {
+                "no-face"
+            },
+    )
 }
 
 @Composable
@@ -514,9 +626,9 @@ private fun TiltBadge(rollDeg: Float, pitchDeg: Float, shake: Float) {
 }
 
 /**
- * Debug-only readout of the P2 guide chain: what [FrameFeatureCalculator] measured,
- * what [AlignmentEngine] decided, and both scores. `matchScore` stays out of the
- * product UI by contract (§0.5) — this badge is compiled into debug builds only.
+ * Debug-only read-out of the P2 guide chain: measured frame features, the
+ * alignment decision, and both scores. `matchScore` stays out of the product UI
+ * by contract (D2) — this badge is compiled into debug builds only.
  */
 @Composable
 private fun GuideDebugBadge(debug: GuideDebug) {

@@ -19,3 +19,7 @@ val OnSage = Color(0xFF10120F)
 val OnDarkHigh = Color(0xFFF2F1EA)
 val OnDarkMedium = Color(0xFFA8ADA2)
 val OnDarkMuted = Color(0xFF767B71)
+
+// Neutral dim overlay (bottom sheets, modal scrims). Not a second accent color —
+// Charcoal950 at ~55% alpha, so it reads as "darker background" rather than a hue (D11-5).
+val Scrim = Color(0x8C0C0D0B)

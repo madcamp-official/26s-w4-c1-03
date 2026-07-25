@@ -44,7 +44,7 @@ import com.gamdo.app.ui.theme.OnDarkMuted
 import com.gamdo.app.ui.theme.OnSage
 import com.gamdo.app.ui.theme.Sage
 
-private const val MIN_PICKS = 3
+private const val MIN_PICKS = 5
 
 /**
  * Onboarding (t2): pick preferences (2a) → "내 감도 저장" summary (2b) → done.
@@ -61,7 +61,7 @@ fun OnboardingScreen(onFinished: () -> Unit) {
 
 @Composable
 private fun PickStep(onNext: () -> Unit) {
-    val selected = remember { mutableStateOf(setOf(0, 2, 4)) }
+    val selected = remember { mutableStateOf(emptySet<Int>()) }
     val count = selected.value.size
 
     Column(
