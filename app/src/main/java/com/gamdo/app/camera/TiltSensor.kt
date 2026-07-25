@@ -62,11 +62,26 @@ class TiltSensor(
             filteredPitch = pitch
             initialized = true
         } else {
-            filteredRoll += alpha * (roll - filteredRoll)
+            // Roll wraps at ±180° (upside-down posture): filter along the shortest
+            // arc or the line sweeps across the whole screen. Pitch is bounded
+            // (−90..90) and needs no wrapping.
+            filteredRoll = wrapDegrees(filteredRoll + alpha * angleDelta(roll, filteredRoll))
             filteredPitch += alpha * (pitch - filteredPitch)
         }
         _reading.value = TiltReading(filteredRoll, filteredPitch)
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+
+    private companion object {
+        /** Signed shortest angular difference target−current in (−180, 180]. */
+        fun angleDelta(target: Float, current: Float): Float = wrapDegrees(target - current)
+
+        fun wrapDegrees(deg: Float): Float {
+            var d = deg % 360f
+            if (d > 180f) d -= 360f
+            if (d < -180f) d += 360f
+            return d
+        }
+    }
 }

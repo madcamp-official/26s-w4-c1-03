@@ -62,6 +62,14 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    testOptions {
+        unitTests.all {
+            // The value-dump harness prints the numbers produced from the real
+            // assets; without this Gradle swallows test stdout.
+            it.testLogging { showStandardStreams = true }
+        }
+    }
 }
 
 dependencies {

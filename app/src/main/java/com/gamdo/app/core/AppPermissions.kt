@@ -14,9 +14,11 @@ import android.provider.Settings
 object AppPermissions {
 
     /**
-     * Permissions the app needs at runtime, resolved for the running OS version:
+     * Permissions the app *requests* at runtime, resolved for the running OS version:
      * - CAMERA always.
      * - Reading photos: READ_MEDIA_IMAGES on API 33+, READ_EXTERNAL_STORAGE on 32 and below.
+     * - API 34+ additionally requests READ_MEDIA_VISUAL_USER_SELECTED so the
+     *   "selected photos only" choice results in a usable grant.
      */
     fun required(): List<String> = buildList {
         add(Manifest.permission.CAMERA)
@@ -25,6 +27,26 @@ object AppPermissions {
         } else {
             @Suppress("DEPRECATION")
             add(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            add(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+        }
+    }
+
+    /**
+     * Photo-read is satisfied when ANY of these is granted. On Android 14+ a
+     * "selected photos" grant leaves READ_MEDIA_IMAGES denied — treating that as
+     * blocked would dead-lock the gate even though the user granted access.
+     */
+    fun mediaReadAlternatives(): Set<String> = buildSet {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            add(Manifest.permission.READ_MEDIA_IMAGES)
+        } else {
+            @Suppress("DEPRECATION")
+            add(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            add(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
         }
     }
 

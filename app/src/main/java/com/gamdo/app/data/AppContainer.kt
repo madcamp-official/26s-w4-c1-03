@@ -26,7 +26,12 @@ class AppContainer(context: Context) {
         appContext,
         GamdoDatabase::class.java,
         GamdoDatabase.NAME,
-    ).build()
+    )
+        // Dev-phase only: B's schema (v2.x) is still evolving; without this any
+        // entity change crashes existing installs. Replace with real migrations
+        // before release.
+        .fallbackToDestructiveMigration()
+        .build()
 
     val deviceIdStore: DeviceIdStore = DeviceIdStore(appContext)
 

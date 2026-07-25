@@ -43,7 +43,7 @@ fun PermissionGate(
     // shouldShowRationale it separates first-run from "don't ask again".
     var requested by rememberSaveable { mutableStateOf(false) }
 
-    if (state.allPermissionsGranted) {
+    if (state.isSatisfied()) {
         // Apply [modifier] (carries Scaffold insets) so gated content sits below
         // the system bars instead of drawing underneath them.
         Box(modifier) { content() }
