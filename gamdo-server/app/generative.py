@@ -86,17 +86,60 @@ class InsightFaceVerifier:
             import numpy as np
             from insightface.app import FaceAnalysis
 
-            if self._app is None:
-                providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-                self._app = FaceAnalysis(name="buffalo_l", providers=providers)
-                self._app.prepare(ctx_id=0, det_size=(640, 640))
-            left = self._largest_face(self._app.get(_bgr(original, np)))
-            right = self._largest_face(self._app.get(_bgr(candidate, np)))
+            left = self._largest_face(self._faces(original, FaceAnalysis, np))
+            right = self._largest_face(self._faces(candidate, FaceAnalysis, np))
             if left is None or right is None:
                 return None
             return float(np.dot(left.normed_embedding, right.normed_embedding))
         except (ImportError, OSError, RuntimeError, ValueError):
             return None
+
+    def mask_intersects_face(
+        self,
+        original: Image.Image,
+        operations: list[dict[str, Any]],
+        margin_ratio: float = 0.10,
+    ) -> bool:
+        """Return whether a requested normalized edit mask touches a face.
+
+        Face boxes and embeddings stay in memory. A positive result is used by
+        the worker to reject the generative operation and preserve the face.
+        """
+        try:
+            import numpy as np
+            from insightface.app import FaceAnalysis
+
+            faces = self._faces(original, FaceAnalysis, np)
+            if not faces:
+                return False
+            image_width, image_height = original.size
+            for face in faces:
+                x1, y1, x2, y2 = (float(value) for value in face.bbox)
+                face_width = max(0.0, x2 - x1) / image_width
+                face_height = max(0.0, y2 - y1) / image_height
+                protected = (
+                    max(0.0, x1 / image_width - face_width * margin_ratio),
+                    max(0.0, y1 / image_height - face_height * margin_ratio),
+                    min(1.0, x2 / image_width + face_width * margin_ratio),
+                    min(1.0, y2 / image_height + face_height * margin_ratio),
+                )
+                for operation in operations:
+                    for mask in operation.get("masks", []):
+                        rect = mask.get("rect", mask) if isinstance(mask, dict) else {}
+                        if _rectangles_intersect(protected, _normalized_rect(rect)):
+                            return True
+            return False
+        except (ImportError, OSError, RuntimeError, ValueError, TypeError, AttributeError):
+            # An unavailable detector is handled by the normal candidate
+            # validator, which fails closed when identity cannot be verified.
+            return False
+
+    def _faces(self, image: Image.Image, face_analysis: Any, numpy: Any) -> list[Any]:
+        if self._app is None:
+            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            self._app = face_analysis(name="buffalo_l", providers=providers)
+            self._app.prepare(ctx_id=0, det_size=(640, 640))
+        return self._app.get(_bgr(image, numpy))
 
     @staticmethod
     def _largest_face(faces: list[Any]) -> Any | None:
@@ -147,6 +190,18 @@ class CandidateValidator:
         except (OSError, ValueError):
             return ValidationResult(False, "invalid_candidate", {})
 
+    def mask_is_safe(self, original_path: Path, operations: list[dict[str, Any]]) -> bool:
+        """Reject masks that overlap a protected face when the verifier supports it."""
+        guard = getattr(self.identity_verifier, "mask_intersects_face", None)
+        if guard is None:
+            return True
+        try:
+            with Image.open(original_path) as original:
+                original.load()
+                return not bool(guard(original, operations))
+        except (OSError, ValueError, TypeError):
+            return False
+
 
 def candidate_id(job_id: str, candidate: GeneratedCandidate) -> str:
     digest = hashlib.sha256(f"{job_id}:{candidate.seed}:{candidate.path}".encode()).hexdigest()[:16]
@@ -157,3 +212,19 @@ def _histogram_distance(original: Image.Image, generated: Image.Image) -> float:
     left = ImageStat.Stat(original.convert("RGB").resize((32, 32))).mean
     right = ImageStat.Stat(generated.convert("RGB").resize((32, 32))).mean
     return sum(abs(a - b) for a, b in zip(left, right)) / (255.0 * 3.0)
+
+
+def _normalized_rect(rect: dict[str, Any]) -> tuple[float, float, float, float]:
+    return (
+        float(rect.get("x", 0.0)),
+        float(rect.get("y", 0.0)),
+        float(rect.get("x", 0.0)) + float(rect.get("width", 0.0)),
+        float(rect.get("y", 0.0)) + float(rect.get("height", 0.0)),
+    )
+
+
+def _rectangles_intersect(
+    left: tuple[float, float, float, float],
+    right: tuple[float, float, float, float],
+) -> bool:
+    return left[0] < right[2] and right[0] < left[2] and left[1] < right[3] and right[1] < left[3]

@@ -43,6 +43,13 @@ class JobWorker:
         operations = json.loads(job["operations_json"])
         input_row = self.database.get_input_file(job["id"])
         try:
+            if input_row is None or not self.validator.mask_is_safe(
+                Path(input_row["storage_path"]), operations
+            ):
+                self.database.transition_job(job["id"], "fallback", fail_reason="face_mask_protected")
+                self.database.schedule_input_purge(job["id"])
+                self.purge_once()
+                return True
             candidates = self.provider.remove_objects(
                 Path(input_row["storage_path"]), operations, job["result_count"]
             )
