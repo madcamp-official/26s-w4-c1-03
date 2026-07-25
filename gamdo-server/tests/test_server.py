@@ -112,3 +112,59 @@ def test_edit_job_rejects_large_edit_area() -> None:
         )
     assert response.status_code == 422
     assert response.json()["code"] == "edit_area_limit_exceeded"
+
+
+def test_edit_job_rejects_invalid_operations_json() -> None:
+    form = {
+        "jobId": "job_invalid_json",
+        "captureRef": "cap_invalid_json",
+        "operations": "not-json",
+    }
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/edit-jobs",
+            headers={"X-Device-Id": "invalid-json-device"},
+            data=form,
+            files={"image": ("input.png", image_bytes(), "image/png")},
+        )
+    assert response.status_code == 422
+    assert response.json()["code"] == "invalid_operations"
+    assert response.json()["retryable"] is False
+
+
+def test_remove_objects_requires_an_explicit_mask() -> None:
+    form = {
+        "jobId": "job_missing_mask",
+        "captureRef": "cap_missing_mask",
+        "operations": json.dumps([{"type": "remove_objects"}]),
+    }
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/edit-jobs",
+            headers={"X-Device-Id": "missing-mask-device"},
+            data=form,
+            files={"image": ("input.png", image_bytes(), "image/png")},
+        )
+    assert response.status_code == 422
+    assert response.json()["code"] == "mask_required"
+
+
+def test_edit_job_rejects_non_image_payload_without_persisting_file() -> None:
+    form = {
+        "jobId": "job_bad_image",
+        "captureRef": "cap_bad_image",
+        "operations": json.dumps([{
+            "type": "remove_objects",
+            "masks": [{"rect": {"x": 0.1, "y": 0.1, "width": 0.1, "height": 0.1}}],
+        }]),
+    }
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/edit-jobs",
+            headers={"X-Device-Id": "bad-image-device"},
+            data=form,
+            files={"image": ("input.txt", b"not an image", "text/plain")},
+        )
+    assert response.status_code == 415
+    assert response.json()["code"] == "unsupported_image"
+    assert list(storage.INPUT_DIR.glob("**/*")) == []
