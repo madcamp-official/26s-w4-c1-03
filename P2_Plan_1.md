@@ -549,3 +549,10 @@
 - Android `:app:testDebugUnitTest --no-daemon`은 `BUILD SUCCESSFUL`로 통과했다. Debug APK 빌드도 앞선 동일 코드 기준으로 통과했다.
 - 문서의 과거 스냅샷에 남아 있던 `backlightFlag` 입력 미연결, `MatchScoreCalculator` 완전 미연결 표현을 현재 상태에 맞게 정정했다. 역광 실장면 판정, KPI 영속 기록, 핀치·오버레이 최종 시각 판정, 카드 라이선스·실사진 품질 판정은 미완료로 유지한다.
 - 전체 사용자 동작의 실행 가능·부분 연결·계획 상태를 `docs/감도_유저플로우_구현상태.md`에 별도 정리하고, 테스트 가이드에서 해당 문서를 기준 링크로 연결했다. `P1_Plan_1.md`는 수정하지 않았다.
+
+### 2026-07-25 — CameraX 촬영 스레드 오류 수정 및 실기기 재검증
+
+- `CameraScreen`에서 `controller.capture()`를 `Dispatchers.Default` 블록 밖으로 이동했다. CameraX의 `takePicture()`는 애플리케이션 메인 스레드에서 호출하고, 촬영 후 크롭·썸네일 생성만 백그라운드에서 수행하도록 분리했다.
+- 원인: 기존에는 촬영 호출 자체가 백그라운드 스레드에서 실행되어 `IllegalStateException: Not in application's main thread`가 발생했고, 셔터 입력마다 실패 토스트가 표시됐다.
+- `:app:testDebugUnitTest` 및 `:app:assembleDebug` 통과. 최신 APK를 `SM-G970N`에 재설치한 뒤 셔터 입력으로 새 캡처 파일 생성(`22:22`)과 `CameraScreen`·`AndroidRuntime` 오류 미발생을 확인했다.
+- 후속 순서: (1) 촬영→앨범→필터·슬라이더→저장 회귀, (2) 두 손가락 연속 줌과 0.1x 표시 수동 판정, (3) 오버레이 정렬·색 전환 육안 판정, (4) CAMP-2 API/GPU 결과 앱 왕복 회귀, (5) 최종 APK·문서·브랜치 상태 동기화.

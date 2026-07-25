@@ -437,11 +437,12 @@ fun CameraScreen(
                         capturing = true
                         scope.launch {
                             try {
-                                // Heavy bitmap work stays off the main thread; the
-                                // thumb is a downscaled copy so we never retain a
-                                // full-resolution bitmap for a 44dp preview.
+                                // CameraX requires takePicture() to be invoked from
+                                // the application's main thread. Keep only the
+                                // CPU-heavy bitmap work off the main thread.
+                                val captured = controller.capture()
                                 val bitmap = withContext(Dispatchers.Default) {
-                                    controller.capture().centerCropToRatio(aspect.ratioWtoH)
+                                    captured.centerCropToRatio(aspect.ratioWtoH)
                                 }
                                 lastThumb = withContext(Dispatchers.Default) {
                                     bitmap.scaledToMaxSide(256)
