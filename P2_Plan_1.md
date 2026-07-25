@@ -481,3 +481,10 @@
 - 실 HTTP smoke를 6종 프리셋·레퍼런스 분석·편집 큐에 실행했다. `POST /edit-jobs` 202 후 `queued → processing → validating → fallback(candidate_validation_failed)`로 정상 종료했고, fallback 결과 이미지는 생성하지 않았다.
 - 검증 스크립트가 현재 계약의 명시적 `masks`와 GPU 처리 시간을 반영하도록 수정됐다. 이후 smoke 전체 항목 통과.
 - 남은 외부 검증은 직접 핀치 제스처, 오버레이 최종 시각 판정, 실제 인물 사진 품질·InsightFace 임계값 캘리브레이션, 사진 살리기 드래그 마스크/후보 선택 UI다.
+
+### 2026-07-25 — 핀치 줌 연결 및 재부팅 후 LaMa 성공 경로 재검증
+
+- `CameraScreen` 프리뷰에 명시적인 `detectTransformGestures`를 연결했다. 핀치 변화량은 `CameraController.setZoom()`으로 전달되고, CameraX 실제 `ZoomState.zoomRatio`를 고정 위치의 `0.1x` 표시가 관찰한다. 별도 슬라이더·배율 버튼은 없다.
+- 최신 Debug APK를 `SM-G970N`에 설치하고 UI 계층에서 `1.0x` 단일 표시 및 슬라이더 부재를 확인했다. 두 손가락 입력 자체는 ADB 단일 포인터 제한으로 자동 판정하지 못해 수동 확인 대기다.
+- 재부팅 후 CAMP-2 실제 편집 요청을 다시 실행했다. 실제 PNG 입력과 명시적 마스크로 `queued → processing → validating → done`, 후보 2개, `validation=passed`, seed `0/1`, 결과 PNG 2건 HTTP 200을 확인했다.
+- 현재 남은 검증은 실기기에서 핀치 시 `1.0x → 1.1x ...` 표시·화면 확대가 함께 변하는지, 오버레이 정렬·색 전환의 최종 시각 판정, 사진 살리기 드래그 마스크 및 후보 선택 UI다.

@@ -7,6 +7,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -38,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -324,6 +326,22 @@ fun CameraScreen(
                         controller.bind(lifecycleOwner)
                     }
                 },
+            )
+
+            // Keep zoom interaction on the preview itself, like the stock Galaxy
+            // camera. CameraX receives the continuous gesture value, while the
+            // controller rounds the applied ratio to 0.1x and clamps to the lens
+            // bounds. The readout below observes CameraX's actual ZoomState.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(controller) {
+                        detectTransformGestures { _, _, zoomChange, _ ->
+                            if (zoomChange.isFinite() && zoomChange > 0f && zoomChange != 1f) {
+                                controller.setZoom(controller.zoomRatio.value * zoomChange)
+                            }
+                        }
+                    },
             )
 
             // Drawn under the aspect mask so boxes/guides never spill onto the bars.
