@@ -450,7 +450,7 @@ fun CameraScreen(
                         controller.toggleLens()
                         isFront = controller.isFront
                         // Rebinding the lens resets CameraX zoom to 1x.
-                        zoomLevel = 1f
+                        selectedZoom = 1f
                     },
                 contentAlignment = Alignment.Center,
             ) {
