@@ -43,6 +43,8 @@ import com.gamdo.app.data.local.entity.StyleProfile
 )
 abstract class GamdoDatabase : RoomDatabase() {
     abstract fun appSettingsDao(): AppSettingsDao
+    abstract fun styleProfileDao(): StyleProfileDao
+    abstract fun cardSelectionsDao(): CardSelectionsDao
     abstract fun presetsDao(): PresetsDao
     abstract fun sessionsDao(): SessionsDao
     abstract fun capturesDao(): CapturesDao

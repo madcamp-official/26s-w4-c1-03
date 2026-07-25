@@ -49,6 +49,12 @@ class AppContainer(context: Context) {
 
     val settingsRepository: SettingsRepository = SettingsRepository(database.appSettingsDao())
 
+    val profileRepository: ProfileRepository = ProfileRepository(
+        styleProfileDao = database.styleProfileDao(),
+        cardSelectionsDao = database.cardSelectionsDao(),
+        json = json,
+    )
+
     val captureRepository: CaptureRepository = CaptureRepository(
         context = appContext,
         capturesDao = database.capturesDao(),

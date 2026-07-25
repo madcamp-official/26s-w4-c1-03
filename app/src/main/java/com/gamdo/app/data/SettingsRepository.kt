@@ -19,7 +19,10 @@ class SettingsRepository(private val appSettingsDao: AppSettingsDao) {
         )
     }
 
-    suspend fun saveStylePreference(cardIds: Set<String>) {
+    suspend fun saveStylePreference(
+        cardIds: Set<String>,
+        recommendedPresetId: String = recommendPresetId(cardIds),
+    ) {
         appSettingsDao.put(
             AppSettings(
                 key = KEY_SELECTED_CARD_IDS,
@@ -30,7 +33,7 @@ class SettingsRepository(private val appSettingsDao: AppSettingsDao) {
         appSettingsDao.put(
             AppSettings(
                 key = KEY_STYLE_PRESET_ID,
-                value = recommendPresetId(cardIds),
+                value = recommendedPresetId,
                 updatedAt = System.currentTimeMillis(),
             ),
         )
