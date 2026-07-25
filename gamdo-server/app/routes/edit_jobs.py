@@ -5,6 +5,7 @@ import io
 import os
 import re
 import time
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -81,6 +82,14 @@ def parse_operations(raw: str) -> list[dict[str, Any]]:
                 "message": f"maskAreaRatio must be between 0 and {MAX_EDIT_AREA_RATIO}",
                 "retryable": False,
             })
+        if operation.get("type") == "remove_objects":
+            masks = operation.get("masks")
+            if not isinstance(masks, list) or not masks:
+                raise HTTPException(status_code=422, detail={
+                    "code": "mask_required",
+                    "message": "remove_objects requires at least one explicit mask",
+                    "retryable": False,
+                })
     return value
 
 
@@ -208,7 +217,7 @@ def get_edit_job(job_id: str, _: str = Depends(require_device_id)) -> dict[str, 
         "progressStage": job["progress_stage"],
         "results": [
             {
-                "url": file["storage_path"],
+                "url": f"/files/{Path(file['storage_path']).name}",
                 "generative": bool(file["generative"]),
                 "validation": file["validation_status"],
                 "seed": file["seed"],

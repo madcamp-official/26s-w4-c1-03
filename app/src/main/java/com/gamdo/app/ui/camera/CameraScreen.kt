@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.material3.Slider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
@@ -140,6 +141,7 @@ fun CameraScreen(
     var aspect by rememberSaveable { mutableStateOf(CaptureAspect.RATIO_4_5) }
     var selectedZoom by rememberSaveable { mutableStateOf(1f) }
     val actualZoom by controller.zoomRatio.collectAsState()
+    val zoomBounds by controller.zoomBounds.collectAsState()
     var isFront by remember { mutableStateOf(false) }
     var capturing by remember { mutableStateOf(false) }
     var lastThumb by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
@@ -283,29 +285,30 @@ fun CameraScreen(
                 Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
                 Box(modifier = Modifier.fillMaxWidth().height(windowHeight)) {
                     RuleOfThirds()
-                    Row(
+                    Column(
                         modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        ZoomChip("0.6x", active = isZoomSelected(actualZoom, 0.6f)) {
-                            selectedZoom = 0.6f
-                            controller.setZoom(selectedZoom)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            listOf(0.6f, 1f, 2f)
+                                .filter { it in zoomBounds.min..zoomBounds.max }
+                                .forEach { preset ->
+                                    ZoomChip(formatZoom(preset), active = isZoomSelected(actualZoom, preset)) {
+                                        selectedZoom = preset
+                                        controller.setZoom(selectedZoom)
+                                    }
+                                }
+                            Text(text = formatZoom(actualZoom), color = GuideLime, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         }
-                        ZoomChip("1x", active = isZoomSelected(actualZoom, 1f)) {
-                            selectedZoom = 1f
-                            controller.setZoom(selectedZoom)
+                        if (zoomBounds.max > zoomBounds.min) {
+                            Slider(
+                                value = actualZoom.coerceIn(zoomBounds.min, zoomBounds.max),
+                                onValueChange = controller::setZoom,
+                                valueRange = zoomBounds.min..zoomBounds.max,
+                                steps = (((zoomBounds.max - zoomBounds.min) * 10f).toInt() - 1).coerceAtLeast(0),
+                                modifier = Modifier.width(190.dp),
+                            )
                         }
-                        ZoomChip("2x", active = isZoomSelected(actualZoom, 2f)) {
-                            selectedZoom = 2f
-                            controller.setZoom(selectedZoom)
-                        }
-                        Text(
-                            text = formatZoom(actualZoom),
-                            color = GuideLime,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
                     }
                 }
                 Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
@@ -494,4 +497,4 @@ private fun isZoomSelected(current: Float, target: Float): Boolean =
     kotlin.math.abs(current - target) < 0.05f
 
 private fun formatZoom(value: Float): String =
-    if (value < 1f) "%.1fx".format(value) else "%.0fx".format(value)
+    "%.1fx".format((value * 10f).toInt() / 10f)

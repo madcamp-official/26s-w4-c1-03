@@ -16,6 +16,9 @@ import androidx.camera.view.LifecycleCameraController
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Observer
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LiveData
+import android.os.Handler
+import android.os.Looper
 import java.util.concurrent.Executor
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +26,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.math.roundToInt
+
+data class ZoomBounds(val min: Float = 1f, val max: Float = 1f)
 
 /**
  * Thin wrapper over CameraX's [LifecycleCameraController] (§1-5). Provides
@@ -31,12 +37,20 @@ import kotlin.coroutines.resumeWithException
  */
 class CameraController(context: Context) {
 
+    private var observedZoomState: LiveData<ZoomState>? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val attachZoomRunnable = Runnable { attachZoomObserver() }
+
     private val zoomObserver = Observer<ZoomState> { state ->
         _zoomRatio.value = state.zoomRatio
+        _zoomBounds.value = ZoomBounds(state.minZoomRatio, state.maxZoomRatio)
     }
 
     private val _zoomRatio = MutableStateFlow(1f)
     val zoomRatio: StateFlow<Float> = _zoomRatio.asStateFlow()
+
+    private val _zoomBounds = MutableStateFlow(ZoomBounds())
+    val zoomBounds: StateFlow<ZoomBounds> = _zoomBounds.asStateFlow()
 
     val camera: LifecycleCameraController =
         LifecycleCameraController(context.applicationContext).apply {
@@ -68,12 +82,24 @@ class CameraController(context: Context) {
 
     fun bind(owner: LifecycleOwner) {
         camera.bindToLifecycle(owner)
-        camera.cameraInfo?.zoomState?.observeForever(zoomObserver)
+        attachZoomObserver()
+        mainHandler.postDelayed(attachZoomRunnable, 300L)
     }
 
     fun unbind() {
-        camera.cameraInfo?.zoomState?.removeObserver(zoomObserver)
+        mainHandler.removeCallbacks(attachZoomRunnable)
+        observedZoomState?.removeObserver(zoomObserver)
+        observedZoomState = null
         camera.unbind()
+    }
+
+    private fun attachZoomObserver() {
+        val zoomState = camera.cameraInfo?.zoomState ?: return
+        if (observedZoomState === zoomState) return
+        observedZoomState?.removeObserver(zoomObserver)
+        observedZoomState = zoomState
+        zoomState.observeForever(zoomObserver)
+        zoomState.value?.let { zoomObserver.onChanged(it) }
     }
 
     fun toggleLens() {
@@ -83,7 +109,9 @@ class CameraController(context: Context) {
     }
 
     fun setZoom(ratio: Float) {
-        camera.setZoomRatio(ratio)
+        val bounds = _zoomBounds.value
+        val stepped = (ratio * 10f).roundToInt() / 10f
+        camera.setZoomRatio(stepped.coerceIn(bounds.min, bounds.max))
         camera.cameraInfo?.zoomState?.value?.zoomRatio?.let { _zoomRatio.value = it }
     }
 

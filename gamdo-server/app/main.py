@@ -6,9 +6,10 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from .db import Database
-from .storage import ensure_storage
+from .storage import RESULT_DIR, ensure_storage
 from .routes import edit_jobs, presets, references
 
 
@@ -20,6 +21,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="GAMDO Server", version="0.1.0", lifespan=lifespan)
+app.mount("/files", StaticFiles(directory=str(RESULT_DIR)), name="generated-files")
 
 
 def error_payload(code: str, message: str, retryable: bool) -> dict[str, Any]:

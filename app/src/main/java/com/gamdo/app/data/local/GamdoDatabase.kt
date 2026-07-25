@@ -46,6 +46,8 @@ abstract class GamdoDatabase : RoomDatabase() {
     abstract fun presetsDao(): PresetsDao
     abstract fun sessionsDao(): SessionsDao
     abstract fun capturesDao(): CapturesDao
+    abstract fun captureEditStackDao(): CaptureEditStackDao
+    abstract fun editResultsLocalDao(): EditResultsLocalDao
 
     companion object {
         const val NAME = "gamdo.db"

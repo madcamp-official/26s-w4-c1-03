@@ -32,5 +32,13 @@
 
 - 실제 인물 사진 5장 품질 평가
 - 실제 인물 5장 기반 정식 품질·threshold calibration
-- 실기기에서 후보 2개 수신 및 결과 화면 검증
+- 실기기에서 CAMP-2 후보 2개 수신 및 결과 화면 전체 흐름 검증
 - FLUX.1 Fill 아웃페인팅
+
+## 2026-07-25 — CAMP-2 결과 전달 경로 수정
+
+- 원격 `/opt/gamdo/server`에 최신 `app/main.py`·`app/routes/edit_jobs.py`를 백업 후 반영했다.
+- FastAPI를 재시작하고 결과 URL을 서버 내부 절대경로에서 `/files/{filename}`으로 수정했다.
+- 실제 인물 카드 사진으로 `queued → processing → validating → done`, 후보 2개, seed 0·1, `validation=passed`를 재확인했다.
+- `/files/...png` 결과 다운로드 HTTP 200을 확인했다.
+- 실기기 `SM-G970N` Android API 테스트 2개를 CAMP-2 SSH 터널 경유로 통과시켰다.

@@ -3,12 +3,18 @@ package com.gamdo.app.data
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.net.Uri
 import android.util.Log
 import com.gamdo.app.core.Ulid
 import com.gamdo.app.data.local.CapturesDao
+import com.gamdo.app.data.local.CaptureEditStackDao
+import com.gamdo.app.data.local.EditResultsLocalDao
+import com.gamdo.app.data.local.entity.CaptureEditStack
+import com.gamdo.app.data.local.entity.EditResultsLocal
 import com.gamdo.app.data.local.entity.Captures
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -26,6 +32,8 @@ data class SavedCapture(val id: String, val filePath: String)
 class CaptureRepository(
     context: Context,
     private val capturesDao: CapturesDao,
+    private val editStackDao: CaptureEditStackDao? = null,
+    private val editResultsDao: EditResultsLocalDao? = null,
 ) {
     private val appContext = context.applicationContext
 
@@ -56,6 +64,86 @@ class CaptureRepository(
         )
 
         SavedCapture(id = id, filePath = file.absolutePath)
+    }
+
+    suspend fun saveEditedCapture(
+        captureId: String,
+        bitmap: Bitmap,
+        paramsJson: String,
+        stepOrder: Int = 1,
+    ): String = withContext(Dispatchers.IO) {
+        val id = "edit_" + Ulid.generate()
+        val fileName = "$id.jpg"
+        val bytes = ByteArrayOutputStream().use { out ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+            out.toByteArray()
+        }
+        val dir = File(appContext.filesDir, "edits").apply { mkdirs() }
+        val file = File(dir, fileName).apply { writeBytes(bytes) }
+        runCatching { exportToGallery(bytes, fileName) }
+            .onFailure { Log.w(TAG, "Edited gallery export failed (kept local copy)", it) }
+        editStackDao?.insert(
+            CaptureEditStack(
+                id = id,
+                captureId = captureId,
+                stepOrder = stepOrder,
+                stepType = "local_adjustment",
+                paramsJson = paramsJson,
+                createdAt = System.currentTimeMillis(),
+            ),
+        )
+        file.absolutePath
+    }
+
+    suspend fun importGalleryPhoto(uri: Uri): SavedCapture = withContext(Dispatchers.IO) {
+        val source = appContext.contentResolver.openInputStream(uri)
+            ?: error("Unable to open selected photo")
+        val bitmap = source.use { BitmapFactory.decodeStream(it) }
+            ?: error("Selected photo is not decodable")
+        val id = "cap_" + Ulid.generate()
+        val fileName = "$id.jpg"
+        val bytes = ByteArrayOutputStream().use { out ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+            out.toByteArray()
+        }
+        val dir = File(appContext.filesDir, "captures").apply { mkdirs() }
+        val file = File(dir, fileName).apply { writeBytes(bytes) }
+        capturesDao.insert(
+            Captures(
+                id = id,
+                sessionId = null,
+                source = "gallery_import",
+                filePath = file.absolutePath,
+                createdAt = System.currentTimeMillis(),
+            ),
+        )
+        SavedCapture(id = id, filePath = file.absolutePath)
+    }
+
+    suspend fun recordDownloadedEditResult(
+        captureId: String,
+        jobId: String,
+        filePath: String,
+        rank: Int,
+        seed: Int?,
+        validationJson: String,
+        operationsJson: String,
+    ) = withContext(Dispatchers.IO) {
+        editResultsDao?.insert(
+            EditResultsLocal(
+                id = "result_" + Ulid.generate(),
+                captureId = captureId,
+                jobId = jobId,
+                kind = "generated",
+                generative = 1,
+                seed = seed,
+                rank = rank,
+                filePath = filePath,
+                validationJson = validationJson,
+                opsAppliedJson = operationsJson,
+                createdAt = System.currentTimeMillis(),
+            ),
+        )
     }
 
     /** Inserts a JPEG copy into the gallery under Pictures/감도. */

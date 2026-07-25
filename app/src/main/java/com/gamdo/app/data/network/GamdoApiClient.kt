@@ -21,6 +21,8 @@ import retrofit2.http.POST
 import retrofit2.http.Part
 import retrofit2.http.Path
 import java.io.File
+import java.io.IOException
+import okhttp3.Request
 
 /**
  * Retrofit contract for the versioned GAMDO API.
@@ -101,11 +103,13 @@ class GamdoApiClient(
         isLenient = true
         encodeDefaults = true
     },
-    httpClient: OkHttpClient = OkHttpClient.Builder().build(),
+    private val httpClient: OkHttpClient = OkHttpClient.Builder().build(),
 ) {
 
+    private val normalizedBaseUrl = normalizeBaseUrl(baseUrl)
+
     private val service: GamdoApiService = Retrofit.Builder()
-        .baseUrl(normalizeBaseUrl(baseUrl))
+        .baseUrl(normalizedBaseUrl)
         .client(httpClient)
         .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
         .build()
@@ -139,6 +143,23 @@ class GamdoApiClient(
 
     suspend fun getEditJob(jobId: String): EditJobStatus =
         service.getEditJob(deviceIdStore.getOrCreate(), jobId)
+
+    /** Downloads a result path returned by the job endpoint into app-private storage. */
+    suspend fun downloadResult(resultUrl: String, destination: File) =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val url = if (resultUrl.startsWith("http://") || resultUrl.startsWith("https://")) {
+                resultUrl
+            } else {
+                normalizedBaseUrl.removeSuffix("api/v1/") + resultUrl.trimStart('/')
+            }
+            val request = Request.Builder().url(url).get().build()
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw IOException("result download failed: ${response.code}")
+                val body = response.body ?: throw IOException("result response has no body")
+                destination.parentFile?.mkdirs()
+                destination.outputStream().use { output -> body.byteStream().copyTo(output) }
+            }
+        }
 
     private fun imagePart(image: File): MultipartBody.Part {
         val body = image.asRequestBody("application/octet-stream".toMediaType())

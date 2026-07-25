@@ -55,7 +55,10 @@ def test_edit_job_polling_does_not_force_fallback() -> None:
     form = {
         "jobId": "job_test_001",
         "captureRef": "cap_test_001",
-        "operations": json.dumps([{"type": "remove_objects", "auto": True}]),
+            "operations": json.dumps([{
+                "type": "remove_objects",
+                "masks": [{"rect": {"x": 0.1, "y": 0.1, "width": 0.1, "height": 0.1}}],
+            }]),
         "styleParams": json.dumps({"v": 1, "color": {"exposureBias": 0.1}}),
         "resultCount": "2",
     }

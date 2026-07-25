@@ -48,7 +48,16 @@ class GamdoApiInstrumentedTest {
                 operations = buildJsonArray {
                     add(buildJsonObject {
                         put("type", "remove_objects")
-                        put("auto", true)
+                        put("masks", buildJsonArray {
+                            add(buildJsonObject {
+                                put("rect", buildJsonObject {
+                                    put("x", 0.1f)
+                                    put("y", 0.1f)
+                                    put("width", 0.1f)
+                                    put("height", 0.1f)
+                                })
+                            })
+                        })
                     })
                 },
                 styleParams = buildJsonObject { put("v", 1) },

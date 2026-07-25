@@ -16,7 +16,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -24,6 +28,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.PickVisualMediaRequest
 import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.local.entity.Captures
@@ -33,6 +40,7 @@ import com.gamdo.app.ui.theme.OnDarkHigh
 import com.gamdo.app.ui.theme.OnDarkMedium
 import com.gamdo.app.ui.theme.OnDarkMuted
 import java.io.File
+import kotlinx.coroutines.launch
 
 /**
  * Album (t2 2e) — loads real captures from the DB (§1-5). Tapping a photo opens
@@ -44,7 +52,17 @@ fun AlbumScreen(
     onBack: () -> Unit,
     onOpenPhoto: (captureId: String) -> Unit,
 ) {
-    val captures by produceState(initialValue = emptyList<Captures>(), container) {
+    var refreshToken by remember { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                runCatching { container.captureRepository.importGalleryPhoto(uri) }
+                    .onSuccess { refreshToken++ }
+            }
+        }
+    }
+    val captures by produceState(initialValue = emptyList<Captures>(), container, refreshToken) {
         value = container.database.capturesDao().getRecent(60)
     }
 
@@ -65,6 +83,14 @@ fun AlbumScreen(
                 modifier = Modifier.clickable(onClick = onBack),
             )
             Text(text = "앨범", color = OnDarkHigh, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+            Text(
+                text = "가져오기",
+                color = OnDarkMedium,
+                fontSize = 12.sp,
+                modifier = Modifier.clickable {
+                    picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                },
+            )
         }
 
         if (captures.isEmpty()) {
