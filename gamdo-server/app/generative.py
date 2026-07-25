@@ -72,6 +72,16 @@ class InsightFaceVerifier:
             return cls()
 
     def verify(self, original: Image.Image, candidate: Image.Image) -> bool:
+        similarity = self.similarity(original, candidate)
+        return similarity is not None and similarity >= self.threshold
+
+    def similarity(self, original: Image.Image, candidate: Image.Image) -> float | None:
+        """Return the in-memory cosine similarity, or ``None`` when unverifiable.
+
+        This is exposed for offline threshold calibration only. Embeddings are
+        still created and discarded inside this call; no face vector is returned
+        or persisted.
+        """
         try:
             import numpy as np
             from insightface.app import FaceAnalysis
@@ -83,11 +93,10 @@ class InsightFaceVerifier:
             left = self._largest_face(self._app.get(_bgr(original, np)))
             right = self._largest_face(self._app.get(_bgr(candidate, np)))
             if left is None or right is None:
-                return False
-            similarity = float(np.dot(left.normed_embedding, right.normed_embedding))
-            return similarity >= self.threshold
+                return None
+            return float(np.dot(left.normed_embedding, right.normed_embedding))
         except (ImportError, OSError, RuntimeError, ValueError):
-            return False
+            return None
 
     @staticmethod
     def _largest_face(faces: list[Any]) -> Any | None:
