@@ -63,6 +63,9 @@ interface CaptureEditStackDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(step: CaptureEditStack)
 
+    @Query("SELECT COALESCE(MAX(step_order), 0) + 1 FROM capture_edit_stack WHERE capture_id = :captureId")
+    suspend fun nextStepOrder(captureId: String): Int
+
     @Query("SELECT * FROM capture_edit_stack WHERE capture_id = :captureId AND active = 1 ORDER BY step_order")
     suspend fun getActive(captureId: String): List<CaptureEditStack>
 }

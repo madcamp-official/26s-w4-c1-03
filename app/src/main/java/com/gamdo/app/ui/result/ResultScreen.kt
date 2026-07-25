@@ -73,10 +73,15 @@ fun ResultScreen(
     onBack: () -> Unit,
 ) {
     val capture by produceState<Captures?>(initialValue = null, captureId, container) {
-        value = container.database.capturesDao().get(captureId)
+        value = withContext(Dispatchers.IO) {
+            container.database.capturesDao().get(captureId)
+        }
     }
-    val source = remember(capture?.filePath) {
-        capture?.filePath?.let { BitmapFactory.decodeFile(it) }
+    val source by produceState<Bitmap?>(initialValue = null, capture?.filePath) {
+        val path = capture?.filePath ?: return@produceState
+        // Decode off the composition thread so entering the editor never blocks
+        // the first frame on a full-resolution gallery image.
+        value = withContext(Dispatchers.IO) { BitmapFactory.decodeFile(path) }
     }
     var selectedFilter by remember { mutableStateOf(LocalFilter.MY_STYLE) }
     var brightness by remember { mutableStateOf(0f) }
@@ -87,7 +92,7 @@ fun ResultScreen(
     var maskCenter by remember { mutableStateOf<Pair<Float, Float>?>(null) }
     var gpuStatus by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val edited by produceState<Bitmap?>(source, selectedFilter, brightness, warmth, contrast) {
+    val edited by produceState<Bitmap?>(source, source, selectedFilter, brightness, warmth, contrast) {
         value = source?.let {
             withContext(Dispatchers.Default) {
                 LocalEditor.apply(

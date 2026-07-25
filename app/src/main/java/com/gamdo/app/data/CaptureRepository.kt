@@ -82,11 +82,12 @@ class CaptureRepository(
         val file = File(dir, fileName).apply { writeBytes(bytes) }
         runCatching { exportToGallery(bytes, fileName) }
             .onFailure { Log.w(TAG, "Edited gallery export failed (kept local copy)", it) }
+        val persistedStepOrder = editStackDao?.nextStepOrder(captureId) ?: stepOrder
         editStackDao?.insert(
             CaptureEditStack(
                 id = id,
                 captureId = captureId,
-                stepOrder = stepOrder,
+                stepOrder = persistedStepOrder,
                 stepType = "local_adjustment",
                 paramsJson = paramsJson,
                 createdAt = System.currentTimeMillis(),
