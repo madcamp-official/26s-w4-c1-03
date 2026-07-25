@@ -2,6 +2,8 @@ package com.gamdo.app.camera
 
 import android.graphics.Bitmap
 import androidx.camera.core.ImageProxy
+import com.gamdo.app.detect.BrightnessSample
+import com.gamdo.app.detect.NormalizedBox
 
 /**
  * Converts an analysis [ImageProxy] (YUV_420_888) to an upright RGB [Bitmap],
@@ -43,3 +45,83 @@ fun ImageProxy.lumaMean(stride: Int = 8): Float {
     }
     return if (count == 0) 0f else (sum.toFloat() / count) / 255f
 }
+
+/**
+ * Samples frame, face and non-face background luma in one Y-plane pass.
+ * [faceBox] is expressed in the upright ML Kit coordinate space; raw Y-plane
+ * samples are rotated into that space before region classification.
+ */
+fun ImageProxy.brightnessSample(faceBox: NormalizedBox?, stride: Int = 8): BrightnessSample {
+    val plane = planes.firstOrNull() ?: return BrightnessSample(frameMean = 0f)
+    val buffer = plane.buffer.duplicate().apply { rewind() }
+    val rowStride = plane.rowStride
+    val pixelStride = plane.pixelStride
+    val limit = buffer.limit()
+    var frameSum = 0L
+    var faceSum = 0L
+    var backgroundSum = 0L
+    var frameCount = 0
+    var faceCount = 0
+    var backgroundCount = 0
+    var y = 0
+    while (y < height) {
+        val rowBase = y * rowStride
+        var x = 0
+        while (x < width) {
+            val index = rowBase + x * pixelStride
+            if (index >= limit) break
+            val value = buffer.get(index).toInt() and 0xFF
+            frameSum += value
+            frameCount++
+            if (faceBox != null) {
+                val u = uprightX(x, y)
+                val v = uprightY(x, y)
+                if (u >= faceBox.left && u <= faceBox.right &&
+                    v >= faceBox.top && v <= faceBox.bottom
+                ) {
+                    faceSum += value
+                    faceCount++
+                } else {
+                    backgroundSum += value
+                    backgroundCount++
+                }
+            }
+            x += stride
+        }
+        y += stride
+    }
+    val frameMean = mean(frameSum, frameCount)
+    return BrightnessSample(
+        frameMean = frameMean,
+        faceMean = meanOrNull(faceSum, faceCount),
+        backgroundMean = meanOrNull(backgroundSum, backgroundCount),
+    )
+}
+
+private fun ImageProxy.uprightX(rawX: Int, rawY: Int): Float {
+    val x = rawX.toFloat() / width.coerceAtLeast(1)
+    val y = rawY.toFloat() / height.coerceAtLeast(1)
+    return when (imageInfo.rotationDegrees) {
+        90 -> 1f - y
+        180 -> 1f - x
+        270 -> y
+        else -> x
+    }
+}
+
+private fun ImageProxy.uprightY(rawX: Int, rawY: Int): Float {
+    val x = rawX.toFloat() / width.coerceAtLeast(1)
+    val y = rawY.toFloat() / height.coerceAtLeast(1)
+    return when (imageInfo.rotationDegrees) {
+        90 -> x
+        180 -> 1f - y
+        270 -> 1f - x
+        else -> y
+    }
+}
+
+private fun mean(sum: Long, count: Int): Float =
+    if (count == 0) 0f else (sum.toFloat() / count) / 255f
+
+private fun meanOrNull(sum: Long, count: Int): Float? =
+    if (count == 0) null else (sum.toFloat() / count) / 255f

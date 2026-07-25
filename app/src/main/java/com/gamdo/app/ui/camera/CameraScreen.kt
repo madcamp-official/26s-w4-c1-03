@@ -54,12 +54,11 @@ import com.gamdo.app.camera.FrameAnalyzer
 import com.gamdo.app.camera.ShakeMeter
 import com.gamdo.app.camera.TiltSensor
 import com.gamdo.app.camera.centerCropToRatio
-import com.gamdo.app.camera.lumaMean
+import com.gamdo.app.camera.brightnessSample
 import com.gamdo.app.camera.scaledToMaxSide
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.detect.MlKitFaceDetector
 import com.gamdo.app.detect.MlKitPoseDetector
-import com.gamdo.app.detect.BrightnessSample
 import com.gamdo.app.detect.FrameFeatureCalculator
 import com.gamdo.app.detect.FrameFeatures
 import com.gamdo.app.detect.SceneDetector
@@ -191,7 +190,6 @@ fun CameraScreen(
                 targetFps = 12,
                 onStats = { statsFlow.value = it },
                 onFrame = { imageProxy ->
-                    val luma = imageProxy.lumaMean()
                     imageProxy.toAnalysisFrame()?.let { frame ->
                         val result = scene.detect(frame)
                         val faceN = result.faces.size
@@ -201,7 +199,11 @@ fun CameraScreen(
                             input = com.gamdo.app.detect.FrameFeatureInput(
                                 detection = result,
                                 tilt = tiltSensor.reading.value,
-                                brightness = BrightnessSample(frameMean = luma),
+                                brightness = imageProxy.brightnessSample(
+                                    faceBox = result.faces.maxByOrNull {
+                                        it.box.width * it.box.height
+                                    }?.box,
+                                ),
                                 shake = shakeMeter.shake.value,
                             ),
                         )
