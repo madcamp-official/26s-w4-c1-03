@@ -12,12 +12,24 @@ class ProfileEngineTest {
         PresetProfile("candid_feed", mapOf("subjectScale" to .4f, "subjectPosition" to .33f, "headroom" to .1f, "backgroundRatio" to .6f, "framing" to .55f), mapOf("brightness" to .6f, "colorTemperature" to 5500f, "saturation" to .5f, "contrast" to .5f, "sharpness" to .55f, "grain" to .25f, "candidness" to .85f)),
     )
 
-    private fun card(id: String, bright: Float, background: Float, temperature: Float) = CardFeature(
-        id, .42f, .66f, .12f, background, bright, "natural", temperature, .42f, .38f, .5f, .5f, .72f, .4f,
+    private fun card(
+        id: String,
+        bright: Float,
+        background: Float,
+        temperature: Float,
+        subjectScale: Float = .42f,
+        subjectPosition: Float = .66f,
+        headroom: Float = .12f,
+        framing: Float = .4f,
+    ) = CardFeature(
+        id, subjectScale, subjectPosition, headroom, background, bright, "natural", temperature, .42f, .38f, .5f, .5f, .72f, framing,
     )
 
     @Test fun `different card sets produce different recommendations`() {
-        val bright = ProfileEngine.build(listOf(card("bright", .9f, .35f, 6200f)), presets)
+        val bright = ProfileEngine.build(
+            listOf(card("bright", .9f, .35f, 6200f, subjectScale = .6f, subjectPosition = .5f, headroom = .05f, framing = .8f)),
+            presets,
+        )
         val film = ProfileEngine.build(listOf(card("film", .35f, .7f, 5100f)), presets)
         assertNotEquals(bright.recommendedPresetIds, film.recommendedPresetIds)
         assertTrue(bright.summary.contains("밝은"))
@@ -33,5 +45,23 @@ class ProfileEngineTest {
         val updated = ProfileEngine.applyFeedback(original, FeedbackSignal.COMPOSITION_GOOD_COLOR_BAD)
         assertEquals(original.composition, updated.composition)
         assertTrue(updated.color.getValue("colorTemperature").mean < original.color.getValue("colorTemperature").mean)
+    }
+
+    @Test fun `recommendation distance normalizes kelvin before ranking`() {
+        val selected = card("selected", .8f, .7f, 6200f)
+        val compositionMatch = PresetProfile(
+            "composition_match",
+            mapOf("subjectScale" to .42f, "subjectPosition" to .66f, "headroom" to .12f, "backgroundRatio" to .7f, "framing" to .4f),
+            mapOf("brightness" to .8f, "colorTemperature" to 4200f, "saturation" to .42f, "contrast" to .38f, "sharpness" to .5f, "grain" to .5f, "candidness" to .72f),
+        )
+        val temperatureMatch = PresetProfile(
+            "temperature_match",
+            mapOf("subjectScale" to 0f, "subjectPosition" to 0f, "headroom" to 0f, "backgroundRatio" to 0f, "framing" to 0f),
+            mapOf("brightness" to 0f, "colorTemperature" to 6200f, "saturation" to 0f, "contrast" to 0f, "sharpness" to 0f, "grain" to 0f, "candidness" to 0f),
+        )
+
+        val result = ProfileEngine.build(listOf(selected), listOf(temperatureMatch, compositionMatch))
+
+        assertEquals("composition_match", result.recommendedPresetIds.first())
     }
 }

@@ -183,15 +183,15 @@ class P2ValueDumpTest {
             assertEquals("feedback must return 3 recommendations", 3, profile.recommendedPresetIds.size)
         }
 
-        // Why the recommendation looks colour-temperature-driven: the distance sum in
-        // ProfileEngine.recommend mixes Kelvin with 0..1 dimensions unnormalized.
+        // Show the same normalized distance scale used by ProfileEngine.recommend.
         val profile = ProfileEngine.build(cards.filter { it.id in listOf("card_03", "card_09") }, presetProfiles)
         val all = profile.composition + profile.color
-        println("\n  per-dimension distance to each preset (unnormalized — Kelvin dominates):")
+        println("\n  per-dimension distance to each preset (normalized):")
         presetProfiles.forEach { preset ->
             val merged = preset.composition + preset.color
             val parts = all.entries.map { (key, value) ->
-                key to kotlin.math.abs(value.mean - (merged[key] ?: value.mean))
+                val raw = kotlin.math.abs(value.mean - (merged[key] ?: value.mean))
+                key to if (key == "colorTemperature") (raw / 2000f).coerceAtMost(1f) else raw.coerceAtMost(1f)
             }
             println("      %-16s total=%.1f  %s".format(
                 preset.id, parts.sumOf { it.second.toDouble() },

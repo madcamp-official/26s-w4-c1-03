@@ -40,6 +40,10 @@ enum class FeedbackSignal { PERFECT, COMPOSITION_GOOD_COLOR_BAD, COLOR_GOOD_BUT_
 
 object ProfileEngine {
     private const val ALPHA = 0.3f
+    // Card/preset color temperature values use Kelvin, while the other
+    // dimensions are already normalized to 0..1. Keep Kelvin from drowning
+    // out composition and tone when ranking recommendations.
+    private const val COLOR_TEMPERATURE_SPAN = 2000f
     private val compositionKeys = listOf("subjectScale", "subjectPosition", "headroom", "backgroundRatio", "framing")
     private val colorKeys = listOf("brightness", "colorTemperature", "saturation", "contrast", "sharpness", "grain", "candidness")
 
@@ -99,9 +103,22 @@ object ProfileEngine {
         presets: List<PresetProfile>,
     ): List<String> = presets.sortedBy { preset ->
         (composition + color).entries.sumOf { (key, value) ->
-            abs(value.mean - ((preset.composition + preset.color)[key] ?: value.mean)).toDouble()
+            normalizedDistance(
+                key,
+                value.mean,
+                (preset.composition + preset.color)[key] ?: value.mean,
+            ).toDouble()
         }
     }.take(3).map { it.id }
+
+    private fun normalizedDistance(key: String, actual: Float, target: Float): Float {
+        val distance = abs(actual - target)
+        return if (key == "colorTemperature") {
+            (distance / COLOR_TEMPERATURE_SPAN).coerceAtMost(1f)
+        } else {
+            distance.coerceAtMost(1f)
+        }
+    }
 
     private fun adjust(values: MutableMap<String, ProfileDimension>, key: String, delta: Float) {
         val current = values[key] ?: return
