@@ -548,3 +548,4 @@
 - 서버 `python -m pytest -q`는 `28 passed, 2 warnings`로 통과했다. 경고는 Starlette/httpx와 Pillow의 외부 라이브러리 deprecation이며 P2 기능 실패가 아니다.
 - Android `:app:testDebugUnitTest --no-daemon`은 `BUILD SUCCESSFUL`로 통과했다. Debug APK 빌드도 앞선 동일 코드 기준으로 통과했다.
 - 문서의 과거 스냅샷에 남아 있던 `backlightFlag` 입력 미연결, `MatchScoreCalculator` 완전 미연결 표현을 현재 상태에 맞게 정정했다. 역광 실장면 판정, KPI 영속 기록, 핀치·오버레이 최종 시각 판정, 카드 라이선스·실사진 품질 판정은 미완료로 유지한다.
+- 전체 사용자 동작의 실행 가능·부분 연결·계획 상태를 `docs/감도_유저플로우_구현상태.md`에 별도 정리하고, 테스트 가이드에서 해당 문서를 기준 링크로 연결했다. `P1_Plan_1.md`는 수정하지 않았다.
