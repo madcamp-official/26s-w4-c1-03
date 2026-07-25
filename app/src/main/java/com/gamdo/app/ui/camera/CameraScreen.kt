@@ -139,6 +139,7 @@ fun CameraScreen(
 
     var aspect by rememberSaveable { mutableStateOf(CaptureAspect.RATIO_4_5) }
     var selectedZoom by rememberSaveable { mutableStateOf(1f) }
+    val actualZoom by controller.zoomRatio.collectAsState()
     var isFront by remember { mutableStateOf(false) }
     var capturing by remember { mutableStateOf(false) }
     var lastThumb by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
@@ -287,18 +288,24 @@ fun CameraScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        ZoomChip("0.6x", active = isZoomSelected(selectedZoom, 0.6f)) {
+                        ZoomChip("0.6x", active = isZoomSelected(actualZoom, 0.6f)) {
                             selectedZoom = 0.6f
                             controller.setZoom(selectedZoom)
                         }
-                        ZoomChip("1x", active = isZoomSelected(selectedZoom, 1f)) {
+                        ZoomChip("1x", active = isZoomSelected(actualZoom, 1f)) {
                             selectedZoom = 1f
                             controller.setZoom(selectedZoom)
                         }
-                        ZoomChip("2x", active = isZoomSelected(selectedZoom, 2f)) {
+                        ZoomChip("2x", active = isZoomSelected(actualZoom, 2f)) {
                             selectedZoom = 2f
                             controller.setZoom(selectedZoom)
                         }
+                        Text(
+                            text = formatZoom(actualZoom),
+                            color = GuideLime,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
                     }
                 }
                 Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
@@ -485,3 +492,6 @@ private fun ZoomChip(label: String, active: Boolean, onClick: () -> Unit) {
 
 private fun isZoomSelected(current: Float, target: Float): Boolean =
     kotlin.math.abs(current - target) < 0.05f
+
+private fun formatZoom(value: Float): String =
+    if (value < 1f) "%.1fx".format(value) else "%.0fx".format(value)

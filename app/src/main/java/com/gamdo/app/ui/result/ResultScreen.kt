@@ -33,8 +33,9 @@ import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.local.entity.Captures
 import com.gamdo.app.ui.components.PrimaryPillButton
-import com.gamdo.app.ui.components.moodBrush
 import com.gamdo.app.ui.theme.Charcoal600
+import com.gamdo.app.ui.theme.Charcoal700
+import com.gamdo.app.ui.theme.Charcoal950
 import com.gamdo.app.ui.theme.OnDarkHigh
 import com.gamdo.app.ui.theme.OnDarkMedium
 import com.gamdo.app.ui.theme.OnDarkMuted
@@ -78,7 +79,7 @@ fun ResultScreen(
                 .fillMaxWidth()
                 .weight(1f)
                 .clip(RoundedCornerShape(16.dp))
-                .background(moodBrush(0)),
+                .background(Charcoal950),
         ) {
             capture?.let { selectedCapture ->
                 AsyncImage(
@@ -111,11 +112,12 @@ fun ResultScreen(
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            FilterThumb("원본", index = 0, selected = false)
-            FilterThumb("내 감도", index = 0, selected = true)
-            FilterThumb("따뜻한 카페", index = 1, selected = false)
-            FilterThumb("밝은 리뷰", index = 2, selected = false)
-            FilterThumb("소프트 필름", index = 3, selected = false)
+            FilterThumb("원본", asset = "presets/clean_social.jpg", selected = false)
+            FilterThumb("내 감도", asset = "presets/clean_social.jpg", selected = true)
+            FilterThumb("따뜻한 카페", asset = "presets/candid_feed.jpg", selected = false)
+            FilterThumb("밝은 리뷰", asset = "presets/bright_review.jpg", selected = false)
+            FilterThumb("소프트 필름", asset = "presets/soft_film.jpg", selected = false)
+            FilterThumb("야간 거리", asset = "presets/night_street.jpg", selected = false)
             AddFilterThumb()
             Box(Modifier.width(12.dp))
         }
@@ -136,15 +138,22 @@ fun ResultScreen(
 }
 
 @Composable
-private fun FilterThumb(label: String, index: Int, selected: Boolean) {
+private fun FilterThumb(label: String, asset: String, selected: Boolean) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = Modifier
                 .size(58.dp)
                 .clip(RoundedCornerShape(11.dp))
-                .background(moodBrush(index))
+                .background(Charcoal700)
                 .then(if (selected) Modifier.border(2.dp, Sage, RoundedCornerShape(11.dp)) else Modifier),
-        )
+        ) {
+            AsyncImage(
+                model = "file:///android_asset/$asset",
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
         Text(
             text = label,
             color = if (selected) Sage else OnDarkMedium,

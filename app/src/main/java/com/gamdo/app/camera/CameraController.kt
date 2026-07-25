@@ -8,14 +8,19 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
+import androidx.camera.core.ZoomState
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.view.LifecycleCameraController
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Observer
 import androidx.lifecycle.LifecycleOwner
 import java.util.concurrent.Executor
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -25,6 +30,13 @@ import kotlin.coroutines.resumeWithException
  * and pinch-to-zoom for free. ImageAnalysis is layered on in Day 2.
  */
 class CameraController(context: Context) {
+
+    private val zoomObserver = Observer<ZoomState> { state ->
+        _zoomRatio.value = state.zoomRatio
+    }
+
+    private val _zoomRatio = MutableStateFlow(1f)
+    val zoomRatio: StateFlow<Float> = _zoomRatio.asStateFlow()
 
     val camera: LifecycleCameraController =
         LifecycleCameraController(context.applicationContext).apply {
@@ -54,9 +66,15 @@ class CameraController(context: Context) {
     var isFront: Boolean = false
         private set
 
-    fun bind(owner: LifecycleOwner) = camera.bindToLifecycle(owner)
+    fun bind(owner: LifecycleOwner) {
+        camera.bindToLifecycle(owner)
+        camera.cameraInfo?.zoomState?.observeForever(zoomObserver)
+    }
 
-    fun unbind() = camera.unbind()
+    fun unbind() {
+        camera.cameraInfo?.zoomState?.removeObserver(zoomObserver)
+        camera.unbind()
+    }
 
     fun toggleLens() {
         isFront = !isFront
@@ -66,6 +84,7 @@ class CameraController(context: Context) {
 
     fun setZoom(ratio: Float) {
         camera.setZoomRatio(ratio)
+        camera.cameraInfo?.zoomState?.value?.zoomRatio?.let { _zoomRatio.value = it }
     }
 
     fun setAnalyzer(executor: Executor, analyzer: ImageAnalysis.Analyzer) {

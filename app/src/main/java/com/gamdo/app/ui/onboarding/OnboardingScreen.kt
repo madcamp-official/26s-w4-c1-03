@@ -26,6 +26,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -34,9 +35,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import com.gamdo.app.ui.components.PrimaryPillButton
-import com.gamdo.app.ui.components.moodBrush
-import com.gamdo.app.ui.components.moodCount
 import com.gamdo.app.ui.theme.Charcoal900
 import com.gamdo.app.ui.theme.OnDarkHigh
 import com.gamdo.app.ui.theme.OnDarkMedium
@@ -45,6 +47,13 @@ import com.gamdo.app.ui.theme.OnSage
 import com.gamdo.app.ui.theme.Sage
 
 private const val MIN_PICKS = 3
+private val CardJson = Json { ignoreUnknownKeys = true }
+
+@Serializable
+private data class CardCatalog(val v: Int = 1, val cards: List<OnboardingCard>)
+
+@Serializable
+private data class OnboardingCard(val id: String, val thumbnail: String)
 
 /**
  * Onboarding (t2): pick preferences (2a) → "내 감도 저장" summary (2b) → done.
@@ -52,16 +61,23 @@ private const val MIN_PICKS = 3
  */
 @Composable
 fun OnboardingScreen(onFinished: () -> Unit) {
+    val context = LocalContext.current
+    val cards = remember {
+        runCatching {
+            val text = context.assets.open("cards.json").bufferedReader().use { it.readText() }
+            CardJson.decodeFromString<CardCatalog>(text).cards
+        }.getOrDefault(emptyList())
+    }
     var step by rememberSaveable { mutableStateOf(0) }
     when (step) {
-        0 -> PickStep(onNext = { step = 1 })
+        0 -> PickStep(cards = cards, onNext = { step = 1 })
         else -> SavedStep(onStart = onFinished)
     }
 }
 
 @Composable
-private fun PickStep(onNext: () -> Unit) {
-    val selected = remember { mutableStateOf(setOf(0, 2, 4)) }
+private fun PickStep(cards: List<OnboardingCard>, onNext: () -> Unit) {
+    val selected = remember { mutableStateOf(emptySet<String>()) }
     val count = selected.value.size
 
     Column(
@@ -93,14 +109,14 @@ private fun PickStep(onNext: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            items((0 until moodCount).toList()) { index ->
-                val isSelected = index in selected.value
+            items(cards, key = { it.id }) { card ->
+                val isSelected = card.id in selected.value
                 PickCard(
-                    index = index,
+                    card = card,
                     selected = isSelected,
                     onToggle = {
                         selected.value = selected.value.toMutableSet().apply {
-                            if (isSelected) remove(index) else add(index)
+                            if (isSelected) remove(card.id) else add(card.id)
                         }
                     },
                 )
@@ -118,12 +134,12 @@ private fun PickStep(onNext: () -> Unit) {
 }
 
 @Composable
-private fun PickCard(index: Int, selected: Boolean, onToggle: () -> Unit) {
+private fun PickCard(card: OnboardingCard, selected: Boolean, onToggle: () -> Unit) {
     Box(
         modifier = Modifier
             .aspectRatio(3f / 4f)
             .clip(RoundedCornerShape(14.dp))
-            .background(moodBrush(index))
+            .background(Charcoal900)
             .then(
                 if (selected) {
                     Modifier.border(2.5.dp, Sage, RoundedCornerShape(14.dp))
@@ -133,6 +149,12 @@ private fun PickCard(index: Int, selected: Boolean, onToggle: () -> Unit) {
             )
             .clickable(onClick = onToggle),
     ) {
+        AsyncImage(
+            model = "file:///android_asset/${card.thumbnail}",
+            contentDescription = null,
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
         if (selected) {
             Box(
                 modifier = Modifier

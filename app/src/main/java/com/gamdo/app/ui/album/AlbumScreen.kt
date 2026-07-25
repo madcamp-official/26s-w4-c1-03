@@ -27,7 +27,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.local.entity.Captures
-import com.gamdo.app.ui.components.moodBrush
+import com.gamdo.app.ui.theme.Charcoal700
 import com.gamdo.app.ui.theme.Charcoal900
 import com.gamdo.app.ui.theme.OnDarkHigh
 import com.gamdo.app.ui.theme.OnDarkMedium
@@ -86,7 +86,7 @@ fun AlbumScreen(
                         modifier = Modifier
                             .aspectRatio(1f)
                             .clip(RoundedCornerShape(10.dp))
-                            .background(moodBrush(capture.id.hashCode()))
+                            .background(Charcoal700)
                             .clickable { onOpenPhoto(capture.id) },
                     )
                 }
