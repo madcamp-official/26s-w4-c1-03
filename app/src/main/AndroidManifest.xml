@@ -8,20 +8,32 @@
         android:required="true" />
     <uses-permission android:name="android.permission.CAMERA" />
 
-    <!-- Reading images (gallery import / reference pick). Split by API level. -->
+    <!-- Reading images (gallery import / reference pick). Split by API level.
+         READ_MEDIA_VISUAL_USER_SELECTED accepts Android 14+'s "selected photos
+         only" choice — without it that choice would dead-lock the permission gate. -->
     <uses-permission
         android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission
+        android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+
+    <!-- Gallery export uses MediaStore; API 28 and below still require WRITE. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
     <!-- Network (presets / references analyze / edit-jobs) -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- allowBackup=false: D4 promises "앱 삭제 = 데이터 소실". Auto Backup would
+         restore the device UUID and DB (with stale absolute file paths) after
+         reinstall, breaking that promise. -->
     <application
         android:name=".GamdoApplication"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -29,10 +41,13 @@
         android:theme="@style/Theme.Gamdo"
         tools:targetApi="31">
 
+        <!-- Portrait-locked (t2 design is portrait-only): the aspect-mask layout
+             assumes portrait, and rotation would recreate the activity mid-capture. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.Gamdo">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
