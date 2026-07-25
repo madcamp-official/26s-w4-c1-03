@@ -472,3 +472,12 @@
 - 온보딩 선택값을 로컬 설정에 저장하고 추천 스타일을 카메라 가이드와 보정 기본 필터에 연결했다. 앱 데이터 초기화 후 0개 시작 → 3장 선택 → `부드러운 필름` 카메라 HUD → 보정 화면 `소프트 필름`을 실기기에서 확인했다.
 - 로컬 Android 테스트와 서버 테스트는 각각 `BUILD SUCCESSFUL`, `21 passed`로 통과했다. CAMP-2 서버 요청은 `POST 202 → 상태 폴링 → /files 결과 200`까지 확인했다.
 - 미해결: CAMP-2 커널 모듈 `580.159.03`과 NVML 라이브러리 `580.173.02` mismatch, 직접 핀치 제스처 판정, 오버레이 정렬·색 전환 최종 시각 판정. Dure 영향 가능성이 있어 서버 재부팅은 실행하지 않았다.
+
+### 2026-07-25 — CAMP-2 GPU 복구 및 실 HTTP smoke 재검증
+
+- 사용자 승인으로 종료된 Dure를 정리했다: `dure-agent` 비활성화, `/etc/dure`·`/var/lib/dure`(약 18GB), 중지된 Dure 컨테이너, Dure용 vLLM 이미지(약 32GB) 제거. GAMDO 리소스는 보존했다.
+- CAMP-2 재부팅 후 NVIDIA 커널/NVML 버전 불일치가 해소됐다. `nvidia-smi`와 PyTorch가 모두 RTX 3090, CUDA 12.8 런타임, `torch.cuda.is_available()=True`를 확인했다.
+- `gamdo-comfyui.service`, `gamdo-server.service`, `gamdo-worker.service`가 재부팅 후 모두 자동 기동했다. ComfyUI `/system_stats`는 HTTP 200, FastAPI `/health`는 HTTP 200이었다.
+- 실 HTTP smoke를 6종 프리셋·레퍼런스 분석·편집 큐에 실행했다. `POST /edit-jobs` 202 후 `queued → processing → validating → fallback(candidate_validation_failed)`로 정상 종료했고, fallback 결과 이미지는 생성하지 않았다.
+- 검증 스크립트가 현재 계약의 명시적 `masks`와 GPU 처리 시간을 반영하도록 수정됐다. 이후 smoke 전체 항목 통과.
+- 남은 외부 검증은 직접 핀치 제스처, 오버레이 최종 시각 판정, 실제 인물 사진 품질·InsightFace 임계값 캘리브레이션, 사진 살리기 드래그 마스크/후보 선택 UI다.

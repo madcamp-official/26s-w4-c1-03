@@ -83,14 +83,14 @@
 
 ## 8. 현재 상태와 다음 작업
 
-**상태 (2026-07-25 기준): 담당 A 앱 기반과 담당 B(P2) 로직·서버·GPU 경계 통합이 진행되어 있다.** 현재 `main`과 `codex/p2-p1-integration`은 `3755ee5`로 동기화되어 있다. 실기기(SM-G970N, Android 12)에서 온보딩·카메라·앨범·보정·API 왕복·CAMP-2 결과 다운로드를 확인했다.
+**상태 (2026-07-25 기준): 담당 A 앱 기반과 담당 B(P2) 로직·서버·GPU 경계 통합이 진행되어 있다.** 현재 `main`과 `codex/p2-p1-integration`은 동일 커밋으로 동기화되어 있다. 실기기(SM-G970N, Android 12)에서 온보딩·카메라·앨범·보정·API 왕복·CAMP-2 결과 다운로드를 확인했다.
 
 - **Day 1 완료(1-1~1-5):** 프로젝트 셋업 · 권한 처리 · 로컬 데이터(DeviceId·Room 14테이블·presets 시딩) · 화면 골격(t2 네비: onboarding→camera(홈)→album→result) · CameraX 프리뷰·촬영·저장(filesDir + MediaStore + captures)
 - **P2 구현 완료 범위:** `FrameFeatureCalculator`·`matchScore`·`AlignmentEngine`·`ProblemDiagnoser`·`ProfileEngine`과 JVM 테스트, `guide_config.json` 파싱, 카메라 오버레이 연결, 메모리 기반 `/references/analyze`, 편집 큐 워커·EXIF 스트립·입력 즉시 purge·결과 24시간 purge 예약·7일 job 메타 purge, `GenerativeEditProvider`·ComfyUI HTTP 어댑터·LaMa 마스크/seed workflow·InsightFace 검증 fallback이 구현되어 있다. `/edit-jobs`는 동시/시간당 요청, 이미지 크기·해상도, 편집 영역 제한을 적용한다.
-- **P2 로컬 데이터·운영:** 6종 `presets.json`과 v1 카드 메타 16장(`cards.json`)은 검증 스크립트를 통과했다. 레퍼런스 합성 10장 분석은 최대 약 136ms였고, `job_stats.py`·`local_metrics.py`가 서버 job 및 앱 로컬 KPI 집계 경로를 제공한다. Android JVM 테스트와 서버 테스트를 통과했다. CAMP-2의 ComfyUI LaMa smoke, 실제 후보 2개 생성·다운로드, SSH 터널 실기기 API 테스트 2개도 통과했다.
+- **P2 로컬 데이터·운영:** 6종 `presets.json`과 v1 카드 메타 16장(`cards.json`)은 검증 스크립트를 통과했다. 레퍼런스 합성 10장 분석은 최대 약 136ms였고, `job_stats.py`·`local_metrics.py`가 서버 job 및 앱 로컬 KPI 집계 경로를 제공한다. Android JVM 테스트와 서버 테스트를 통과했다. CAMP-2의 ComfyUI LaMa smoke, 실제 후보 2개 생성·다운로드, SSH 터널 실기기 API 테스트, 재부팅 후 GPU·FastAPI·worker 자동 기동 및 실 HTTP smoke도 통과했다.
 - **앱 통합 상태:** 앱은 `app/src/main/assets/presets.json`의 6종 번들 폴백으로 오프라인 동작한다. 온보딩 선택 카드와 추천 스타일 ID를 로컬 설정에 저장하고, 카메라 가이드 프리셋과 보정 기본 필터에 반영한다. 결과 화면은 원본을 먼저 표시한 뒤 필터를 비동기로 적용하며, 반복 저장 시 편집 단계 번호를 증가시킨다.
 
-미해결/대기: 핀치 줌을 통한 0.1 단위 배율 변화의 직접 실기기 제스처 판정, 카메라 오버레이 인물 정렬·색 전환 최종 시각 판정, 사진 살리기 드래그 마스크·후보 선택 UI, 큐레이션 사진의 정식 품질 판정·InsightFace 임계 캘리브레이션, 자동 행인 마스크·FLUX.1 Fill, 실제 카드 이미지 라이선스 확인이 필요하다. CAMP-2는 현재 커널 NVIDIA 모듈 `580.159.03`과 사용자 공간 NVML `580.173.02`가 불일치하여 `nvidia-smi`·새 PyTorch CUDA 초기화가 실패한다. 기존 ComfyUI 결과 요청은 확인됐지만, Dure 영향 때문에 재부팅은 실행하지 않았다. (프리셋 종수는 6종 확정 — D6)
+미해결/대기: 핀치 줌을 통한 0.1 단위 배율 변화의 직접 실기기 제스처 판정, 카메라 오버레이 인물 정렬·색 전환 최종 시각 판정, 사진 살리기 드래그 마스크·후보 선택 UI, 큐레이션 사진의 정식 품질 판정·InsightFace 임계 캘리브레이션, 자동 행인 마스크·FLUX.1 Fill, 실제 카드 이미지 라이선스 확인이 필요하다. CAMP-2는 재부팅 후 커널/NVML 불일치가 해소되어 RTX 3090을 `nvidia-smi`와 PyTorch CUDA에서 정상 인식한다. 종료된 Dure 서비스·컨테이너·모델 저장소는 사용자 승인으로 제거했으며, GAMDO 서비스는 보존했다. (프리셋 종수는 6종 확정 — D6)
 
 **빌드 방법:** `JAVA_HOME`을 Android Studio JBR(JDK 17)로 지정 후 `./gradlew :app:assembleDebug`. SDK는 `C:\android-sdk`. (환경 상세는 세션 메모리 참조)
 

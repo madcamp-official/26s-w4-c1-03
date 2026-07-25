@@ -114,7 +114,8 @@ def run(base_url: str, image_bytes: bytes, image_name: str) -> None:
             data={
                 "jobId": job_id,
                 "captureRef": "cap_smoke_test",
-                "operations": json.dumps([{"type": "remove_objects", "maskAreaRatio": 0.12}]),
+                "operations": json.dumps([{"type": "remove_objects", "maskAreaRatio": 0.12,
+                                             "masks": [{"x": 0.36, "y": 0.15, "width": 0.27, "height": 0.24}]}]),
                 "resultCount": 2,
             },
             files={"image": (image_name, image_bytes, "image/jpeg")},
@@ -122,7 +123,7 @@ def run(base_url: str, image_bytes: bytes, image_name: str) -> None:
         check("POST 202 queued", response.status_code == 202 and response.json().get("status") == "queued",
               f"{response.status_code} {response.text.strip()[:80]}")
         statuses = []
-        for _ in range(3):
+        for _ in range(45):
             poll = client.get(f"{PREFIX}/edit-jobs/{job_id}", headers=headers)
             if poll.status_code != 200:
                 break
@@ -130,11 +131,15 @@ def run(base_url: str, image_bytes: bytes, image_name: str) -> None:
             statuses.append(body["status"])
             print(f"      status={body['status']:<11} stage={body['progressStage']}"
                   f" results={len(body['results'])} failReason={body['failReason']}")
-        check("reaches a terminal state", statuses and statuses[-1] in {"fallback", "done", "failed"},
+            if body["status"] in {"fallback", "done", "failed"}:
+                break
+            time.sleep(1)
+        check("reaches a terminal state", bool(statuses) and statuses[-1] in {"fallback", "done", "failed"},
               " → ".join(statuses))
         check("no result image is invented on fallback",
-              statuses[-1] != "fallback" or not client.get(f"{PREFIX}/edit-jobs/{job_id}",
-                                                           headers=headers).json()["results"])
+              not statuses or statuses[-1] != "fallback" or not client.get(
+                  f"{PREFIX}/edit-jobs/{job_id}", headers=headers
+              ).json()["results"])
 
         section("5. error contracts")
         response = client.get(f"{PREFIX}/edit-jobs/job_does_not_exist", headers=headers)
@@ -147,7 +152,8 @@ def run(base_url: str, image_bytes: bytes, image_name: str) -> None:
             data={
                 "jobId": f"{job_id}_dup",
                 "captureRef": "cap_smoke_test",
-                "operations": json.dumps([{"type": "remove_objects", "maskAreaRatio": 0.9}]),
+                "operations": json.dumps([{"type": "remove_objects", "maskAreaRatio": 0.9,
+                                             "masks": [{"x": 0.05, "y": 0.05, "width": 0.9, "height": 0.4}]}]),
             },
             files={"image": (image_name, image_bytes, "image/jpeg")},
         )
