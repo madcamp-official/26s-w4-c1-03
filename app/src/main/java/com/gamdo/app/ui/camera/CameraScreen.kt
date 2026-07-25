@@ -28,6 +28,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -133,6 +134,9 @@ fun CameraScreen(
     }
     var presetIndex by rememberSaveable { mutableStateOf(0) }
     val activePreset = presets.getOrNull(presetIndex)
+    val preferredPresetId by produceState<String?>(initialValue = null, container) {
+        value = container.settingsRepository.getStylePresetId()
+    }
     // The analyzer runs off the composition thread, so the target is published
     // through a flow instead of being captured once by the analyzer closure.
     val styleTargetFlow = remember { MutableStateFlow(activePreset?.toStyleTarget() ?: StyleTarget()) }
@@ -154,6 +158,11 @@ fun CameraScreen(
     LaunchedEffect(presetIndex) {
         presets.getOrNull(presetIndex)?.let { styleTargetFlow.value = it.toStyleTarget() }
         alignmentEngine.reset()
+    }
+    LaunchedEffect(preferredPresetId, presets) {
+        preferredPresetId?.let { id ->
+            presets.indexOfFirst { it.id == id }.takeIf { it >= 0 }?.let { presetIndex = it }
+        }
     }
 
     DisposableEffect(Unit) {

@@ -58,6 +58,7 @@ fun GamdoNavHost(
     ) {
         composable(Routes.ONBOARDING) {
             OnboardingScreen(
+                container = container,
                 onFinished = {
                     scope.launch { container.settingsRepository.setOnboardingDone() }
                     navController.navigate(Routes.CAMERA) {

@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -84,6 +85,16 @@ fun ResultScreen(
         value = withContext(Dispatchers.IO) { BitmapFactory.decodeFile(path) }
     }
     var selectedFilter by remember { mutableStateOf(LocalFilter.MY_STYLE) }
+    val preferredFilter by produceState(LocalFilter.MY_STYLE, container) {
+        value = when (container.settingsRepository.getStylePresetId()) {
+            "bright_review" -> LocalFilter.BRIGHT_REVIEW
+            "candid_feed" -> LocalFilter.CAFE
+            "soft_film" -> LocalFilter.SOFT_FILM
+            "night_street" -> LocalFilter.NIGHT_STREET
+            else -> LocalFilter.MY_STYLE
+        }
+    }
+    LaunchedEffect(preferredFilter) { selectedFilter = preferredFilter }
     var brightness by remember { mutableStateOf(0f) }
     var warmth by remember { mutableStateOf(0f) }
     var contrast by remember { mutableStateOf(0f) }

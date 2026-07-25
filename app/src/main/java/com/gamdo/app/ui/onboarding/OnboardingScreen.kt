@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
@@ -38,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.launch
 import com.gamdo.app.ui.components.PrimaryPillButton
 import com.gamdo.app.ui.theme.Charcoal900
 import com.gamdo.app.ui.theme.OnDarkHigh
@@ -45,6 +47,7 @@ import com.gamdo.app.ui.theme.OnDarkMedium
 import com.gamdo.app.ui.theme.OnDarkMuted
 import com.gamdo.app.ui.theme.OnSage
 import com.gamdo.app.ui.theme.Sage
+import com.gamdo.app.data.AppContainer
 
 private const val MIN_PICKS = 3
 private val CardJson = Json { ignoreUnknownKeys = true }
@@ -60,8 +63,9 @@ private data class OnboardingCard(val id: String, val thumbnail: String)
  * Card grid is a placeholder — real cards + on-device profiling land in §6-2.
  */
 @Composable
-fun OnboardingScreen(onFinished: () -> Unit) {
+fun OnboardingScreen(container: AppContainer, onFinished: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val cards = remember {
         runCatching {
             val text = context.assets.open("cards.json").bufferedReader().use { it.readText() }
@@ -69,14 +73,22 @@ fun OnboardingScreen(onFinished: () -> Unit) {
         }.getOrDefault(emptyList())
     }
     var step by rememberSaveable { mutableStateOf(0) }
+    var selectedIds by remember { mutableStateOf(emptySet<String>()) }
     when (step) {
-        0 -> PickStep(cards = cards, onNext = { step = 1 })
-        else -> SavedStep(onStart = onFinished)
+        0 -> PickStep(cards = cards, onNext = { ids -> selectedIds = ids; step = 1 })
+        else -> SavedStep(
+            onStart = {
+                scope.launch {
+                    container.settingsRepository.saveStylePreference(selectedIds)
+                    onFinished()
+                }
+            },
+        )
     }
 }
 
 @Composable
-private fun PickStep(cards: List<OnboardingCard>, onNext: () -> Unit) {
+private fun PickStep(cards: List<OnboardingCard>, onNext: (Set<String>) -> Unit) {
     val selected = remember { mutableStateOf(emptySet<String>()) }
     val count = selected.value.size
 
@@ -127,7 +139,7 @@ private fun PickStep(cards: List<OnboardingCard>, onNext: () -> Unit) {
             PrimaryPillButton(
                 text = if (count >= MIN_PICKS) "다음" else "${MIN_PICKS - count}장 더 골라 주세요",
                 enabled = count >= MIN_PICKS,
-                onClick = onNext,
+                onClick = { onNext(selected.value) },
             )
         }
     }
