@@ -510,3 +510,8 @@
 
 - `ImageMetricsExtractor`를 추가해 원본 Bitmap을 제한된 샘플로 분석하고 밝기·클리핑·라플라시안 분산을 `ProblemDiagnoser` 입력으로 변환한다.
 - 결과 화면에 진단 결과를 자연어 칩으로 연결했다. Android JVM 테스트와 Debug APK 빌드는 통과했지만, 현재 실기기 앨범의 기존 원본 로딩 대기 문제로 유효한 사진에서 칩이 보이는 최종 시각 판정은 대기 상태다.
+
+### 2026-07-25 — 결과 화면 원본 즉시 표시 보완
+
+- Room의 `capture.filePath`가 실제 앱 내부 JPEG 절대 경로이고 `BitmapFactory` 디코딩도 `decoded=true`임을 실기기 Debug 로그로 확인했다.
+- 전체 해상도 로컬 보정이 끝날 때까지 원본을 숨기던 조건을 `generated ?: edited ?: source`로 변경해, 보정 중에도 원본을 표시하고 저장할 수 있게 했다. 확인용 Debug 로그는 제거했으며, 실기기 화면의 최종 시각 판정은 다음 회귀에서 재확인한다.

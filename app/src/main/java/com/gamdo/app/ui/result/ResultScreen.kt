@@ -190,7 +190,10 @@ fun ResultScreen(
             modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth().weight(1f)
                 .clip(RoundedCornerShape(16.dp)).background(Charcoal950),
         ) {
-            (generated ?: edited)?.let {
+            // Show the untouched source immediately while the full-resolution
+            // local edit is still being computed. Waiting for `edited` here
+            // made a valid gallery photo look like a placeholder on device.
+            (generated ?: edited ?: source)?.let {
                 Image(
                     bitmap = it.asImageBitmap(),
                     contentDescription = "보정 결과",
@@ -413,7 +416,7 @@ fun ResultScreen(
             PrimaryPillButton(
                 text = if (savedPath == null) "저장" else "갤러리에 저장됨",
                 onClick = {
-                    val result = generated ?: edited ?: return@PrimaryPillButton
+                    val result = generated ?: edited ?: source ?: return@PrimaryPillButton
                     val captureValue = capture ?: return@PrimaryPillButton
                     scope.launch {
                         savedPath = container.captureRepository.saveEditedCapture(
