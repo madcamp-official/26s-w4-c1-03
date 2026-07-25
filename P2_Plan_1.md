@@ -541,3 +541,10 @@
 - **이번 프로토타입 범위 밖으로 유지:** 자동 행인 마스크, FLUX.1 Fill 아웃페인팅, Gemini 비교 실험. 이 항목들은 모델·외부 사진·비교 환경을 준비한 뒤 별도 범위로 재개한다.
 
 따라서 외부 사진·라이선스·네트워크 환경을 새로 확보하지 않는 현재 단계에서 P2가 독립적으로 마칠 수 있는 작업은 소규모 품질 보강과 자동화 정리이며, 핵심 기능의 신규 확장은 진행하지 않는다.
+
+### 2026-07-25 — 최신 상태 감사 및 문서 동기화
+
+- `main`과 `origin/main`을 대조해 동일 커밋 `2b27add`임을 확인했고, worktree는 clean이다. 활성 P2 브랜치 `codex/p2-plan-sync`도 `main`과 파일 상태가 동기화되어 있다.
+- 서버 `python -m pytest -q`는 `28 passed, 2 warnings`로 통과했다. 경고는 Starlette/httpx와 Pillow의 외부 라이브러리 deprecation이며 P2 기능 실패가 아니다.
+- Android `:app:testDebugUnitTest --no-daemon`은 `BUILD SUCCESSFUL`로 통과했다. Debug APK 빌드도 앞선 동일 코드 기준으로 통과했다.
+- 문서의 과거 스냅샷에 남아 있던 `backlightFlag` 입력 미연결, `MatchScoreCalculator` 완전 미연결 표현을 현재 상태에 맞게 정정했다. 역광 실장면 판정, KPI 영속 기록, 핀치·오버레이 최종 시각 판정, 카드 라이선스·실사진 품질 판정은 미완료로 유지한다.
