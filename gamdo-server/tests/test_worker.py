@@ -59,6 +59,21 @@ class CopyProvider:
         return [GeneratedCandidate(self.output, 42)]
 
 
+class RejectingMaskValidator:
+    def mask_is_safe(self, original_path, operations):
+        return False
+
+
+class CountingProvider(CopyProvider):
+    def __init__(self, output: Path) -> None:
+        super().__init__(output)
+        self.calls = 0
+
+    def remove_objects(self, image_path, operations, result_count):
+        self.calls += 1
+        return super().remove_objects(image_path, operations, result_count)
+
+
 class SameIdentity:
     def verify(self, original, candidate):
         return True
@@ -85,6 +100,28 @@ def test_worker_done_requires_provider_and_identity_validation(tmp_path: Path, m
     assert job is not None
     assert job["status"] == "done"
     assert len(database.get_results("job_worker_001")) == 1
+
+
+def test_worker_falls_back_before_provider_when_mask_touches_face(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("app.db.DEFAULT_DB_PATH", tmp_path / "gamdo.sqlite3")
+    database = Database()
+    database.initialize()
+    input_path = tmp_path / "inputs" / "job_worker_001.png"
+    input_path.parent.mkdir()
+    seed_job(database, input_path)
+    output_path = tmp_path / "results" / "candidate.png"
+    output_path.parent.mkdir()
+    provider = CountingProvider(output_path)
+
+    worker = JobWorker(database, provider=provider, validator=RejectingMaskValidator())
+    assert worker.process_once() is True
+
+    job = database.get_job("job_worker_001")
+    assert job is not None
+    assert job["status"] == "fallback"
+    assert job["fail_reason"] == "face_mask_protected"
+    assert provider.calls == 0
+    assert not input_path.exists()
 
 
 def test_result_delivery_schedules_24_hour_purge(tmp_path: Path, monkeypatch) -> None:

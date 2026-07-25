@@ -499,3 +499,4 @@
 - 실제 인물 사진 5쌍이 준비되면 `gamdo-server/scripts/calibrate_face_threshold.py`로 InsightFace cosine similarity와 후보 임계값별 정확도를 측정할 수 있도록 도구를 추가했다. 도구는 임계값·임베딩을 저장하거나 운영 기본값을 변경하지 않는다. 실제 5쌍 캘리브레이션 실행은 사진 세트 준비 대기다.
 - 얼굴 보호 마스크를 CAMP-2에 배포했다. 레퍼런스 분석으로 얻은 얼굴 영역 마스크는 `fallback(face_mask_protected)`로 종료되고, 얼굴에서 떨어진 마스크는 실제 `done`·후보 2개로 처리되는 것을 확인했다. ComfyUI는 재시작하지 않고 FastAPI·worker만 재기동했다.
 - 생성 전후 얼굴 수가 달라진 후보를 `face_count_changed`로 폐기하는 휴리스틱을 추가했다. 최신 worker 배포 후 얼굴에서 떨어진 마스크 요청이 `done`·후보 2개로 유지되는 것을 확인했다.
+- worker 통합 테스트를 추가해 얼굴 보호 판정 시 ComfyUI provider를 호출하지 않고 `face_mask_protected` fallback·입력 purge로 종료하는 것을 검증했다. 서버 테스트는 `25 passed`다.
