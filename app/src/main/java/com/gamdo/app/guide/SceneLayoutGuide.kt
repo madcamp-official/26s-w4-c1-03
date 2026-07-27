@@ -64,7 +64,9 @@ class SceneLayoutGuideEngine(
         val sourceOutline = convexHull(scene.subjectOutline)
             .takeIf { it.size >= 3 }
             ?: box.corners()
-        val confident = scene.subjectConfidence >= confidentThreshold && !proposal.fallback
+        val confident = scene.subjectConfidence >= confidentThreshold &&
+            scene.hasReliableOutline &&
+            !proposal.fallback
         val raw = if (confident) {
             val target = targetFrame(proposal.target)
             val projected = sourceOutline.map { point -> project(point, box, target) }
