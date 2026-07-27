@@ -41,6 +41,53 @@
 
 ---
 
+---
+
+## 0.5 현재 상태 (2026-07-26, 병합 `dd01db8` 기준 코드 전수 재판정)
+
+> 이 절은 감사 결과 스냅샷이다. 체크박스와 충돌하면 **체크박스가 아니라 이 절이 최신**이다.
+
+### 표기 규약
+
+체크박스 두 단계로는 지금 상태를 표현할 수 없어 표기를 넷으로 늘린다.
+
+| 표기 | 뜻 |
+|---|---|
+| `[x]` | 완료. 뒤에 `📱`가 붙으면 **실기기에서 확인된 근거**가 있다는 뜻 |
+| `[~]` | **구현은 됐으나 완료가 아니다.** 사유가 뒤에 붙는다 — `미배선`(화면에서 도달 불가) / `기기대기`(JVM 검증만) / `부분` |
+| `[ ]` | 미착수 |
+| ~~취소선~~ | 컷 확정. 착수 대상이 아니다 |
+
+### 집계
+
+이 문서 기준: `[x]` 36건 · `[~]` 10건 · `[ ]` 48건 · 컷 4건.
+
+감사는 체크박스 외에 파생 관찰까지 112건을 판정했고, 그중 **`AGENTS.md §7-1`의 done 정의("실기기에서 흐름을 끝까지 수행 가능")를 실제로 만족하는 것은 18건이며 대부분 Day 1~2에 몰려 있다.** 이 문서의 `📱` 표시는 이번 갱신에서 손댄 줄에만 붙였으므로 18건 전부를 표시하지는 않는다 — 실기기 근거의 전수 목록은 감사 결과를 봐야 한다.
+
+### 지금 한 곳이 여러 개를 막고 있다
+
+**셔터가 `conditions_json`을 만들지 않는다**(`CameraScreen.kt:321`이 `saveCameraCapture(bitmap)`을 인자 하나로 호출). 이 한 줄 때문에 §4-1 수평 보정이 항등 변환이 되고, §4-3 진단 칩 6종 중 TILT·EXCESS_MARGIN·BACKLIGHT 3종이 절대 발화하지 않으며, §3-3 KPI가 0행이다. **플랜 순서로는 §3-3이지만 실질적으로는 §4·§5의 선행 조건이다.**
+
+### 병합으로 해소된 것
+
+카드 이미지 16장 · 포토 피커 · `ProfileEngine` 켈빈 정규화 · `backlightFlag` 입력 경로 · `X-Device-Id` 헤더 · 14테이블 DAO 배선 · §5-3 생성 복구 실서버 파이프라인 · 진단 칩 화면 · 릴리스 HUD 누수 차단.
+
+### 병합이 만든 문제
+
+- **§4-1/§4-2가 순감했다.** `main`의 `ResultScreen`을 채택하면서 4탭·전후 슬라이더·공유·다시 찍기·측정 기반 보정이 화면에서 떨어졌다. p1 파이프라인은 컴파일·테스트되지만 **미배선**이다.
+- `edit/LocalEditor.kt`에 **엔진이 둘** 공존한다 — `QuickFilterEditor`(배선됨, 기기 검증) / `class LocalEditor`(§4-1 전 단계, 미배선). §4-1 판정 기준은 **화면에 그려지는 `QuickFilterEditor`**로 고정한다.
+- `ImageMetricsExtractor`가 `detect`·`edit` 두 패키지에 있고 **화면이 틀린 쪽을 쓴다** — `detect` 판은 `tiltDeg`·마진을 0으로 하드코딩한다.
+- **탭 포커스 회귀** — 핀치 줌 `Box`가 `PreviewView` 위에 얹혀 탭이 도달하지 않는다.
+- 마스크 좌표계가 서버와 어긋난다(letterbox 여백 포함 전송).
+- `capture_edit_stack` 기록이 DB 스키마 v2.0 §3.9의 `step_type` 어휘·PK 접두사를 벗어난다.
+
+### 기기 없이도 확정된 결함
+
+- **수평선 부호** — `CameraOverlay`가 `-rollDeg`, `GeometryPlan`도 `-tiltDeg`로 부호가 같다. 지시선은 장면을 따라 그리고 보정은 상쇄하므로 반대여야 한다 → **정확히 하나가 틀렸다.** 관찰 1회로 어느 쪽인지 확정된다.
+- **§7-1 목표 초과** — `alignedEnterFrames=3` × 12fps ≈ 250ms로 "안내 갱신 200ms 이하"를 이미 넘는다.
+- **API 26~28 갤러리 내보내기 무음 실패** — `WRITE_EXTERNAL_STORAGE` 런타임 요청이 없고 `runCatching`이 예외를 삼킨다.
+
+
 ## Day 1 — 프로젝트 기반 + 카메라가 실제로 찍힌다
 
 **당일 데모 완료 기준: 실기기에서 스타일을 선택하고 사진을 찍어 갤러리에 저장할 수 있다.**
@@ -64,7 +111,7 @@
    ├─ data/        # Room DB, Repository, Retrofit API
    └─ core/        # 공용 유틸, 상수, DeviceId
   ```
-- [x] git 저장소 초기화, `main` 직커밋 규칙, `.gitignore`(local.properties, keystore) <!-- repo·gitignore 기존 재사용. 로컬 브랜치 master↔원격 main 정리는 사용자 몫 -->
+- [x] git 저장소 초기화, ~~`main` 직커밋 규칙~~ → **작업 브랜치 + 리드 단독 커밋**(`.claude/TEAM.md`), `.gitignore`(local.properties, keystore) <!-- repo·gitignore 기존 재사용. 로컬 브랜치 master↔원격 main 정리는 사용자 몫 -->
 - 완료 기준: 실기기에서 빈 Compose 화면 빌드·실행 성공 <!-- ✅ SM-G970N(Android 12)에서 빌드·설치·실행 성공 확인 -->
 
 ### 1-1. 진행 메모
@@ -86,8 +133,8 @@
 ### 1-3. 로컬 데이터 기반
 
 - [x] `DeviceId` — 최초 실행 시 UUID 생성, DataStore에 영구 저장 <!-- core/DeviceIdStore. getOrCreate() atomic -->
-- [x] Room DB 스키마 생성 — **DB 스키마 v2.0 §3의 로컬 14테이블 그대로** (Entity 클래스명 = 테이블명). Day 1에는 최소 `app_settings`, `presets`, `sessions`, `captures` 4개만 실제 사용, 나머지는 Entity 정의만 <!-- 14 entity 등록(클래스=테이블명 PascalCase, tableName 명시). DAO 4개만. exportSchema=false -->
-- [x] 앱 번들에 `assets/presets.json`(6종 폴백) 포함 — B가 Day 1에 주는 파일. 서버 응답과 동일 스키마 <!-- B 미전달분 임시 폴백 작성(M3-01 스키마·§10.1 배열). B 확정본 도착 시 교체 -->
+- [x] Room DB 스키마 생성 — **DB 스키마 v2.0 §3의 로컬 14테이블 그대로** (Entity 클래스명 = 테이블명). Day 1에는 최소 `app_settings`, `presets`, `sessions`, `captures` 4개만 실제 사용, 나머지는 Entity 정의만 <!-- 14 entity 등록(클래스=테이블명 PascalCase, tableName 명시). ~~DAO 4개만~~ → 14테이블 DAO 전부 배선 완료. exportSchema=false -->
+- [x] 앱 번들에 `assets/presets.json`(6종 폴백) 포함 — B가 Day 1에 주는 파일. 서버 응답과 동일 스키마 <!-- 구 서술("B 미전달분 임시 폴백, 확정본 도착 시 교체")은 폐기 — 아래 진행 메모 참조. 현재 확정본이다 -->
 - 완료 기준: 앱 재시작 후 UUID 동일, presets 6종이 Room에 로드됨 <!-- ✅ 실기기(SM-G970N): device 1c898f22 재시작 후 동일, presets 6 로드 확인 -->
 
 ### 1-3. 진행 메모
@@ -111,9 +158,9 @@
 
 ### 1-5. CameraX 프리뷰 + 촬영 + 저장
 
-- [x] `CameraController` 클래스: Preview + ImageCapture 바인딩, 전/후면 전환, 탭 포커스 <!-- camera/CameraController(LifecycleCameraController 래퍼). 탭포커스·핀치줌은 PreviewView 기본 제공 -->
+- [~] `CameraController` 클래스: Preview + ImageCapture 바인딩, 전/후면 전환, 탭 포커스 <!-- 부분 — 탭 포커스 회귀. 병합으로 핀치 줌 Box(pointerInput)가 PreviewView 위에 얹혀 탭이 PreviewView.onTouchEvent에 도달하지 않는다. 바인딩·렌즈 전환은 정상 --> <!-- camera/CameraController(LifecycleCameraController 래퍼). 탭포커스·핀치줌은 PreviewView 기본 제공 -->
 - [x] 화면 비율 토글: 4:5 / 1:1 — 프리뷰 크롭 마스크 + 촬영 결과 크롭 저장 <!-- BoxWithConstraints 마스크 + centerCropToRatio. 실기기: 원본 3024×3780=정확히 4:5 -->
-- [x] 촬영: JPEG 저장 → 앱 전용 디렉토리(`filesDir/captures/`) + MediaStore로 갤러리 내보내기, EXIF 회전 정상 처리 <!-- 회전을 픽셀에 반영(orientation=NULL) → 방향 정상. MediaStore Pictures/감도 export -->
+- [~] 촬영: JPEG 저장 → 앱 전용 디렉토리(`filesDir/captures/`) + MediaStore로 갤러리 내보내기, EXIF 회전 정상 처리 <!-- 부분 — API 26~28에서 갤러리 내보내기가 무음 실패. WRITE_EXTERNAL_STORAGE 런타임 요청이 없고 runCatching이 SecurityException을 삼켜 로컬 사본만 남는다. 검증 기기(Android 12)는 scoped storage라 이 경로를 타지 않았다. minSdk 26 유지 시 권한 요청 추가 필요 --> <!-- 회전을 픽셀에 반영(orientation=NULL) → 방향 정상. MediaStore Pictures/감도 export -->
 - [x] `captures` 테이블에 기록(id `cap_`+ULID, file_path, source='camera_manual') <!-- core/Ulid, CaptureRepository. 앨범 DB 로드로 확인 -->
 - 완료 기준: **찍은 사진이 갤러리 앱에서 올바른 방향·비율로 보인다** <!-- ✅ 실기기: 촬영 원본 4:5·세로 정상, MediaStore(Pictures/감도) 내보내기 확인, 촬영 이미지에 그리드 오버레이 미포함 -->
 
@@ -125,10 +172,10 @@
 
 ### 1-6. (저녁) B와 인터페이스 계약 고정 — 30분
 
-- [ ] `presets.json` 스키마 최종 확인 서명(이후 필드 변경 금지, 값 튜닝만 허용)
-- [ ] `FrameFeatures` 데이터 클래스 필드 확정(B가 스펙 제시 — §Day 2 참조)
-- [ ] `/edit-jobs` 요청·응답 JSON 필드 확정 (기능명세서 §10 기준)
-- [ ] B의 `/edit-jobs` 계약 스텁(queued→fallback, 고정 이미지 없음) 호출 성공 확인 — 네트워크 연결 테스트
+- [x] `presets.json` 스키마 최종 확인 서명(이후 필드 변경 금지, 값 튜닝만 허용) <!-- 앱 번들본과 서버본이 개행까지 바이트 동일, 필드 동결 카나리아 테스트 존재 -->
+- [x] `FrameFeatures` 데이터 클래스 필드 확정(B가 스펙 제시 — §Day 2 참조) <!-- aspectRatio는 소비처 없음 확인 후 종결(TEAM.md §8) -->
+- [x] `/edit-jobs` 요청·응답 JSON 필드 확정 (기능명세서 §10 기준) <!-- 요청·202·폴링·에러 봉투가 명세서 §10과 일치, 서버 Form alias와도 일치 -->
+- [x] 📱 B의 `/edit-jobs` 계약 스텁(queued→fallback, 고정 이미지 없음) 호출 성공 확인 — 네트워크 연결 테스트 <!-- 실기기 왕복 확인: POST 202 → 상태 폴링 → /files 결과 200 -->
 
 ---
 
@@ -164,20 +211,20 @@
 
 ### 2-3. 센서 파이프라인
 
-- [x] `TiltSensor`: ROTATION_VECTOR 기반 roll/pitch, 저역통과 필터(α=0.2로 시작), 10Hz+ <!-- camera/TiltSensor, SENSOR_DELAY_GAME, StateFlow<TiltReading> -->
+- [x] 📱 `TiltSensor`: ~~ROTATION_VECTOR~~ **`TYPE_GRAVITY`**(폴백 ACCELEROMETER) 기반 roll/pitch <!-- 문구 정정: 세로 파지 시 ROTATION_VECTOR+getOrientation은 짐벌락에 걸려 TYPE_GRAVITY로 구현됨 -->, 저역통과 필터(α=0.2로 시작), 10Hz+ <!-- camera/TiltSensor, SENSOR_DELAY_GAME, StateFlow<TiltReading> -->
 - [x] `ShakeMeter`: 최근 0.5초 각속도 분산 → 흔들림 수치 <!-- camera/ShakeMeter, 자이로 각속도 크기 0.5초 윈도 분산 -->
 - 완료 기준: 기기를 기울이면 HUD의 수평값이 ±0.5° 안정성으로 따라온다 <!-- ✅ 실기기 HUD "수평 -1.3°" 실제 방향 반영, 정지 2초간 불변(±0.5° 이내). 수평 도달(|roll|≤1°) 시 세이지 색전환 -->
 
 ### 2-3. 진행 메모
 - `camera/TiltSensor`·`camera/ShakeMeter`(SensorManager, StateFlow). CameraScreen에서 start/stop + HUD 3번째 줄 "수평 · 기울기 · 흔들림"
 - roll 값은 Day 3 수평선 오버레이/AlignmentEngine 입력으로 재사용 예정
-- 참고: roll ±180° 경계 랩어라운드는 미보정(대략 수직 파지 기준 정상). 필요 시 Day3에서 언랩 처리
+- ~~참고: roll ±180° 경계 랩어라운드는 미보정~~ → **보정됨**. 최단호 필터가 들어갔다(`TiltSensor.wrapDegrees`/`angleDelta`)
 
 ### 2-4. FrameFeatures 계산 (B가 Day 2에 주는 순수 Kotlin 모듈 `detect/FrameFeatureCalculator.kt` 통합)
 
-- [ ] 입력: 얼굴/포즈 결과 + 센서 + 프레임 메타 → 출력 `FrameFeatures`:
+- [~] 기기대기 · 입력: 얼굴/포즈 결과 + 센서 + 프레임 메타 → 출력 `FrameFeatures`:
   `faceBox, personBox, personCenter, personAreaRatio, headroom, sideMargins, tiltDeg, shake, brightnessMean, backlightFlag, lowLightFlag, aspectRatio, poseConfidence`
-- [ ] 30ms 이내 계산 확인(스톱워치 로그)
+- [~] 기기대기 · 30ms 이내 계산 확인(스톱워치 로그) <!-- JVM 실측 mean 0.048ms / budget 30ms. 실기기 계측은 미실시 -->
 - 완료 기준: B의 단위 테스트 통과 + 실기기에서 값이 상식적으로 움직임(다가가면 areaRatio 증가 등)
 
 ### 2-5. 오버레이 렌더링 v1
@@ -200,23 +247,23 @@
 
 ### 3-1. AlignmentEngine 통합 (B가 Day 3 정오까지 주는 순수 Kotlin 모듈 `guide/AlignmentEngine.kt`)
 
-- [ ] 입력: `FrameFeatures` + `StyleTarget`(프리셋에서 변환) / 출력: `OverlayState(targetFrame, silhouette, horizonLine, visible)` + `matchScore`(내부 기록용 — UI 표시 금지)
-- [ ] 카메라 화면의 상태 홀더(`CameraViewModel`)에 연결 — 분석 스레드→UI 스레드 전달은 StateFlow
-- [ ] B의 파라미터 파일 `guide_config.json`(안정화 임계값·이동평균 윈도) 읽기 — 하드코딩 금지(리허설 현장 튜닝용)
-- 완료 기준: B의 시나리오 단위 테스트 통과(장면 4종에서 기대 오버레이 좌표 산출)
+- [x] 입력: `FrameFeatures` + `StyleTarget`(프리셋에서 변환) / 출력: `OverlayState(targetFrame, silhouette, horizonLine, visible)` + `matchScore`(내부 기록용 — UI 표시 금지)
+- [x] 카메라 화면의 상태 홀더(`CameraViewModel`)에 연결 — 분석 스레드→UI 스레드 전달은 StateFlow
+- [x] B의 파라미터 파일 `guide_config.json`(안정화 임계값·이동평균 윈도) 읽기 — 하드코딩 금지(리허설 현장 튜닝용)
+- 완료 기준: B의 시나리오 단위 테스트 통과(장면 4종에서 기대 오버레이 좌표 산출) <!-- ✅ 충족 — AlignmentEngineTest 장면 4종 통과. 7일 계획에서 완료 기준이 기기 없이 충족되는 유일한 절. 다만 이 경로가 기기에서 돈 적은 없다 -->
 
 ### 3-2. 가이드 오버레이 UI (시각 전용 — 텍스트·화살표·게이지 없음)
 
-- [ ] **목표 프레임 오버레이**: 스타일이 요구하는 인물 목표 영역을 반투명 브래킷+실루엣(발 위치 마커 포함)으로 표시, 인물이 영역에 들어오면 색 전환(흰→민트) — 색 전환이 유일한 "맞았다" 피드백
-- [ ] **수평선 가이드**: 기기 기울기에 따라 기울어지는 수평선, 수평 도달 시 직선+색 전환
-- [ ] 오버레이 안정화: 좌표 이동평균, 신뢰도 미달 시 마지막 안정값 유지, 지속 불안정 시 오버레이 잠시 숨김(깜빡임 금지)
-- [ ] 오버레이 표시 on/off 토글(상단)
-- [ ] 상단: 스타일 이름 + 변경 버튼만(차콜 UI, 프리뷰가 주인공). **금지: 안내 문구 배너, 방향 화살표, 일치도 게이지·링, 자동 촬영 UI**
+- [~] 기기대기 · **목표 프레임 오버레이**: 스타일이 요구하는 인물 목표 영역을 반투명 브래킷+실루엣(발 위치 마커 포함)으로 표시, 인물이 영역에 들어오면 색 전환(흰→민트) — 색 전환이 유일한 "맞았다" 피드백
+- [~] 부분 · **수평선 가이드**: 기기 기울기에 따라 기울어지는 수평선, 수평 도달 시 직선+색 전환 <!-- 그려지지만 부호 미확정 — §0.5 '기기 없이도 확정된 결함' 참조. 관찰 1회로 확정 -->
+- [x] 오버레이 안정화: 좌표 이동평균, 신뢰도 미달 시 마지막 안정값 유지, 지속 불안정 시 오버레이 잠시 숨김(깜빡임 금지) <!-- OverlayStabilizer + 합성 1분 하네스로 깜빡임 39·64건 → 0건 실측. 실검출 지터는 미포함 -->
+- [ ] 오버레이 표시 on/off 토글(상단) <!-- 상단 바 미시공. 아래 항목과 같은 자리 -->
+- [ ] 상단: 스타일 이름 + 변경 버튼만 <!-- ⚠️ 이게 없어서 릴리스 빌드에 '세션 중 스타일을 바꾸는 수단'이 없다. 온보딩 1회 선택은 저장·반영되지만 Day 1·Day 3 데모 기준의 '스타일을 고르면'이 성립하지 않는다 --> (차콜 UI, 프리뷰가 주인공). **금지: 안내 문구 배너, 방향 화살표, 일치도 게이지·링, 자동 촬영 UI**
 - 완료 기준: 1분 연속 관찰에서 오버레이 깜빡임·좌표 튐 없음
 
 ### 3-3. 촬영 시점 기록 (KPI용 — 화면 변화 없음)
 
-- [ ] 수동 셔터 클릭 순간의 `FrameFeatures`+`matchScore` 스냅샷을 `captures`·`sessions`(final_match_score)에 기록
+- [ ] 수동 셔터 클릭 순간의 `FrameFeatures`+`matchScore` 스냅샷을 `captures`·`sessions`(final_match_score)에 기록 <!-- ⚠️ 최우선. 이 항목이 §4-1 수평 보정과 §4-3 진단 칩 3종을 동시에 막고 있다. 기록할 matchScore는 AlignmentEngine의 IoU가 아니라 MatchScoreCalculator 출력이다(TEAM.md §8) -->
 - [ ] `session_guides` 테이블에는 오버레이 표시 이벤트(어떤 목표가 언제 표시됐나) 기록 — B의 지표 스크립트용
 - 완료 기준: 촬영 3회 후 DB에 스냅샷 3건 확인. **오후 6시 B와 오버레이 안정성 판정(§0.4)**
 
@@ -228,10 +275,12 @@
 
 ### 4-1. 로컬 보정 파이프라인 `edit/LocalEditor.kt`
 
+> ⚠️ **판정 기준 엔진**: `edit/LocalEditor.kt`에 엔진이 둘 있다. 화면에 배선된 것은 `object QuickFilterEditor`(필터별 고정 상수 가감, 기기 검증)이고, 아래 항목들을 실제로 구현한 `class LocalEditor`(측정→계획→렌더, JVM 테스트 155건)는 **미배선**이다. 이 절은 **화면에 그려지는 쪽 기준으로 판정**한다 — 그래서 대부분 미착수다. 배선 택일은 기기에서 §4-1 파이프라인이 2초 예산을 지키는지 본 뒤 결정한다.
+
 - [ ] **기하학 단계**: 촬영 시점 tiltDeg로 수평 회전 → 비율 크롭(4:5 또는 1:1, 인물 중심 유지) → 회전으로 생긴 빈 모서리는 크롭으로 흡수(불가능하면 여백 확장 후보로 마킹)
 - [ ] **광학 단계**: 히스토그램 기반 자동 노출 보정(±1EV 내), 화이트밸런스(그레이월드 근사), 대비 스트레칭, 하이라이트/그림자 완화
 - [ ] **스타일 단계**: 프리셋의 colorTemperature/saturation/contrast/exposureBias/grain/vignette/fade 적용
-  - 구현: Android `RenderEffect`(색 행렬+블러) 우선, 부족하면 픽셀 셰이더(AGSL) 또는 OpenCV — **Day 4 오전에 1시간 스파이크로 택1 후 고정**
+  - [x] 구현 백엔드 택1 **확정: Canvas + `ColorMatrixColorFilter` + LUT**(주 경로, API 26에서 동작). `RenderEffect`는 API 31+ blur 항에만 opt-in. **AGSL은 `RuntimeShader`가 API 33+라 대상 기기(SM-G970N, API 31)에서 실행 불가**하여 제외, OpenCV는 모든 연산이 affine 행렬 또는 256-entry LUT라 얻을 것이 없어 제외
   - 입자(grain): 노이즈 텍스처 오버레이, 비네팅: 방사형 그라데이션 마스크
 - [ ] 처리 시간 측정 — **목표 2초 이내**(4000px 기준. 초과 시 처리 해상도 2000px로 낮추고 저장 시 원본 해상도 재적용)
 - [ ] 비파괴: 원본 보존, 적용 파라미터를 `capture_edit_stack`에 기록
@@ -239,9 +288,9 @@
 
 ### 4-2. 결과 화면 `ui/result`
 
-- [ ] 상단 탭: 원본 / 기본 보정 / 스타일 보정 / 생성 복구(Day 5부터 활성)
-- [ ] **전후 슬라이더**: 좌우 드래그 핸들로 원본↔선택 결과 비교(한 화면), 핀치 줌
-- [ ] 스타일 강도 슬라이더(0~100%, 스타일 단계에만 적용)
+- [~] 미배선 · 상단 탭: 원본 / 기본 보정 / 스타일 보정 / 생성 복구(Day 5부터 활성) <!-- ResultTabs.kt로 구현돼 있으나 병합에서 main의 ResultScreen을 채택해 화면에서 떨어졌다 -->
+- [~] 미배선 · **전후 슬라이더**: 좌우 드래그 핸들로 원본↔선택 결과 비교(한 화면), 핀치 줌 <!-- BeforeAfterSlider.kt로 구현돼 있으나 미배선. 부록 A '끝까지 지키는 것' 항목이므로 재배선 필요 -->
+- ~~스타일 강도 슬라이더(0~100%, 스타일 단계에만 적용)~~ **컷** (부록 A 컷라인 2, TEAM.md §8)
 - [ ] 하단: [저장] [공유] [다시 찍기], 저장 시 `saved_to_gallery=1` 기록
 - 완료 기준: 당일 데모 기준 충족, 슬라이더 60fps 체감
 
@@ -260,7 +309,7 @@
 ### 5-1. 레퍼런스 선택·분석 연동
 
 - [ ] 카메라 화면의 레퍼런스 진입점 → 포토 피커 → 이미지 SHA-256 계산 → `cached_references` 조회(있으면 재분석 생략). 별도 홈 화면은 만들지 않음
-- [ ] 없으면 `POST /references/analyze` 업로드(전송 전 EXIF 위치 제거 — B와 이중 안전장치), 응답을 캐시에 저장
+- [~] 미배선 · 없으면 `POST /references/analyze` 업로드(전송 전 EXIF 위치 제거 — B와 이중 안전장치), 응답을 캐시에 저장 <!-- ReferenceRepository + ExifSanitizer 완성(JVM 9테스트, sanitize→upload 순서 고정). 부르는 화면 코드가 0줄 -->
 - [ ] 업로드 전 안내 문구 1줄 표시: "구도 분석을 위해 서버로 전송됩니다. 분석 후 즉시 삭제됩니다."
 - 완료 기준: 같은 사진 재선택 시 네트워크 호출 없음(로그 확인)
 
@@ -268,7 +317,7 @@
 
 - [ ] 분석 결과의 `targetComposition`을 AlignmentEngine의 StyleTarget으로 주입(스타일 모드와 동일 파이프라인 재사용)
 - [ ] **반투명 원본 오버레이**: 레퍼런스 이미지를 프리뷰 위에 α=30% 기본, 슬라이더 0~60% 조절
-- [ ] 목표 실루엣 모드 토글(원본 오버레이 ↔ 구조화 실루엣)
+- ~~목표 실루엣 모드 토글(원본 오버레이 ↔ 구조화 실루엣)~~ **컷** (부록 A 컷라인 1, TEAM.md §8). 레퍼런스 반투명 원본 오버레이만 유지
 - [ ] 촬영 후 결과 화면에 [레퍼런스 색감 적용] 토글 — 분석 응답의 colorTarget(색온도·팔레트)을 스타일 단계 파라미터로 매핑
 - [ ] 레퍼런스↔결과 나란히 비교 뷰
 - 완료 기준: 레퍼런스 선택→안내→촬영→색감 적용→나란히 비교가 끊김 없이 동작
@@ -299,9 +348,9 @@
 
 ### 6-2. 온보딩 완성
 
-- [ ] 카드 선택 그리드(B가 준비한 카드 15~20장 + `cards.json` 메타), 5장 이상 선택 시 다음 활성
-- [ ] B의 온디바이스 프로필 로직(`data/ProfileEngine.kt`) 연결: 카드 선택→프로필 생성→추천 상위 3종을 카메라 스타일 스트립의 기본 순서로 적용. 별도 요약·내 스타일 화면은 만들지 않음
-- [ ] 온보딩은 취향 카드 선택 → “내 감도 저장” 두 단계만 유지하고, 완료 후 카메라로 직행·재실행 시 스킵
+- [x] 📱 카드 선택 그리드(B가 준비한 카드 15~20장 + `cards.json` 메타), 5장 이상 선택 시 다음 활성 <!-- 병합으로 실제 카드 JPEG이 assets/cards/에 들어왔다. MIN_PICKS=5 반영됨(TEAM.md §8) -->
+- [~] 미배선 · B의 온디바이스 프로필 로직(`data/ProfileEngine.kt`) 연결: <!-- ProfileEngine·CardRepository·PresetProfileMapper 전부 완성이나 recommend()를 부르는 프로덕션 코드가 0줄. 현재는 하드코딩 맵이 그 자리를 대신한다 --> 카드 선택→프로필 생성→추천 상위 3종을 카메라 스타일 스트립의 기본 순서로 적용. 별도 요약·내 스타일 화면은 만들지 않음
+- [x] 📱 온보딩은 취향 카드 선택 → “내 감도 저장” 두 단계만 유지하고, 완료 후 카메라로 직행·재실행 시 스킵 <!-- ⚠️ 단, 2b '내 감도 저장'의 색 스와치 3개·요약 3줄이 하드코딩이라 어떤 카드를 골라도 동일하다. 이 상태로 시연하면 AGENTS.md §7-6(더미로 속이지 않는다) 판정 대상 -->
 - 완료 기준: 신규 설치→첫 촬영 60초 이내(스톱워치 실측), 서로 다른 카드 선택 2세트가 카메라 스타일 스트립의 상위 순서를 다르게 만듦
 
 ### 6-3. 피드백 UI + 저장·공유 마감
@@ -309,7 +358,8 @@
 - [ ] 저장 직후 1탭 피드백 시트: 5개 선택지(이 느낌이 맞아요 / 구도는 좋은데 색감은 별로 / 색감은 좋은데 인위적 / 다음엔 더 자연스럽게 / 이 스타일 저장) — 스킵 가능, 5초 자동 닫힘
 - [ ] 선택 → `feedback` 테이블 기록 + B의 ProfileEngine 반영 호출(로컬)
 - [ ] "이 스타일 저장" → 현재 파라미터를 개인 프리셋으로 저장(이름 입력)
-- [ ] 공유: OS 공유 시트, 내 스타일 화면(선호 요약·최근 스타일·개인화 초기화)
+- [ ] 공유: OS 공유 시트 <!-- 결과 화면에 공유 버튼 없음 -->
+- ~~내 스타일 화면(선호 요약·최근 스타일·개인화 초기화)~~ **컷** (D11 및 §6-2 '별도 요약 화면 없음'과 충돌, 부록 A 컷라인 4, TEAM.md §8)
 - 완료 기준: "색감은 별로" 2회 후 같은 조건 촬영에서 색감 파라미터가 달라짐을 로그로 확인
 
 ---
