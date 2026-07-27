@@ -15,6 +15,75 @@ interface PoseDetector {
     fun close()
 }
 
+interface ObjectSceneDetector {
+    fun detect(frame: AnalysisFrame): List<ObjectObservation>
+    fun close()
+}
+
+interface SubjectSceneSegmenter {
+    fun detect(frame: AnalysisFrame): SegmentationObservation?
+    fun close()
+}
+
+/**
+ * Keeps the heavier object detector off the critical path on every frame. Face
+ * and pose can continue at the camera analysis cadence while objects are refreshed
+ * every [refreshEveryFrames] calls and tracked results are reused in between.
+ */
+class ThrottledObjectSceneDetector(
+    private val delegate: ObjectSceneDetector,
+    private val refreshEveryFrames: Int = 3,
+) : ObjectSceneDetector {
+    init {
+        require(refreshEveryFrames >= 1)
+    }
+
+    private var frameCount = 0
+    private var lastResult: List<ObjectObservation> = emptyList()
+
+    override fun detect(frame: AnalysisFrame): List<ObjectObservation> {
+        frameCount++
+        if (frameCount == 1 || frameCount % refreshEveryFrames == 0) {
+            lastResult = delegate.detect(frame)
+        }
+        return lastResult
+    }
+
+    override fun close() = delegate.close()
+
+    fun reset() {
+        frameCount = 0
+        lastResult = emptyList()
+    }
+}
+
+class ThrottledSubjectSceneSegmenter(
+    private val delegate: SubjectSceneSegmenter,
+    private val refreshEveryFrames: Int = 6,
+) : SubjectSceneSegmenter {
+    init {
+        require(refreshEveryFrames >= 1)
+    }
+
+    private var frameCount = 0
+    private var lastResult: SegmentationObservation? = null
+
+    override fun detect(frame: AnalysisFrame): SegmentationObservation? {
+        frameCount++
+        if (frameCount == 1 || frameCount % refreshEveryFrames == 0) {
+            delegate.detect(frame)?.let { lastResult = it }
+        }
+        return lastResult
+    }
+
+    override fun close() = delegate.close()
+
+    fun reset() {
+        frameCount = 0
+        lastResult = null
+    }
+}
+
 /**
  * Runs the configured face + pose detectors over one frame. B's
  * FrameFeatureCalculator (Day 2) consumes [DetectionResult] downstream.
@@ -22,15 +91,21 @@ interface PoseDetector {
 class SceneDetector(
     private val faceDetector: FaceDetector,
     private val poseDetector: PoseDetector,
+    private val objectDetector: ObjectSceneDetector? = null,
+    private val subjectSegmenter: SubjectSceneSegmenter? = null,
 ) {
     fun detect(frame: AnalysisFrame): DetectionResult =
         DetectionResult(
             faces = faceDetector.detect(frame),
             pose = poseDetector.detect(frame),
+            objects = objectDetector?.detect(frame).orEmpty(),
+            segmentation = subjectSegmenter?.detect(frame),
         )
 
     fun close() {
         faceDetector.close()
         poseDetector.close()
+        objectDetector?.close()
+        subjectSegmenter?.close()
     }
 }

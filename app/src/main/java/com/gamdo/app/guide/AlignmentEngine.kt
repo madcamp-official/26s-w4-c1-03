@@ -82,15 +82,19 @@ class AlignmentEngine {
         features: FrameFeatures,
         target: StyleTarget,
         config: GuideConfig = GuideConfig(),
+        observedSubjectBox: NormalizedBox? = null,
     ): OverlayState {
         val desired = targetFrame(target)
-        val confidenceUsable = features.poseConfidence >= config.minPoseConfidence
+        // A detected object has its own confidence; it must not be rejected just
+        // because there is no human pose in the frame.
+        val confidenceUsable = observedSubjectBox != null ||
+            features.poseConfidence >= config.minPoseConfidence
         val previous = lastStableTarget
 
         if (!confidenceUsable) {
             val fallback = previous ?: desired
             lastMetrics = lastMetrics.copy(targetMovement = 0f)
-            return state(fallback, features, target, config, visible = previous != null)
+            return state(fallback, features, target, config, visible = previous != null, observedSubjectBox = observedSubjectBox)
         }
 
         val movement = previous?.let { distance(it, desired) } ?: 0f
@@ -100,7 +104,7 @@ class AlignmentEngine {
                 unstableFrames = lastMetrics.unstableFrames + 1,
             )
             if (lastMetrics.unstableFrames >= config.maxUnstableFrames) {
-                return state(previous, features, target, config, visible = false)
+                return state(previous, features, target, config, visible = false, observedSubjectBox = observedSubjectBox)
             }
         } else {
             lastMetrics = lastMetrics.copy(targetMovement = movement, unstableFrames = 0)
@@ -110,7 +114,7 @@ class AlignmentEngine {
         while (targetHistory.size > config.smoothingWindow) targetHistory.removeFirst()
         val smoothed = average(targetHistory).clamped()
         lastStableTarget = smoothed
-        return state(smoothed, features, target, config, visible = true)
+        return state(smoothed, features, target, config, visible = true, observedSubjectBox = observedSubjectBox)
     }
 
     fun metrics(): GuideMetrics = lastMetrics
@@ -127,14 +131,16 @@ class AlignmentEngine {
         target: StyleTarget,
         config: GuideConfig,
         visible: Boolean,
+        observedSubjectBox: NormalizedBox?,
     ): OverlayState {
-        val iou = features.personBox?.let { intersectionOverUnion(it, frame) } ?: 0f
+        val subjectBox = observedSubjectBox ?: features.personBox
+        val iou = subjectBox?.let { intersectionOverUnion(it, frame) } ?: 0f
         val aligned = visible && iou >= config.alignedIouThreshold
         val score = iou.coerceIn(0f, 1f)
         lastMetrics = lastMetrics.copy(matchScore = score)
         return OverlayState(
             targetFrame = frame,
-            silhouette = if (visible && features.personBox != null) {
+            silhouette = if (visible && subjectBox != null) {
                 SilhouetteSpec(frame)
             } else {
                 null

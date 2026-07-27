@@ -72,6 +72,7 @@ import com.gamdo.app.camera.TiltSensor
 import com.gamdo.app.camera.ZoomBounds
 import com.gamdo.app.camera.centerCropToRatio
 import com.gamdo.app.camera.brightnessSample
+import com.gamdo.app.camera.sceneFrameSignals
 import com.gamdo.app.camera.scaledToMaxSide
 import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
@@ -80,6 +81,11 @@ import com.gamdo.app.data.preset.StylePreset
 import com.gamdo.app.detect.DetectionResult
 import com.gamdo.app.detect.MlKitFaceDetector
 import com.gamdo.app.detect.MlKitPoseDetector
+import com.gamdo.app.detect.MlKitObjectDetector
+import com.gamdo.app.detect.ThrottledObjectSceneDetector
+import com.gamdo.app.detect.MlKitSubjectSegmenter
+import com.gamdo.app.detect.ThrottledSubjectSceneSegmenter
+import com.gamdo.app.guide.toSceneObservation
 import com.gamdo.app.detect.SceneDetector
 import com.gamdo.app.detect.toAnalysisFrame
 import com.gamdo.app.guide.GuideConfigBundle
@@ -152,7 +158,14 @@ fun CameraScreen(
 
     val controller = remember { CameraController(context) }
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
-    val scene = remember { SceneDetector(MlKitFaceDetector(), MlKitPoseDetector()) }
+    val scene = remember {
+        SceneDetector(
+            faceDetector = MlKitFaceDetector(),
+            poseDetector = MlKitPoseDetector(),
+            objectDetector = ThrottledObjectSceneDetector(MlKitObjectDetector()),
+            subjectSegmenter = ThrottledSubjectSceneSegmenter(MlKitSubjectSegmenter()),
+        )
+    }
     // Thresholds come from assets only (CFG-1); the data-class defaults are the
     // fallback for a missing/!unparseable file.
     val guideConfig = remember {
@@ -300,6 +313,7 @@ fun CameraScreen(
                 onFrame = { imageProxy ->
                     imageProxy.toAnalysisFrame()?.let { frame ->
                         val result = scene.detect(frame)
+                        val subjectBox = result.toSceneObservation().subjectBox
                         viewModel.onFrameAnalyzed(
                             detection = result,
                             tilt = tiltSensor.reading.value,
@@ -312,6 +326,7 @@ fun CameraScreen(
                                     it.box.width * it.box.height
                                 }?.box,
                             ),
+                            sceneSignals = imageProxy.sceneFrameSignals(subjectBox),
                             shake = shakeMeter.shake.value,
                             frameWidth = frame.width,
                             frameHeight = frame.height,

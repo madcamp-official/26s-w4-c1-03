@@ -12,6 +12,9 @@ import com.gamdo.app.guide.GuideConfigBundle
 import com.gamdo.app.guide.MatchScoreCalculator
 import com.gamdo.app.guide.OverlayStabilizer
 import com.gamdo.app.guide.StyleTarget
+import com.gamdo.app.guide.SceneFrameSignals
+import com.gamdo.app.guide.SceneGuideCoordinator
+import com.gamdo.app.guide.SceneLayoutGuide
 import com.gamdo.app.guide.toProjection
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -99,6 +102,7 @@ class CameraViewModel(
     private val guideConfig = config.toGuideConfig()
     private val featureCalculator = config.toFrameFeatureCalculator()
     private val stabilizer = OverlayStabilizer(config.toStabilizerConfig())
+    private val sceneGuideCoordinator = SceneGuideCoordinator()
     private val budgetMs = config.features.analysisBudgetMs
     private val logEveryFrames = config.features.budgetLogEveryFrames
 
@@ -170,6 +174,7 @@ class CameraViewModel(
         frameWidth: Int,
         frameHeight: Int,
         mirror: Boolean,
+        sceneSignals: SceneFrameSignals = SceneFrameSignals(),
     ) {
         val startNs = System.nanoTime()
         val features = featureCalculator.calculate(
@@ -183,10 +188,22 @@ class CameraViewModel(
         recordFeatureCost((System.nanoTime() - startNs) / 1_000_000.0)
 
         val target = _styleTarget.value
-        val engineState = alignmentEngine.align(features, target, guideConfig)
+        val sceneGuide = sceneGuideCoordinator.update(
+            detection = detection,
+            styleTarget = target,
+            signals = sceneSignals,
+        )
+        val resolvedTarget = sceneGuide.proposal.target
+        val engineState = alignmentEngine.align(
+            features = features,
+            target = resolvedTarget,
+            config = guideConfig,
+            observedSubjectBox = sceneGuide.proposal.subjectBox,
+        )
         val projection = stabilizer.stabilize(engineState.toProjection())
 
-        _detectionLabel.value = detectionLabelOf(detection)
+        _detectionLabel.value = detectionLabelOf(detection) +
+            " · layout=${sceneGuide.layoutGuide.level.name.lowercase()}"
 
         // §3-3: unconditional, unlike the debug block below.
         _lastFrame.value = ShutterFrame(
@@ -205,7 +222,7 @@ class CameraViewModel(
                 // **not** the §4.2 weighted matchScore. Same name, different
                 // quantity — only the `matchScore` field below is loggable (§3-3).
                 iou = alignmentEngine.metrics().matchScore,
-                matchScore = matchScoreCalculator.calculate(features, target),
+                matchScore = matchScoreCalculator.calculate(features, resolvedTarget),
             )
         }
 
@@ -220,6 +237,7 @@ class CameraViewModel(
             frameHeight = frameHeight,
             mirror = mirror,
             guide = projection,
+            layoutGuide = sceneGuide.layoutGuide,
         )
     }
 
@@ -233,6 +251,7 @@ class CameraViewModel(
         _lastFrame.value = null
         alignmentEngine.reset()
         stabilizer.reset()
+        sceneGuideCoordinator.reset()
     }
 
     /**
@@ -271,7 +290,18 @@ class CameraViewModel(
     private fun detectionLabelOf(detection: DetectionResult): String {
         val faces = detection.faces.size
         val pose = detection.pose?.landmarks?.size ?: 0
-        return "얼굴 $faces · 포즈 $pose"
+        val objects = detection.objects.size
+        val objectDetails = detection.objects
+            .take(2)
+            .joinToString(",") { objectObservation ->
+                val label = objectObservation.labels.firstOrNull() ?: "unknown"
+                val confidence = objectObservation.classificationConfidence
+                    ?.let { "%.2f".format(it) } ?: "-"
+                "$label:$confidence"
+            }
+            .ifBlank { "none" }
+        val segmentation = if (detection.segmentation != null) "on" else "off"
+        return "얼굴 $faces · 포즈 $pose · 물체 $objects[$objectDetails] · seg=$segmentation"
     }
 
     /**

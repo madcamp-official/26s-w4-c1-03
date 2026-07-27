@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import androidx.camera.core.ImageProxy
 import com.gamdo.app.detect.BrightnessSample
 import com.gamdo.app.detect.NormalizedBox
+import com.gamdo.app.guide.SceneFrameSignals
 
 /**
  * Converts an analysis [ImageProxy] (YUV_420_888) to an upright RGB [Bitmap],
@@ -95,6 +96,62 @@ fun ImageProxy.brightnessSample(faceBox: NormalizedBox?, stride: Int = 8): Brigh
         frameMean = frameMean,
         faceMean = meanOrNull(faceSum, faceCount),
         backgroundMean = meanOrNull(backgroundSum, backgroundCount),
+    )
+}
+
+/**
+ * Extracts the small structural signal consumed by [SceneStructureAnalyzer].
+ * This stays on the Y plane: no RGB bitmap allocation and no server upload.
+ * [subjectBox] uses the same upright normalized coordinates as ML Kit output.
+ */
+fun ImageProxy.sceneFrameSignals(
+    subjectBox: NormalizedBox?,
+    stride: Int = 16,
+    rowBins: Int = 12,
+): SceneFrameSignals {
+    val plane = planes.firstOrNull() ?: return SceneFrameSignals()
+    val buffer = plane.buffer.duplicate().apply { rewind() }
+    val rowSums = FloatArray(rowBins)
+    val rowCounts = IntArray(rowBins)
+    val sideSums = FloatArray(2)
+    val sideCounts = IntArray(2)
+    val limit = buffer.limit()
+    val safeStride = stride.coerceAtLeast(2)
+    var y = 0
+    while (y < height) {
+        val rowBase = y * plane.rowStride
+        var x = 0
+        while (x + safeStride < width) {
+            val index = rowBase + x * plane.pixelStride
+            val nextIndex = rowBase + (x + safeStride) * plane.pixelStride
+            if (index >= limit || nextIndex >= limit) break
+            val value = (buffer.get(index).toInt() and 0xFF) / 255f
+            val next = (buffer.get(nextIndex).toInt() and 0xFF) / 255f
+            val u = uprightX(x, y)
+            val v = uprightY(x, y)
+            val row = (v * rowBins).toInt().coerceIn(0, rowBins - 1)
+            rowSums[row] += value
+            rowCounts[row]++
+            val side = when {
+                subjectBox != null && u < subjectBox.left -> 0
+                subjectBox != null && u > subjectBox.right -> 1
+                else -> -1
+            }
+            if (side >= 0) {
+                sideSums[side] += kotlin.math.abs(value - next)
+                sideCounts[side]++
+            }
+            x += safeStride
+        }
+        y += safeStride
+    }
+    return SceneFrameSignals(
+        rowLuminance = rowSums.indices.map { index ->
+            if (rowCounts[index] == 0) 0f else rowSums[index] / rowCounts[index]
+        },
+        sideEdgeDensity = sideSums.indices.map { index ->
+            if (sideCounts[index] == 0) 1f else (sideSums[index] / sideCounts[index]).coerceIn(0f, 1f)
+        },
     )
 }
 

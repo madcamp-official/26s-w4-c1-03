@@ -1,8 +1,13 @@
 package com.gamdo.app.ui.camera
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -16,6 +21,8 @@ import androidx.compose.ui.unit.dp
 import com.gamdo.app.detect.NormalizedBox
 import com.gamdo.app.guide.OverlayProjection
 import com.gamdo.app.guide.RectN
+import com.gamdo.app.guide.LayoutGuideLevel
+import com.gamdo.app.guide.SceneLayoutGuide
 import com.gamdo.app.ui.theme.Sage
 import kotlin.math.abs
 import kotlin.math.max
@@ -37,10 +44,12 @@ data class OverlayData(
     val frameHeight: Int,
     val mirror: Boolean,
     val guide: OverlayProjection? = null,
+    val layoutGuide: SceneLayoutGuide? = null,
 )
 
 /**
- * The guide overlay (§3-2). Exactly three elements, by contract:
+ * The guide overlay (§3-2) keeps the original three elements and adds the
+ * scene-specific subject outline when the detector is confident:
  *
  * 1. **target bracket** — four corner marks around the composition target,
  *    translucent white until the subject is inside it, then sage,
@@ -49,9 +58,9 @@ data class OverlayData(
  * 3. **horizon** — a line that tilts with device roll, red while tilted and
  *    straight + sage once level.
  *
- * The colour change is the *only* "you're framed" feedback (D2-3). There is no
- * text, no arrow, no gauge and no auto-capture here, and nothing in this Canvas
- * may draw any of them (D2-1/D2-2).
+ * The colour change remains the framing feedback. A short confidence prompt is
+ * rendered only for the explicit scene-layout-guide flow; there is still no
+ * arrow, match gauge, or auto-capture.
  *
  * Flicker damping lives upstream in `OverlayStabilizer`, not here: this composable
  * renders whatever state it is handed, so the §0.4 harness measuring the state
@@ -77,7 +86,8 @@ fun CameraOverlay(
     val horizonGate = remember { HorizonGate() }
     val showHorizon = horizonGate.update(pitchDeg)
 
-    Canvas(modifier = modifier) {
+    Box(modifier = modifier) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
         val vw = size.width
         val vh = size.height
 
@@ -118,6 +128,29 @@ fun CameraOverlay(
                 drawFootMarker(ghost, guideColor)
             }
 
+            data.layoutGuide?.takeIf { it.level != LayoutGuideLevel.STATIC }?.let { layout ->
+                if (layout.outline.size >= 3) {
+                    val points = layout.outline.map { point ->
+                        mapNormalized(point.x, point.y, data, vw, vh)
+                    }
+                    val outlineColor = when (layout.level) {
+                        LayoutGuideLevel.CONFIDENT -> guideColor.copy(alpha = 0.72f)
+                        LayoutGuideLevel.DETECTING -> Color.White.copy(alpha = 0.45f)
+                        LayoutGuideLevel.STATIC -> Color.Transparent
+                    }
+                    for (index in points.indices) {
+                        val next = points[(index + 1) % points.size]
+                        drawLine(
+                            color = outlineColor,
+                            start = points[index],
+                            end = next,
+                            strokeWidth = 2.dp.toPx(),
+                            cap = StrokeCap.Round,
+                        )
+                    }
+                }
+            }
+
             drawTargetBracket(frame, guideColor)
         }
 
@@ -140,6 +173,21 @@ fun CameraOverlay(
                 color = Sage,
                 radius = 5.dp.toPx(),
                 center = mapNormalized(cx, cy, data, vw, vh),
+            )
+        }
+        }
+
+        overlay?.layoutGuide?.prompt?.let { prompt ->
+            val message = when (prompt) {
+                com.gamdo.app.guide.LayoutGuidePrompt.FIND_SUBJECT -> "피사체를 화면에 보여주세요"
+                com.gamdo.app.guide.LayoutGuidePrompt.HOLD_STEADY -> "피사체를 잠시 유지해주세요"
+            }
+            Text(
+                text = message,
+                color = Color.White.copy(alpha = 0.92f),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 18.dp),
             )
         }
     }
