@@ -7,6 +7,7 @@ import com.gamdo.app.detect.ImageMetrics
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.gamdo.app.data.preset.ResolvedStyle
 
 /*
  * ── Two edit engines live in this file, on purpose ──────────────────────────
@@ -234,6 +235,7 @@ class LocalEditor(
         subject: SubjectBox? = null,
         forSave: Boolean = false,
         requestedMaxSide: Int = FULL_MAX_SIDE,
+        resolvedStyle: ResolvedStyle? = null,
     ): EditPlan = EditPlanner.plan(
         sourceWidth = sample.width,
         sourceHeight = sample.height,
@@ -250,6 +252,7 @@ class LocalEditor(
             forSave,
             requestedMaxSide,
         ).workingMaxSide,
+        resolvedStyle = resolvedStyle,
     )
 
     /** The resolution decision on its own, for callers that want to inspect it. */

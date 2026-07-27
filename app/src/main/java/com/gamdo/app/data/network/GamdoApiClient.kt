@@ -91,6 +91,7 @@ data class EditJobResult(
 
 @Serializable
 data class ReferenceAnalysisResponse(
+    val analysisVersion: Int = 1,
     val analysis: JsonObject,
     val targetComposition: JsonObject,
     val colorTarget: JsonObject,

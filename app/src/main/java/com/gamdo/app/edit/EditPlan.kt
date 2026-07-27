@@ -2,6 +2,7 @@ package com.gamdo.app.edit
 
 import com.gamdo.app.data.preset.ColorParams
 import com.gamdo.app.data.preset.StylePreset
+import com.gamdo.app.data.preset.ResolvedStyle
 import com.gamdo.app.detect.ImageMetrics
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -187,6 +188,7 @@ object EditPlanner {
         subject: SubjectBox? = null,
         applyStyle: Boolean = preset != null,
         processingMaxSide: Int = FULL_MAX_SIDE,
+        resolvedStyle: ResolvedStyle? = null,
     ): EditPlan {
         val geometry = planGeometry(
             sourceWidth = sourceWidth,
@@ -216,9 +218,9 @@ object EditPlanner {
             highlightRolloff = highlightRolloff,
         )
 
-        val color = preset?.color?.takeIf { applyStyle }
+        val color = (resolvedStyle?.color ?: preset?.color)?.takeIf { applyStyle }
         val style = StyleParams(
-            presetId = preset?.id?.takeIf { applyStyle },
+            presetId = (resolvedStyle?.sourceKey ?: preset?.id)?.takeIf { applyStyle },
             color = color,
             grain = color?.grain?.toFloat() ?: 0f,
             vignette = color?.vignette?.toFloat() ?: 0f,

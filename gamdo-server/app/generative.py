@@ -31,6 +31,14 @@ class GenerativeEditProvider(Protocol):
     ) -> list[GeneratedCandidate]:
         """Return generated candidates; never mutate the original input."""
 
+    def outpaint(
+        self,
+        image_path: Path,
+        operations: list[dict[str, Any]],
+        result_count: int,
+    ) -> list[GeneratedCandidate]:
+        """Return candidates with a bounded extension on one image edge."""
+
 
 class UnavailableProvider:
     def remove_objects(
@@ -39,6 +47,9 @@ class UnavailableProvider:
         operations: list[dict[str, Any]],
         result_count: int,
     ) -> list[GeneratedCandidate]:
+        raise ProviderNotReady("generative provider is not configured")
+
+    def outpaint(self, image_path: Path, operations: list[dict[str, Any]], result_count: int) -> list[GeneratedCandidate]:
         raise ProviderNotReady("generative provider is not configured")
 
 
@@ -176,15 +187,27 @@ class CandidateValidator:
     def __init__(self, identity_verifier: IdentityVerifier | None = None) -> None:
         self.identity_verifier = identity_verifier or UnavailableIdentityVerifier()
 
-    def validate(self, original_path: Path, candidate: GeneratedCandidate) -> ValidationResult:
+    def validate(
+        self,
+        original_path: Path,
+        candidate: GeneratedCandidate,
+        operations: list[dict[str, Any]] | None = None,
+    ) -> ValidationResult:
         try:
             if candidate.path.resolve() == original_path.resolve():
                 return ValidationResult(False, "candidate_aliases_input", {})
             with Image.open(original_path) as original, Image.open(candidate.path) as generated:
                 original.load()
                 generated.load()
-                if original.size != generated.size:
+                operation_type = (operations or [{}])[0].get("type")
+                if operation_type != "outpaint" and original.size != generated.size:
                     return ValidationResult(False, "dimensions_changed", {})
+                if operation_type == "outpaint" and not _valid_outpaint_dimensions(original.size, generated.size, operations or []):
+                    return ValidationResult(False, "invalid_outpaint_dimensions", {})
+                if operation_type == "outpaint":
+                    interior_distance = _outpaint_interior_distance(original, generated, operations or [])
+                    if interior_distance > 0.08:
+                        return ValidationResult(False, "original_interior_changed", {"interiorDistance": interior_distance})
                 histogram_distance = _histogram_distance(original, generated)
                 if histogram_distance > 0.85:
                     return ValidationResult(
@@ -236,6 +259,47 @@ def _histogram_distance(original: Image.Image, generated: Image.Image) -> float:
     left = ImageStat.Stat(original.convert("RGB").resize((32, 32))).mean
     right = ImageStat.Stat(generated.convert("RGB").resize((32, 32))).mean
     return sum(abs(a - b) for a, b in zip(left, right)) / (255.0 * 3.0)
+
+
+def _valid_outpaint_dimensions(
+    original: tuple[int, int], generated: tuple[int, int], operations: list[dict[str, Any]],
+) -> bool:
+    operation = operations[0] if operations else {}
+    ratio = float(operation.get("ratio", 0.0))
+    direction = operation.get("direction")
+    width, height = original
+    expected = (round(width * (1 + ratio)), height) if direction in {"left", "right"} else (width, round(height * (1 + ratio)))
+    return generated == expected
+
+
+def _outpaint_interior_distance(
+    original: Image.Image,
+    generated: Image.Image,
+    operations: list[dict[str, Any]],
+) -> float:
+    operation = operations[0] if operations else {}
+    direction = operation.get("direction")
+    ratio = float(operation.get("ratio", 0.0))
+    width, height = original.size
+    generated_rgb = generated.convert("RGB")
+    original_rgb = original.convert("RGB")
+    if direction == "left":
+        crop = generated_rgb.crop((generated.width - width, 0, generated.width, height))
+    elif direction == "right":
+        crop = generated_rgb.crop((0, 0, width, height))
+    elif direction == "top":
+        crop = generated_rgb.crop((0, generated.height - height, width, generated.height))
+    else:
+        crop = generated_rgb.crop((0, 0, width, height))
+    # Downsampled mean absolute error avoids storing a second full-resolution copy.
+    left = original_rgb.resize((32, 32))
+    right = crop.resize((32, 32))
+    pixels_left = list(left.getdata())
+    pixels_right = list(right.getdata())
+    return sum(
+        abs(a - b) for left_pixel, right_pixel in zip(pixels_left, pixels_right)
+        for a, b in zip(left_pixel, right_pixel)
+    ) / (len(pixels_left) * 3 * 255.0)
 
 
 def _normalized_rect(rect: dict[str, Any]) -> tuple[float, float, float, float]:
