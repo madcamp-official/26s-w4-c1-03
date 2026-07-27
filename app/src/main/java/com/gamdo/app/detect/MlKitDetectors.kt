@@ -98,7 +98,10 @@ class MlKitObjectDetector : ObjectSceneDetector {
 
     private val detector = ObjectDetection.getClient(
         ObjectDetectorOptions.Builder()
-            .setDetectorMode(ObjectDetectorOptions.STREAM_MODE)
+            // Scene tracking/stabilization is owned by StableSceneTracker. A
+            // single-image detector avoids ML Kit's stream-mode warm-up and
+            // tracking state, which was returning an empty list on device.
+            .setDetectorMode(ObjectDetectorOptions.SINGLE_IMAGE_MODE)
             .enableMultipleObjects()
             .enableClassification()
             .build(),
@@ -108,10 +111,10 @@ class MlKitObjectDetector : ObjectSceneDetector {
         val image = frame.image as? InputImage ?: return emptyList()
         val w = frame.width.toFloat().coerceAtLeast(1f)
         val h = frame.height.toFloat().coerceAtLeast(1f)
-        return runCatching { Tasks.await(detector.process(image)) }
+        val detected = runCatching { Tasks.await(detector.process(image)) }
             .onFailure { Log.w(TAG, "object detect failed", it) }
             .getOrDefault(emptyList())
-            .mapNotNull { item ->
+        val observations = detected.mapNotNull { item ->
                 val bounds = item.boundingBox
                 val labels = item.labels.map { it.text }.filter { it.isNotBlank() }
                 // A missing label is not a 0.5-confidence classification. Keep
@@ -119,23 +122,37 @@ class MlKitObjectDetector : ObjectSceneDetector {
                 // segmentation mask without claiming to know the object type.
                 val classificationConfidence = item.labels.maxOfOrNull { it.confidence }
                 val category = SceneRecognitionPolicy.categoryFor(labels)
+                val normalized = NormalizedBox(
+                    (bounds.left / w).coerceIn(0f, 1f),
+                    (bounds.top / h).coerceIn(0f, 1f),
+                    (bounds.right / w).coerceIn(0f, 1f),
+                    (bounds.bottom / h).coerceIn(0f, 1f),
+                )
+                if (!SceneRecognitionPolicy.isValidBox(normalized)) return@mapNotNull null
                 ObjectObservation(
-                    box = NormalizedBox(
-                        bounds.left / w,
-                        bounds.top / h,
-                        bounds.right / w,
-                        bounds.bottom / h,
-                    ),
+                    box = normalized,
                     trackingId = item.trackingId,
                     labels = labels,
                     classificationConfidence = classificationConfidence,
                     category = category,
                 )
             }
+        Log.d(
+            TAG,
+            "objects=${observations.size} raw=${detected.size} " +
+                observations.joinToString(separator = ";") { objectObservation ->
+                    "box=${objectObservation.box.left.formatBox()},${objectObservation.box.top.formatBox()}," +
+                        "${objectObservation.box.right.formatBox()},${objectObservation.box.bottom.formatBox()} " +
+                        "label=${objectObservation.labels.firstOrNull() ?: "unknown"}"
+                },
+        )
+        return observations
     }
 
     override fun close() = detector.close()
 }
+
+private fun Float.formatBox(): String = "%.2f".format(this)
 
 /**
  * ML Kit subject segmentation for people, pets, and general foreground objects.
@@ -154,7 +171,10 @@ class MlKitSubjectSegmenter : SubjectSceneSegmenter {
     override fun detect(frame: AnalysisFrame): SegmentationObservation? {
         val image = frame.image as? InputImage ?: return null
         return runCatching {
-            val result = Tasks.await(segmenter.process(image), 180, TimeUnit.MILLISECONDS)
+            // The first on-device invocation can include Play-services model
+            // initialization. 180ms was shorter than the model startup on the
+            // connected Galaxy device, so every frame was discarded as null.
+            val result = Tasks.await(segmenter.process(image), 1200, TimeUnit.MILLISECONDS)
             val maskBuffer = result.foregroundConfidenceMask ?: return@runCatching null
             val mask = FloatArray(maskBuffer.remaining()).also { values ->
                 maskBuffer.rewind()
