@@ -56,3 +56,4 @@
 
 - CAMP-2 worker와 동일하게 `/etc/gamdo/gamdo.env`의 `LD_LIBRARY_PATH`를 적용해 InsightFace `buffalo_l`을 초기화했다.
 - detection·landmark 2종·genderage·recognition 모델 전부에서 `CUDAExecutionProvider`가 활성 provider로 확인됐다. 환경 파일을 적용하지 않은 단독 점검에서는 `libcublasLt.so.12`를 찾지 못해 CPU로 fallback했으나, 운영 worker 환경에서는 재현되지 않았다.
+- InsightFace 패키지의 비개인 다인 테스트 이미지 `t1.jpg`로 명시적 마스크를 얼굴에서 떨어진 위치에 지정해 FastAPI E2E를 재실행했다. `queued → processing → validating → done`, 후보 2개, 두 후보 모두 `validation=passed`를 확인했다. 이 이미지는 threshold 캘리브레이션 라벨 쌍에는 사용하지 않는다.
