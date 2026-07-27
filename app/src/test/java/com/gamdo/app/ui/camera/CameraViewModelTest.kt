@@ -80,12 +80,12 @@ class CameraViewModelTest {
     }
 
     @Test
-    fun `fixed layout alignment becomes true only after required slot is filled`() {
+    fun `fixed layout does not gate the shutter on slot occupancy`() {
         val viewModel = CameraViewModel(config = bundle, collectDebugSignals = false)
         viewModel.setStyleTarget(StyleTarget(layoutTemplateId = LayoutTemplateCatalog.PORTRAIT_PERSON))
 
         feed(viewModel, personBox(0.32f, 0.25f, 0.68f, 0.85f), confidence = 0.9f)
-        assertFalse(viewModel.lastFrame.value!!.aligned)
+        assertTrue(viewModel.lastFrame.value!!.aligned)
         repeat(2) {
             feed(viewModel, personBox(0.32f, 0.25f, 0.68f, 0.85f), confidence = 0.9f)
         }

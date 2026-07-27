@@ -28,14 +28,16 @@ class SceneAwareFrameProcessorTest {
         }
         val processor = SceneAwareFrameProcessor(SceneDetector(face, pose, objects))
 
-        val result = processor.process(
-            frame = AnalysisFrame(null, 100, 100),
-            styleTarget = StyleTarget(),
-            signals = SceneFrameSignals(
-                rowLuminance = listOf(0.2f, 0.2f, 0.72f, 0.72f),
-                sideEdgeDensity = listOf(0.6f, 0.05f),
-            ),
-        )
+        val result = repeat(3) {
+            processor.process(
+                frame = AnalysisFrame(null, 100, 100),
+                styleTarget = StyleTarget(),
+                signals = SceneFrameSignals(
+                    rowLuminance = listOf(0.2f, 0.2f, 0.72f, 0.72f),
+                    sideEdgeDensity = listOf(0.6f, 0.05f),
+                ),
+            )
+        }.let { processor.process(AnalysisFrame(null, 100, 100), StyleTarget()) }
 
         assertEquals(0.9f, result.observation.subjectConfidence, 0.001f)
         assertFalse(result.proposal.fallback)
