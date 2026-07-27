@@ -7,7 +7,33 @@ import kotlin.math.min
  * Small on-device adapter from a Bitmap to the platform-free diagnostics
  * contract. It intentionally uses a bounded grayscale sample so entering the
  * result screen never scans a full-resolution gallery image on the UI thread.
+ *
+ * ## Do not use this one
+ *
+ * Two extractors with the same name produce [ImageMetrics], and the difference is
+ * not a detail: **this one cannot measure tilt or margins at all.** It returns
+ * `tiltDeg = 0`, `leftMargin = 0`, `rightMargin = 0` and `backlightRatio = null` as
+ * constants, because pixels alone do not carry those facts — tilt is a sensor
+ * reading and the margins need a subject box.
+ *
+ * The result screen used it, so `ProblemDiagnoser`'s TILT, EXCESS_MARGIN and
+ * BACKLIGHT branches evaluated against those constants and could never fire. Half
+ * the diagnosis vocabulary was unreachable by construction and nothing reported it;
+ * a visibly crooked photo simply showed no chip.
+ *
+ * `edit/ImageMetricsExtractor` takes `tiltDeg` and `subject` from
+ * `captures.conditions_json` and measures the rest at 512px, which is the
+ * resolution `DiagnoserConfig.blurVariance` was tuned against — this one samples at
+ * 160, so it silently re-tunes the blur threshold as well.
+ *
+ * Left in place rather than deleted because `detect/` is 담당 B's package, but
+ * raised to an error so the mistake cannot be made a second time.
  */
+@Deprecated(
+    message = "tiltDeg/margins are hardcoded to 0 here; use edit/ImageMetricsExtractor with conditions_json.",
+    replaceWith = ReplaceWith("com.gamdo.app.edit.ImageMetricsExtractor"),
+    level = DeprecationLevel.ERROR,
+)
 object ImageMetricsExtractor {
     fun extract(source: Bitmap, maxSide: Int = 160): ImageMetrics {
         val scale = min(1f, maxSide.toFloat() / maxOf(source.width, source.height).coerceAtLeast(1))

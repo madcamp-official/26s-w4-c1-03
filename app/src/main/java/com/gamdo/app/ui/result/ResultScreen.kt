@@ -49,7 +49,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.local.entity.Captures
-import com.gamdo.app.detect.ImageMetricsExtractor
+import com.gamdo.app.edit.CaptureConditions
+import com.gamdo.app.edit.ImageMetricsExtractor
 import com.gamdo.app.detect.Problem
 import com.gamdo.app.detect.ProblemCode
 import com.gamdo.app.detect.ProblemDiagnoser
@@ -200,12 +201,34 @@ fun ResultScreen(
             }
         }
     }
-    val diagnosedProblems by produceState<List<Problem>>(emptyList(), source) {
-        value = source?.let { bitmap ->
+    // §4-3. Measured through `edit/ImageMetricsExtractor`, not `detect/`'s.
+    //
+    // The `detect` extractor returns tiltDeg = 0 and both margins = 0 as constants —
+    // it has no way to know them from pixels alone — so TILT and EXCESS_MARGIN could
+    // never clear their thresholds, and BACKLIGHT's ratio stayed null. Three of the
+    // six chips were unreachable by construction, and nothing failed to say so.
+    //
+    // The two facts they need come from the shutter, not the file: `tiltDeg` is a
+    // sensor reading and `subject` is where the person was. Both now arrive in
+    // `conditions_json` (§3-3), which is what makes this switch possible at all.
+    // A gallery import has no document and degrades to "no tilt claim, no subject",
+    // which is honest — we did not measure it.
+    val diagnosedProblems by produceState<List<Problem>>(emptyList(), source, capture) {
+        val bitmap = source
+        val conditions = CaptureConditions.parse(capture?.conditionsJson)
+        value = if (bitmap == null) {
+            emptyList()
+        } else {
             withContext(Dispatchers.Default) {
-                ProblemDiagnoser().diagnose(ImageMetricsExtractor.extract(bitmap))
+                ProblemDiagnoser().diagnose(
+                    ImageMetricsExtractor.extract(
+                        bitmap = bitmap,
+                        tiltDeg = conditions.tiltDegOrZero,
+                        subject = conditions.subject,
+                    ),
+                )
             }
-        }.orEmpty()
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize().background(Charcoal900)) {
