@@ -76,6 +76,18 @@ android {
             // The value-dump harness prints the numbers produced from the real
             // assets; without this Gradle swallows test stdout.
             it.testLogging { showStandardStreams = true }
+
+            // Forward -Dgamdo.* to the test JVM. Gradle's own -D lands on the
+            // daemon, not on the forked test process, so without this the preview
+            // harness silently sees null and skips itself — which reads exactly
+            // like a passing build.
+            System.getProperties().forEach { key, value ->
+                val name = key.toString()
+                if (name.startsWith("gamdo.")) it.systemProperty(name, value.toString())
+            }
+            // Same reason: the harness re-renders the same inputs on demand, so
+            // up-to-date checks would make a deliberate re-run do nothing.
+            it.outputs.upToDateWhen { false }
         }
     }
 }
