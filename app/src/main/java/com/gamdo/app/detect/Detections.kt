@@ -41,9 +41,18 @@ data class PoseObservation(
     val averageInFrameLikelihood: Float,
 )
 
+/** A tracked on-device object candidate in normalized upright coordinates. */
+data class ObjectObservation(
+    val box: NormalizedBox,
+    val confidence: Float,
+    val trackingId: Int? = null,
+    val labels: List<String> = emptyList(),
+)
+
 data class DetectionResult(
     val faces: List<FaceObservation>,
     val pose: PoseObservation?,
+    val objects: List<ObjectObservation> = emptyList(),
 )
 
 /**

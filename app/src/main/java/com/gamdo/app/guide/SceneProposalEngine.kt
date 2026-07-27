@@ -1,0 +1,247 @@
+package com.gamdo.app.guide
+
+import com.gamdo.app.detect.NormalizedBox
+import com.gamdo.app.detect.DetectionResult
+import kotlin.math.abs
+
+/** What the camera adapter believes the primary subject is. */
+enum class SubjectKind { PERSON, OBJECT, UNKNOWN }
+
+/** Direction in which the subject is looking or moving, when available. */
+enum class LeadingDirection { NONE, LEFT, RIGHT }
+
+/**
+ * Platform-free scene facts supplied by a detector adapter. All coordinates and
+ * ratios are normalized to 0..1. The adapter may be ML Kit, LiteRT, or a test fake.
+ */
+data class SceneObservation(
+    val subjectBox: NormalizedBox? = null,
+    val subjectKind: SubjectKind = SubjectKind.UNKNOWN,
+    val subjectConfidence: Float = 0f,
+    val horizonPosition: Float? = null,
+    val leadingDirection: LeadingDirection = LeadingDirection.NONE,
+    val openSpaceLeft: Float = 0f,
+    val openSpaceRight: Float = 0f,
+    val openSpaceTop: Float = 0f,
+    val openSpaceBottom: Float = 0f,
+    val dominantLineConfidence: Float = 0f,
+) {
+    fun normalized(): SceneObservation = copy(
+        subjectBox = subjectBox?.clamped(),
+        subjectConfidence = subjectConfidence.coerceIn(0f, 1f),
+        horizonPosition = horizonPosition?.coerceIn(0f, 1f),
+        openSpaceLeft = openSpaceLeft.coerceIn(0f, 1f),
+        openSpaceRight = openSpaceRight.coerceIn(0f, 1f),
+        openSpaceTop = openSpaceTop.coerceIn(0f, 1f),
+        openSpaceBottom = openSpaceBottom.coerceIn(0f, 1f),
+        dominantLineConfidence = dominantLineConfidence.coerceIn(0f, 1f),
+    )
+}
+
+enum class ProposalReason {
+    LEADING_SPACE,
+    OPEN_SPACE_BALANCE,
+    HORIZON_BALANCE,
+    STYLE_DEFAULT,
+    STATIC_FALLBACK,
+}
+
+/** Internal result consumed by the camera guide; confidence/reason are not UI copy. */
+data class CompositionProposal(
+    val target: StyleTarget,
+    val subjectBox: NormalizedBox?,
+    val confidence: Float,
+    val reason: ProposalReason,
+    val fallback: Boolean,
+    val stabilized: Boolean = false,
+    val candidates: List<CompositionCandidate> = emptyList(),
+)
+
+data class CompositionCandidate(
+    val target: StyleTarget,
+    val score: Float,
+    val reason: ProposalReason,
+)
+
+/** Minimal bridge from the detector aggregate to the proposal contract. */
+fun DetectionResult.toSceneObservation(): SceneObservation {
+    val poseBox = pose?.landmarks
+        ?.filter { it.inFrameLikelihood >= 0.3f }
+        ?.let { points ->
+            if (points.isEmpty()) null else NormalizedBox(
+                left = points.minOf { it.x },
+                top = points.minOf { it.y },
+                right = points.maxOf { it.x },
+                bottom = points.maxOf { it.y },
+            )
+        }
+    val personBox = poseBox ?: faces.maxByOrNull { it.box.width * it.box.height }?.box
+    val objectCandidate = objects
+        .filter { it.box.width > 0f && it.box.height > 0f }
+        .maxByOrNull { it.box.width * it.box.height * it.confidence }
+    val subjectBox = personBox ?: objectCandidate?.box
+    val kind = when {
+        personBox != null -> SubjectKind.PERSON
+        objectCandidate != null -> SubjectKind.OBJECT
+        else -> SubjectKind.UNKNOWN
+    }
+    val confidence = when {
+        personBox != null -> pose?.averageInFrameLikelihood ?: faces.maxOfOrNull { it.leftEyeOpenProbability ?: 0f } ?: 0f
+        objectCandidate != null -> objectCandidate.confidence
+        else -> 0f
+    }
+    return SceneObservation(
+        subjectBox = subjectBox,
+        subjectKind = kind,
+        subjectConfidence = confidence,
+    )
+}
+
+/**
+ * Turns scene facts into a useful target instead of returning one fixed rectangle.
+ * The engine deliberately does not render text, arrows, scores, or auto-shutter UI.
+ */
+class SceneProposalEngine(
+    private val minSubjectConfidence: Float = 0.35f,
+    private val movementThreshold: Float = 0.08f,
+) {
+    private var previous: CompositionProposal? = null
+
+    fun propose(
+        observation: SceneObservation,
+        styleTarget: StyleTarget,
+    ): CompositionProposal {
+        val scene = observation.normalized()
+        val subjectUsable = scene.subjectBox != null && scene.subjectConfidence >= minSubjectConfidence
+        if (!subjectUsable) {
+            val fallback = CompositionProposal(
+                target = styleTarget,
+                subjectBox = scene.subjectBox,
+                confidence = scene.subjectConfidence,
+                reason = ProposalReason.STATIC_FALLBACK,
+                fallback = true,
+                candidates = listOf(CompositionCandidate(styleTarget, 0f, ProposalReason.STATIC_FALLBACK)),
+            )
+            previous = fallback
+            return fallback
+        }
+
+        val candidates = buildCandidates(scene, styleTarget)
+        val selected = candidates.maxBy { it.score }
+        val candidate = selected.target
+        val reason = selected.reason
+        val confidence = confidence(scene, reason)
+        val prior = previous
+        if (prior != null && !prior.fallback && targetDistance(prior.target, candidate) <= movementThreshold) {
+            return prior.copy(
+                subjectBox = scene.subjectBox,
+                confidence = confidence,
+                stabilized = true,
+                candidates = candidates,
+            ).also { previous = it }
+        }
+        return CompositionProposal(
+            target = candidate,
+            subjectBox = scene.subjectBox,
+            confidence = confidence,
+            reason = reason,
+            fallback = false,
+            candidates = candidates,
+        ).also { previous = it }
+    }
+
+    fun reset() {
+        previous = null
+    }
+
+    private fun preferredAnchor(scene: SceneObservation, style: StyleTarget): Float {
+        return when {
+            scene.leadingDirection == LeadingDirection.RIGHT -> 1f / 3f
+            scene.leadingDirection == LeadingDirection.LEFT -> 2f / 3f
+            scene.openSpaceRight >= scene.openSpaceLeft + 0.12f -> 1f / 3f
+            scene.openSpaceLeft >= scene.openSpaceRight + 0.12f -> 2f / 3f
+            else -> style.subjectAnchorX
+        }.coerceIn(0.15f, 0.85f)
+    }
+
+    private fun buildCandidates(
+        scene: SceneObservation,
+        style: StyleTarget,
+    ): List<CompositionCandidate> {
+        val anchors = listOf(1f / 3f, style.subjectAnchorX, 2f / 3f).distinct()
+        return anchors.map { anchor ->
+            val horizon = if (scene.dominantLineConfidence >= 0.35f) {
+                preferredHorizon(scene, style)
+            } else {
+                style.horizonPosition
+            }
+            val target = style.copy(subjectAnchorX = anchor, horizonPosition = horizon)
+            CompositionCandidate(
+                target = target,
+                score = candidateScore(scene, style, anchor, horizon),
+                reason = reasonFor(scene, anchor, style),
+            )
+        }.sortedByDescending { it.score }
+    }
+
+    private fun candidateScore(
+        scene: SceneObservation,
+        style: StyleTarget,
+        anchor: Float,
+        horizon: Float,
+    ): Float {
+        val styleAffinity = (1f - abs(anchor - style.subjectAnchorX)).coerceIn(0f, 1f)
+        val openSpaceAffinity = when {
+            scene.leadingDirection == LeadingDirection.RIGHT -> (1f - anchor).coerceIn(0f, 1f)
+            scene.leadingDirection == LeadingDirection.LEFT -> anchor
+            scene.openSpaceRight > scene.openSpaceLeft -> (1f - anchor).coerceIn(0f, 1f)
+            scene.openSpaceLeft > scene.openSpaceRight -> anchor
+            else -> 0.5f
+        }
+        val horizonAffinity = scene.horizonPosition?.let {
+            (1f - abs(it - horizon) / 0.5f).coerceIn(0f, 1f)
+        } ?: 0.5f
+        return (styleAffinity * 0.35f + openSpaceAffinity * 0.45f + horizonAffinity * 0.20f)
+            .coerceIn(0f, 1f)
+    }
+
+    private fun preferredHorizon(scene: SceneObservation, style: StyleTarget): Float {
+        val detected = scene.horizonPosition ?: return style.horizonPosition
+        if (scene.dominantLineConfidence < 0.35f) return style.horizonPosition
+        return when {
+            detected < 0.42f -> 1f / 3f
+            detected > 0.58f -> 2f / 3f
+            else -> style.horizonPosition
+        }
+    }
+
+    private fun reasonFor(scene: SceneObservation, anchor: Float, style: StyleTarget): ProposalReason = when {
+        scene.leadingDirection != LeadingDirection.NONE -> ProposalReason.LEADING_SPACE
+        abs(scene.openSpaceRight - scene.openSpaceLeft) >= 0.12f -> ProposalReason.OPEN_SPACE_BALANCE
+        scene.horizonPosition != null && scene.dominantLineConfidence >= 0.35f -> ProposalReason.HORIZON_BALANCE
+        abs(anchor - style.subjectAnchorX) < 0.01f -> ProposalReason.STYLE_DEFAULT
+        else -> ProposalReason.OPEN_SPACE_BALANCE
+    }
+
+    private fun confidence(scene: SceneObservation, reason: ProposalReason): Float {
+        val structure = when (reason) {
+            ProposalReason.LEADING_SPACE -> 0.85f
+            ProposalReason.OPEN_SPACE_BALANCE -> 0.75f
+            ProposalReason.HORIZON_BALANCE -> 0.7f
+            ProposalReason.STYLE_DEFAULT -> 0.55f
+            ProposalReason.STATIC_FALLBACK -> 0.2f
+        }
+        return (scene.subjectConfidence * 0.6f + structure * 0.25f +
+            scene.dominantLineConfidence * 0.15f).coerceIn(0f, 1f)
+    }
+
+    private fun targetDistance(a: StyleTarget, b: StyleTarget): Float =
+        abs(a.subjectAnchorX - b.subjectAnchorX) + abs(a.horizonPosition - b.horizonPosition)
+}
+
+private fun NormalizedBox.clamped(): NormalizedBox = NormalizedBox(
+    left = left.coerceIn(0f, 1f),
+    top = top.coerceIn(0f, 1f),
+    right = right.coerceIn(left.coerceIn(0f, 1f), 1f),
+    bottom = bottom.coerceIn(top.coerceIn(0f, 1f), 1f),
+)

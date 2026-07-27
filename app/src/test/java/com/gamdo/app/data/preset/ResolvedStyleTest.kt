@@ -2,6 +2,7 @@ package com.gamdo.app.data.preset
 
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -16,7 +17,7 @@ class ResolvedStyleTest {
                 put("subjectPosition", "third_left")
                 put("horizonPosition", 0.42)
                 put("subjectScaleRange", kotlinx.serialization.json.buildJsonArray {
-                    add(0.2); add(0.5)
+                    add(JsonPrimitive(0.2)); add(JsonPrimitive(0.5))
                 })
             },
             colorTarget = buildJsonObject {
