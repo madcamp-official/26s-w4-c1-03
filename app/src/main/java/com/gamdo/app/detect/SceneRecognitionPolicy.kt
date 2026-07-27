@@ -18,31 +18,33 @@ object SceneRecognitionPolicy {
         }
     }
 
+
+    fun isValidBox(box: NormalizedBox): Boolean =
+        box.left in 0f..1f && box.top in 0f..1f &&
+            box.right in 0f..1f && box.bottom in 0f..1f &&
+            box.right > box.left && box.bottom > box.top &&
+            (box.width * box.height) in 0.01f..0.85f
+
+    fun isSemanticMatch(category: GuideObjectCategory, classificationConfidence: Float?): Boolean =
+        category != GuideObjectCategory.UNKNOWN && (classificationConfidence ?: 0f) >= 0.65f
+
+    @Deprecated("Use isValidBox for generic layouts and isSemanticMatch for specialization.")
     fun isGuideEligible(
         category: GuideObjectCategory,
         detectionConfidence: Float,
         mask: SegmentationObservation?,
-    ): Boolean {
-        val area = mask?.areaRatio ?: return false
-        return category != GuideObjectCategory.UNKNOWN &&
-            detectionConfidence >= 0.65f &&
-            mask.confidence >= 0.60f &&
-            area in 0.01f..0.85f &&
-            mask.outline.size >= 3
-    }
+    ): Boolean = category != GuideObjectCategory.UNKNOWN &&
+        detectionConfidence >= 0.65f &&
+        mask?.let { it.confidence >= 0.60f && it.areaRatio in 0.01f..0.85f && it.outline.size >= 3 } == true
 }
 
-/** Requires 3 of the last 5 observations to identify the same subject. */
+/** Source-compatible shim for old JVM tests; never used by the product pipeline. */
+@Deprecated("Use StableSceneTracker")
 class GuideCandidateStabilizer(
     private val windowSize: Int = 5,
     private val confirmationsRequired: Int = 3,
     private val maxCenterDistance: Float = 0.16f,
 ) {
-    init {
-        require(windowSize >= 1)
-        require(confirmationsRequired in 1..windowSize)
-    }
-
     private val history = ArrayDeque<ObjectObservation>()
 
     fun accept(candidate: ObjectObservation?): ObjectObservation? {

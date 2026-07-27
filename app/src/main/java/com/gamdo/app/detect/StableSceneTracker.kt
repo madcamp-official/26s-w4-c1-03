@@ -1,0 +1,105 @@
+package com.gamdo.app.detect
+
+import kotlin.math.hypot
+
+/**
+ * Multi-object confirmation for the camera guide. Only fresh detector batches
+ * advance confirmation history; cached detector output cannot manufacture a
+ * 3-of-5 confirmation.
+ */
+class StableSceneTracker(
+    private val windowSize: Int = 5,
+    private val confirmationsRequired: Int = 3,
+    private val maxObjects: Int = 4,
+    private val minimumIoU: Float = 0.30f,
+    private val maxCenterDistance: Float = 0.16f,
+) {
+    private data class Track(
+        val key: String,
+        var latest: ObjectObservation,
+        val history: ArrayDeque<Boolean> = ArrayDeque(),
+        var lastSequence: Long = 0L,
+    )
+
+    private val tracks = linkedMapOf<String, Track>()
+    private var lastStable: List<ObjectObservation> = emptyList()
+
+    init {
+        require(windowSize >= 1)
+        require(confirmationsRequired in 1..windowSize)
+        require(maxObjects >= 1)
+    }
+
+    fun accept(batch: ObjectDetectionBatch): List<ObjectObservation> {
+        if (!batch.isFresh) return lastStable
+
+        val candidates = batch.objects.filter { SceneRecognitionPolicy.isValidBox(it.box) }
+        val matchedKeys = mutableSetOf<String>()
+        candidates.forEachIndexed { index, candidate ->
+            val track = tracks.values
+                .filter { it.key !in matchedKeys }
+                .minByOrNull { distance(it.latest, candidate) }
+                ?.takeIf { sameSubject(it.latest, candidate) }
+            val key = track?.key ?: candidate.trackingId?.let { "track:$it" } ?: "candidate:$index:${batch.sequenceId}"
+            val target = track ?: Track(key = key, latest = candidate)
+            target.latest = candidate
+            target.lastSequence = batch.sequenceId
+            target.history.addLast(true)
+            while (target.history.size > windowSize) target.history.removeFirst()
+            tracks[key] = target
+            matchedKeys += key
+        }
+
+        tracks.values
+            .filter { it.key !in matchedKeys && it.lastSequence != batch.sequenceId }
+            .forEach { track ->
+                track.history.addLast(false)
+                while (track.history.size > windowSize) track.history.removeFirst()
+            }
+
+        val stable = tracks.values
+            .filter { it.history.count { present -> present } >= confirmationsRequired }
+            .map { it.latest }
+            .sortedWith(compareByDescending<ObjectObservation> { rankingScore(it) })
+            .take(maxObjects)
+        lastStable = stable
+        return stable
+    }
+
+    fun reset() {
+        tracks.clear()
+        lastStable = emptyList()
+    }
+
+    private fun rankingScore(objectObservation: ObjectObservation): Float {
+        val area = (objectObservation.box.width * objectObservation.box.height).coerceIn(0f, 1f)
+        val centerDistance = hypot(
+            objectObservation.box.centerX - 0.5f,
+            objectObservation.box.centerY - 0.5f,
+        ).coerceIn(0f, 0.7072f) / 0.7072f
+        return area * 0.7f + (1f - centerDistance) * 0.3f
+    }
+
+    private fun sameSubject(a: ObjectObservation, b: ObjectObservation): Boolean =
+        if (a.trackingId != null && b.trackingId != null) {
+            a.trackingId == b.trackingId
+        } else {
+            intersectionOverUnion(a.box, b.box) >= minimumIoU ||
+                distance(a, b) <= maxCenterDistance
+        }
+
+    private fun distance(a: ObjectObservation, b: ObjectObservation): Float = hypot(
+        a.box.centerX - b.box.centerX,
+        a.box.centerY - b.box.centerY,
+    )
+
+    private fun intersectionOverUnion(a: NormalizedBox, b: NormalizedBox): Float {
+        val left = maxOf(a.left, b.left)
+        val top = maxOf(a.top, b.top)
+        val right = minOf(a.right, b.right)
+        val bottom = minOf(a.bottom, b.bottom)
+        val intersection = ((right - left).coerceAtLeast(0f) * (bottom - top).coerceAtLeast(0f))
+        val union = a.width * a.height + b.width * b.height - intersection
+        return if (union <= 0f) 0f else intersection / union
+    }
+}
