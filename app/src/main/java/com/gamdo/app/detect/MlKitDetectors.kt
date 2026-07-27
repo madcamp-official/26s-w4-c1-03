@@ -114,7 +114,11 @@ class MlKitObjectDetector : ObjectSceneDetector {
             .mapNotNull { item ->
                 val bounds = item.boundingBox
                 val labels = item.labels.map { it.text }.filter { it.isNotBlank() }
-                val confidence = item.labels.maxOfOrNull { it.confidence } ?: 0.5f
+                // A missing label is not a 0.5-confidence classification. Keep
+                // it as an unclassified box so the scene guide can use a valid
+                // segmentation mask without claiming to know the object type.
+                val classificationConfidence = item.labels.maxOfOrNull { it.confidence }
+                val confidence = classificationConfidence ?: 0f
                 ObjectObservation(
                     box = NormalizedBox(
                         bounds.left / w,
@@ -125,6 +129,7 @@ class MlKitObjectDetector : ObjectSceneDetector {
                     confidence = confidence.coerceIn(0f, 1f),
                     trackingId = item.trackingId,
                     labels = labels,
+                    classificationConfidence = classificationConfidence,
                 )
             }
     }

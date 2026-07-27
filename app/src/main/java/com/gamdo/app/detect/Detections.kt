@@ -47,6 +47,7 @@ data class ObjectObservation(
     val confidence: Float,
     val trackingId: Int? = null,
     val labels: List<String> = emptyList(),
+    val classificationConfidence: Float? = null,
 )
 
 data class SegmentationPoint(val x: Float, val y: Float)

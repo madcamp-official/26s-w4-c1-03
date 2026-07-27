@@ -245,7 +245,17 @@ class CameraViewModel(
         val faces = detection.faces.size
         val pose = detection.pose?.landmarks?.size ?: 0
         val objects = detection.objects.size
-        return "얼굴 $faces · 포즈 $pose · 물체 $objects"
+        val objectDetails = detection.objects
+            .take(2)
+            .joinToString(",") { objectObservation ->
+                val label = objectObservation.labels.firstOrNull() ?: "unknown"
+                val confidence = objectObservation.classificationConfidence
+                    ?.let { "%.2f".format(it) } ?: "-"
+                "$label:$confidence"
+            }
+            .ifBlank { "none" }
+        val segmentation = if (detection.segmentation != null) "on" else "off"
+        return "얼굴 $faces · 포즈 $pose · 물체 $objects[$objectDetails] · seg=$segmentation"
     }
 
     /**
