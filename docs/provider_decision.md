@@ -51,3 +51,8 @@
 - 워커는 검증 탈락 후보를 즉시 삭제하고, 후보 경로가 입력 원본을 가리키는 경우 `candidate_aliases_input`으로 거부하도록 보강했다. 원본 파일은 삭제하지 않는다.
 - 캘리브레이션 도구는 이제 얼굴이 실제로 검출된 측정 쌍이 5개 미만이거나 `sameIdentity` 라벨이 빠지면 실패한다. 카드 에셋·앱 화면 캡처·합성 이미지는 임계값 산출에 사용하지 않는다.
 - 캘리브레이션은 같은 사람 2쌍 이상과 다른 사람 2쌍 이상을 모두 요구하며, `GAMDO_FACE_SIMILARITY_THRESHOLD`가 `0~1` 범위를 벗어나거나 `NaN`·무한대·비숫자이면 운영 기본값 `0.35`로 되돌린다. 실제 사진 전에는 기본값을 변경하지 않는다.
+
+## 2026-07-27 — InsightFace CUDA provider 재검증
+
+- CAMP-2 worker와 동일하게 `/etc/gamdo/gamdo.env`의 `LD_LIBRARY_PATH`를 적용해 InsightFace `buffalo_l`을 초기화했다.
+- detection·landmark 2종·genderage·recognition 모델 전부에서 `CUDAExecutionProvider`가 활성 provider로 확인됐다. 환경 파일을 적용하지 않은 단독 점검에서는 `libcublasLt.so.12`를 찾지 못해 CPU로 fallback했으나, 운영 worker 환경에서는 재현되지 않았다.
