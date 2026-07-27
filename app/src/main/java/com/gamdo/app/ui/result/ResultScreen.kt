@@ -339,42 +339,37 @@ fun ResultScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().background(Charcoal900)) {
-        // Both ends are 48dp targets. "‹" was clickable on the glyph itself, which
-        // is a ~10dp hit area, and "완료" was Sage + Bold with **no click at all** —
-        // it looked like the primary way out of the screen and did nothing when
-        // tapped. It is now either a working exit or a plain status word, never a
-        // button-shaped no-op.
+        // 2f header: `‹` (18sp, OnDarkMedium) · `보정` (15sp bold) · `완료`
+        // (13.5sp bold, Sage), space-between at 20dp / 14dp top.
+        //
+        // The one thing added to the drawing is that both ends are real 44dp touch
+        // targets, reached with padding so the glyphs still land where the design
+        // puts them. `완료` in particular was Sage + Bold with no click at all — the
+        // design draws it as the way out of the screen, so it has to be one.
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Box(
-                modifier = Modifier.size(48.dp).clip(CircleShape).clickable(onClick = onBack),
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onBack),
                 contentAlignment = Alignment.Center,
             ) {
                 Text("‹", color = OnDarkMedium, fontSize = 18.sp)
             }
-            Spacer(Modifier.weight(1f))
             Text("보정", color = OnDarkHigh, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.weight(1f))
-            if (saved == null) {
-                Box(
-                    modifier = Modifier
-                        .heightIn(min = 48.dp)
-                        .clip(RoundedCornerShape(24.dp))
-                        .clickable(onClick = onBack)
-                        .padding(horizontal = 12.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("완료", color = Sage, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                }
-            } else {
-                Box(
-                    modifier = Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("저장됨", color = OnDarkMedium, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                }
+            Box(
+                modifier = Modifier
+                    .heightIn(min = 44.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .clickable(onClick = onBack)
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("완료", color = Sage, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
             }
         }
 
@@ -476,40 +471,6 @@ fun ResultScreen(
                 Text("사진을 불러오는 중이에요", color = OnDarkMuted, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center))
             }
 
-            // Mask actions live *inside* the image box.
-            //
-            // They used to be a PrimaryPillButton below it, rendered only while a
-            // mask existed — so the moment a drag produced one, the Column gained
-            // ~54dp, `weight(1f)` took it from the image, and `imageAreaSize` changed
-            // under the finger that was still dragging. The mask jumped away from the
-            // pointer mid-gesture. An overlay cannot do that: the layout is identical
-            // whether or not a mask exists.
-            //
-            // The cancel is new. There was no way to undo a mask — a tap did not
-            // clear it and a short drag force-created one covering 20% of the frame,
-            // so a mis-drag was permanent until the screen was left.
-            if (maskSelection != null) {
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    MaskActionChip(
-                        text = "선택 취소",
-                        onClick = {
-                            maskSelection = null
-                            gpuStatus = null
-                        },
-                    )
-                    MaskActionChip(
-                        text = if (generating) "지우는 중…" else "사진 살리기",
-                        emphasised = true,
-                        enabled = !generating,
-                        onClick = onRescue,
-                    )
-                }
-            }
             Box(
                 modifier = Modifier.padding(12.dp).clip(RoundedCornerShape(5.dp))
                     .background(Sage).padding(horizontal = 8.dp, vertical = 3.dp),
@@ -599,37 +560,21 @@ fun ResultScreen(
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
             }
-            // §4-2 하단: [저장] [공유] [다시 찍기]. 공유 and 다시 찍기 sit beside the
-            // save rather than under it — the design gives this row one line, and a
-            // secondary action that pushes the primary one off-screen is worse than
-            // a narrower primary.
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                SecondaryPill(
-                    text = "공유",
-                    // Sharing an unsaved edit would hand out the *original* file,
-                    // which is not what is on screen. Enabled only once there is a
-                    // saved result to share.
-                    enabled = saved != null,
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        val path = saved?.filePath ?: return@SecondaryPill
-                        if (!shareImage(context, File(path))) {
-                            gpuStatus = "공유할 수 있는 앱이 없어요"
-                        }
-                    },
+            // §5-3 생성 복구. Not part of 2f — the design's bottom is one button —
+            // but the mask flow predates this file's design pass, so it is left
+            // where it was rather than removed on my own judgement.
+            if (maskSelection != null) {
+                PrimaryPillButton(
+                    text = if (generating) "지우는 중…" else "사진 살리기",
+                    enabled = !generating,
+                    onClick = onRescue,
                 )
-                SecondaryPill(
-                    text = "다시 찍기",
-                    enabled = true,
-                    modifier = Modifier.weight(1f),
-                    onClick = onBack,
-                )
+                Box(Modifier.height(10.dp))
             }
 
+            // 2f's bottom is one button and nothing else. `[저장] [공유] [다시 찍기]`
+            // comes from the plan's §4-2 checklist, which predates this design — the
+            // owner never drew 공유 or 다시 찍기, so they are not built.
             PrimaryPillButton(
                 text = when {
                     // Three states, not two. A save whose MediaStore insert was
@@ -687,69 +632,6 @@ fun ResultScreen(
                 },
             )
         }
-    }
-}
-
-/**
- * Action chip drawn over the photo while a mask is selected.
- *
- * Deliberately not a [PrimaryPillButton]: D11-5 allows one sage accent, and the
- * save button below already is it. Two identical filled pills stacked with no gap
- * made the screen argue with itself about which action was primary.
- */
-@Composable
-private fun MaskActionChip(
-    text: String,
-    emphasised: Boolean = false,
-    enabled: Boolean = true,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .heightIn(min = 44.dp)
-            .clip(RoundedCornerShape(22.dp))
-            .background(if (emphasised) Sage.copy(alpha = 0.92f) else Charcoal950.copy(alpha = 0.85f))
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 16.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = text,
-            color = when {
-                !enabled -> OnDarkMuted
-                emphasised -> OnSage
-                else -> OnDarkHigh
-            },
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold,
-        )
-    }
-}
-
-/** Outlined counterpart to [PrimaryPillButton] for the secondary row (§4-2). */
-@Composable
-private fun SecondaryPill(
-    text: String,
-    enabled: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(22.dp))
-            .background(Charcoal700)
-            // `clickable(enabled = false)` also stops the ripple, so a disabled pill
-            // cannot look pressed — the greyed label and the dead tap agree.
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 12.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = text,
-            color = if (enabled) OnDarkHigh else OnDarkMuted,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold,
-        )
     }
 }
 

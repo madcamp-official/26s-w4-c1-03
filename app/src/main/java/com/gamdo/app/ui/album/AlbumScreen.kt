@@ -92,49 +92,44 @@ fun AlbumScreen(
             .fillMaxSize()
             .background(Charcoal900),
     ) {
-        // Touch targets, not glyphs. `clickable` on the Text alone gave "‹" and
-        // "가져오기" hit areas the size of their own type — well under the 48dp
-        // minimum — so both were easy to miss and neither showed a press. The
-        // spacer also pushes 가져오기 to the far edge: at spacedBy(12.dp) it sat
-        // against the title and read as a subtitle rather than an action.
+        // 2e header: `‹ 앨범`, gap 12dp, 16dp/20dp. The back glyph gets a 44dp touch
+        // target through padding rather than a larger box, so it still sits where
+        // the design puts it.
+        //
+        // 가져오기 is not in 2e. It is §4-3's rescue entry point and predates this
+        // design pass, so it stays — but as a quiet third item on the same row
+        // rather than the right-aligned action I had made of it.
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp).padding(top = 8.dp),
+            modifier = Modifier.padding(start = 8.dp, end = 20.dp, top = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Box(
                 modifier = Modifier
-                    .size(48.dp)
+                    .size(44.dp)
                     .clip(CircleShape)
                     .clickable(onClick = onBack),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(text = "‹", color = OnDarkMedium, fontSize = 22.sp)
+                Text(text = "‹", color = OnDarkMedium, fontSize = 18.sp)
             }
-            Text(
-                text = "앨범",
-                color = OnDarkHigh,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.ExtraBold,
-                modifier = Modifier.padding(start = 4.dp),
-            )
-            Spacer(modifier = Modifier.weight(1f))
+            Text(text = "앨범", color = OnDarkHigh, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
             Box(
                 modifier = Modifier
-                    .heightIn(min = 48.dp)
-                    .clip(RoundedCornerShape(24.dp))
+                    .heightIn(min = 44.dp)
+                    .clip(RoundedCornerShape(22.dp))
                     .clickable(enabled = !importing) {
                         picker.launch(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                         )
                     }
-                    .padding(horizontal = 14.dp),
+                    .padding(horizontal = 8.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = if (importing) "가져오는 중…" else "가져오기",
                     color = if (importing) OnDarkMuted else OnDarkMedium,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp,
                 )
             }
         }
