@@ -41,6 +41,7 @@ class SceneLayoutGuideTest {
             subjectBox = NormalizedBox(0.1f, 0.2f, 0.4f, 0.7f),
             subjectKind = SubjectKind.PERSON,
             subjectConfidence = 0.9f,
+            hasReliableOutline = true,
             subjectOutline = listOf(
                 LayoutGuidePoint(0.22f, 0.2f),
                 LayoutGuidePoint(0.1f, 0.5f),

@@ -23,7 +23,10 @@ class SceneAwareFrameProcessor(
         return coordinator.update(detection, styleTarget, signals)
     }
 
-    fun reset() = coordinator.reset()
+    fun reset() {
+        detector.reset()
+        coordinator.reset()
+    }
 
     fun close() = detector.close()
 }

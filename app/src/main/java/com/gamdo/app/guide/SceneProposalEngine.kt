@@ -27,6 +27,7 @@ data class SceneObservation(
     val dominantLineConfidence: Float = 0f,
     val subjectOutline: List<LayoutGuidePoint> = emptyList(),
     val subjectLabels: List<String> = emptyList(),
+    val hasReliableOutline: Boolean = false,
 ) {
     fun normalized(): SceneObservation = copy(
         subjectBox = subjectBox?.clamped(),
@@ -41,6 +42,7 @@ data class SceneObservation(
             LayoutGuidePoint(it.x.coerceIn(0f, 1f), it.y.coerceIn(0f, 1f))
         },
         subjectLabels = subjectLabels.filter { it.isNotBlank() },
+        hasReliableOutline = hasReliableOutline || subjectOutline.size >= 3,
     )
 }
 
@@ -110,6 +112,11 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
             ?.map { LayoutGuidePoint(it.x, it.y) }
             .orEmpty(),
         subjectLabels = objectCandidate?.labels.orEmpty(),
+        hasReliableOutline = when {
+            segmented?.outline?.size ?: 0 >= 3 -> true
+            personBox != null -> (pose?.landmarks?.count { it.inFrameLikelihood >= 0.3f } ?: 0) >= 3
+            else -> objectCandidate?.isGuideEligible == true && objectCandidate.mask != null
+        },
     )
 }
 

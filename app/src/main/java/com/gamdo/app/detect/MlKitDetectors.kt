@@ -119,6 +119,7 @@ class MlKitObjectDetector : ObjectSceneDetector {
                 // segmentation mask without claiming to know the object type.
                 val classificationConfidence = item.labels.maxOfOrNull { it.confidence }
                 val confidence = classificationConfidence ?: 0f
+                val category = SceneRecognitionPolicy.categoryFor(labels)
                 ObjectObservation(
                     box = NormalizedBox(
                         bounds.left / w,
@@ -130,6 +131,7 @@ class MlKitObjectDetector : ObjectSceneDetector {
                     trackingId = item.trackingId,
                     labels = labels,
                     classificationConfidence = classificationConfidence,
+                    category = category,
                 )
             }
     }

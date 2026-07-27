@@ -48,7 +48,19 @@ data class ObjectObservation(
     val trackingId: Int? = null,
     val labels: List<String> = emptyList(),
     val classificationConfidence: Float? = null,
+    val category: GuideObjectCategory = GuideObjectCategory.UNKNOWN,
+    val mask: SegmentationObservation? = null,
+    val isGuideEligible: Boolean = false,
 )
+
+/** The intentionally small vocabulary for reliable GAMDO composition guides. */
+enum class GuideObjectCategory {
+    DRINKWARE,
+    BAG,
+    PLANT,
+    FOOD_TABLEWARE,
+    UNKNOWN,
+}
 
 data class SegmentationPoint(val x: Float, val y: Float)
 
