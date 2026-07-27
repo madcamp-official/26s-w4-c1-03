@@ -36,48 +36,71 @@ data class LocalEditParams(
     val contrast: Float = 0f,
 )
 
-enum class LocalFilter(
-    val label: String,
-    val params: LocalEditParams,
-) {
-    ORIGINAL("원본", LocalEditParams()),
-    MY_STYLE("내 감도", LocalEditParams(brightness = 0.06f, warmth = 0.08f, contrast = 0.04f)),
-    CAFE("따뜻한 카페", LocalEditParams(brightness = 0.04f, warmth = 0.16f, contrast = -0.02f)),
-    BRIGHT_REVIEW("밝은 리뷰", LocalEditParams(brightness = 0.12f, warmth = 0.02f, contrast = 0.08f)),
-    SOFT_FILM("소프트 필름", LocalEditParams(brightness = 0.02f, warmth = 0.1f, contrast = -0.08f)),
-    NIGHT_STREET("야간 거리", LocalEditParams(brightness = -0.04f, warmth = -0.08f, contrast = 0.16f)),
+/**
+ * The picker's entries, one per style in `presets.json` plus 원본.
+ *
+ * Each is a thin handle on a [PhotoFilter], which is where the actual numbers
+ * live. The enum used to carry the numbers itself, as
+ * `LocalEditParams(brightness = 0.06f, warmth = 0.08f, contrast = 0.04f)` — three
+ * values against multipliers of 255, 22 and 1, which worked out to **under two
+ * levels of change out of 255**. Every entry was in that range, so the picker
+ * offered six choices that produced one picture. See [PhotoFilter].
+ *
+ * Two entries are new: `clean_social` and `casual_portrait` had no filter at all
+ * and both fell through to 내 감도 in `ResultScreen`, so choosing either of those
+ * styles in the camera and then opening the editor silently gave you a third
+ * style's look.
+ */
+enum class LocalFilter(val filter: PhotoFilter) {
+    ORIGINAL(PhotoFilters.ORIGINAL),
+    CLEAN_SOCIAL(PhotoFilters.CLEAN_SOCIAL),
+    CANDID_FEED(PhotoFilters.CANDID_FEED),
+    BRIGHT_REVIEW(PhotoFilters.BRIGHT_REVIEW),
+    SOFT_FILM(PhotoFilters.SOFT_FILM),
+    CASUAL_PORTRAIT(PhotoFilters.CASUAL_PORTRAIT),
+    NIGHT_STREET(PhotoFilters.NIGHT_STREET);
+
+    val label: String get() = filter.label
+
+    companion object {
+        /** Maps a `presets.json` style id onto its filter. */
+        fun forPresetId(id: String?): LocalFilter =
+            entries.firstOrNull { it.filter.id == id } ?: ORIGINAL
+    }
 }
 
 /**
- * Small deterministic bitmap editor for the offline-first Day 4 flow.
- * The input bitmap is never mutated; callers own the returned bitmap.
+ * Android shim over [FilterEngine]: unpack, render, repack.
+ *
+ * Everything that decides what the pixels become is in [FilterEngine], which has
+ * no Android imports and is therefore covered by JVM tests. This function is the
+ * part that cannot be — and it is deliberately nothing but two array copies, so
+ * there is nothing here for a test to have caught.
+ *
+ * The input bitmap is never mutated; callers own the returned bitmap (D8-6).
  */
 object QuickFilterEditor {
-    fun apply(source: Bitmap, filter: LocalFilter, adjustments: LocalEditParams): Bitmap {
-        val preset = filter.params
-        val brightness = (preset.brightness + adjustments.brightness).coerceIn(-1f, 1f)
-        val warmth = (preset.warmth + adjustments.warmth).coerceIn(-1f, 1f)
-        val contrast = (preset.contrast + adjustments.contrast).coerceIn(-1f, 1f)
+    /** Luminance statistics for [FilterEngine.seedFrom]. One pass, no allocation beyond the buffer. */
+    fun measure(source: Bitmap): FilterEngine.Measure {
         val pixels = IntArray(source.width * source.height)
         source.getPixels(pixels, 0, source.width, 0, 0, source.width, source.height)
-        val contrastFactor = 1f + contrast
-        val brightnessOffset = brightness * 255f
-        for (index in pixels.indices) {
-            val color = pixels[index]
-            var red = ((color shr 16) and 0xff).toFloat()
-            var green = ((color shr 8) and 0xff).toFloat()
-            var blue = (color and 0xff).toFloat()
-            red += brightnessOffset + warmth * 22f
-            green += brightnessOffset + warmth * 5f
-            blue += brightnessOffset - warmth * 18f
-            red = (red - 128f) * contrastFactor + 128f
-            green = (green - 128f) * contrastFactor + 128f
-            blue = (blue - 128f) * contrastFactor + 128f
-            pixels[index] = (color and -0x1000000) or
-                (red.roundToInt().coerceIn(0, 255) shl 16) or
-                (green.roundToInt().coerceIn(0, 255) shl 8) or
-                blue.roundToInt().coerceIn(0, 255)
-        }
+        return FilterEngine.measure(pixels)
+    }
+
+    fun apply(
+        source: Bitmap,
+        filter: LocalFilter,
+        adjustments: FilterEngine.Adjustments = FilterEngine.Adjustments.NEUTRAL,
+    ): Bitmap {
+        val pixels = IntArray(source.width * source.height)
+        source.getPixels(pixels, 0, source.width, 0, 0, source.width, source.height)
+        FilterEngine.apply(
+            pixels = pixels,
+            width = source.width,
+            height = source.height,
+            filter = filter.filter,
+            adjustments = adjustments,
+        )
         return Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888).also {
             it.setPixels(pixels, 0, source.width, 0, 0, source.width, source.height)
         }
