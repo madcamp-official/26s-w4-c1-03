@@ -49,10 +49,21 @@ data class ObjectObservation(
     val labels: List<String> = emptyList(),
 )
 
+data class SegmentationPoint(val x: Float, val y: Float)
+
+/** Reduced foreground mask used by the scene guide; the full pixel mask is not retained. */
+data class SegmentationObservation(
+    val outline: List<SegmentationPoint>,
+    val bounds: NormalizedBox,
+    val confidence: Float,
+    val areaRatio: Float,
+)
+
 data class DetectionResult(
     val faces: List<FaceObservation>,
     val pose: PoseObservation?,
     val objects: List<ObjectObservation> = emptyList(),
+    val segmentation: SegmentationObservation? = null,
 )
 
 /**

@@ -9,6 +9,9 @@ import com.google.mlkit.vision.pose.PoseDetection
 import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions
 import com.google.mlkit.vision.objects.ObjectDetection
 import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
+import com.google.mlkit.vision.segmentation.subject.SubjectSegmentation
+import com.google.mlkit.vision.segmentation.subject.SubjectSegmenterOptions
+import java.util.concurrent.TimeUnit
 
 private const val TAG = "MlKitDetectors"
 
@@ -127,4 +130,36 @@ class MlKitObjectDetector : ObjectSceneDetector {
     }
 
     override fun close() = detector.close()
+}
+
+/**
+ * ML Kit subject segmentation for people, pets, and general foreground objects.
+ * The model is unbundled; a failed or still-downloading model returns null so
+ * the existing object detector remains the safe guide fallback.
+ */
+class MlKitSubjectSegmenter : SubjectSceneSegmenter {
+
+    private val reducer = SegmentationMaskReducer()
+    private val segmenter = SubjectSegmentation.getClient(
+        SubjectSegmenterOptions.Builder()
+            .enableForegroundConfidenceMask()
+            .build(),
+    )
+
+    override fun detect(frame: AnalysisFrame): SegmentationObservation? {
+        val image = frame.image as? InputImage ?: return null
+        return runCatching {
+            val result = Tasks.await(segmenter.process(image), 180, TimeUnit.MILLISECONDS)
+            val maskBuffer = result.foregroundConfidenceMask ?: return@runCatching null
+            val mask = FloatArray(maskBuffer.remaining()).also { values ->
+                maskBuffer.rewind()
+                maskBuffer.get(values)
+            }
+            reducer.reduce(mask, frame.width, frame.height)
+        }
+            .onFailure { Log.w(TAG, "subject segmentation unavailable", it) }
+            .getOrNull()
+    }
+
+    override fun close() = segmenter.close()
 }

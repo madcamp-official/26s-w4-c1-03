@@ -81,6 +81,8 @@ import com.gamdo.app.detect.MlKitFaceDetector
 import com.gamdo.app.detect.MlKitPoseDetector
 import com.gamdo.app.detect.MlKitObjectDetector
 import com.gamdo.app.detect.ThrottledObjectSceneDetector
+import com.gamdo.app.detect.MlKitSubjectSegmenter
+import com.gamdo.app.detect.ThrottledSubjectSceneSegmenter
 import com.gamdo.app.guide.toSceneObservation
 import com.gamdo.app.detect.SceneDetector
 import com.gamdo.app.detect.toAnalysisFrame
@@ -156,6 +158,7 @@ fun CameraScreen(
             faceDetector = MlKitFaceDetector(),
             poseDetector = MlKitPoseDetector(),
             objectDetector = ThrottledObjectSceneDetector(MlKitObjectDetector()),
+            subjectSegmenter = ThrottledSubjectSceneSegmenter(MlKitSubjectSegmenter()),
         )
     }
     // Thresholds come from assets only (CFG-1); the data-class defaults are the

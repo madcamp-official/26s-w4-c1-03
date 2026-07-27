@@ -85,22 +85,27 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
     val objectCandidate = objects
         .filter { it.box.width > 0f && it.box.height > 0f }
         .maxByOrNull { it.box.width * it.box.height * it.confidence }
-    val subjectBox = personBox ?: objectCandidate?.box
+    val segmented = segmentation
+    val subjectBox = segmented?.bounds ?: personBox ?: objectCandidate?.box
     val kind = when {
         personBox != null -> SubjectKind.PERSON
         objectCandidate != null -> SubjectKind.OBJECT
         else -> SubjectKind.UNKNOWN
     }
-    val confidence = when {
+    val detectorConfidence = when {
         personBox != null -> pose?.averageInFrameLikelihood ?: faces.maxOfOrNull { it.leftEyeOpenProbability ?: 0f } ?: 0f
         objectCandidate != null -> objectCandidate.confidence
         else -> 0f
     }
+    val confidence = maxOf(detectorConfidence, segmented?.confidence ?: 0f)
     return SceneObservation(
         subjectBox = subjectBox,
         subjectKind = kind,
         subjectConfidence = confidence,
-        subjectOutline = pose?.landmarks
+        subjectOutline = segmented?.outline
+            ?.map { LayoutGuidePoint(it.x, it.y) }
+            ?.takeIf { it.size >= 3 }
+            ?: pose?.landmarks
             ?.filter { it.inFrameLikelihood >= 0.3f }
             ?.map { LayoutGuidePoint(it.x, it.y) }
             .orEmpty(),
