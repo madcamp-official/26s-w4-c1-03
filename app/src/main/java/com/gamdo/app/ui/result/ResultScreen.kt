@@ -49,6 +49,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.local.entity.Captures
+import androidx.compose.ui.platform.LocalContext
+import com.gamdo.app.data.SavedEdit
 import com.gamdo.app.edit.CaptureConditions
 import com.gamdo.app.edit.ImageMetricsExtractor
 import com.gamdo.app.detect.Problem
@@ -182,7 +184,8 @@ fun ResultScreen(
         baseline = seeded
         adjustments = seeded
     }
-    var savedPath by remember { mutableStateOf<String?>(null) }
+    var saved by remember { mutableStateOf<SavedEdit?>(null) }
+    val context = LocalContext.current
     // Saving re-renders the full-resolution file, which takes seconds. Without a
     // state for it the button looks inert and invites a second tap.
     var saving by remember { mutableStateOf(false) }
@@ -240,7 +243,7 @@ fun ResultScreen(
             Text("‹", color = OnDarkMedium, fontSize = 18.sp, modifier = Modifier.clickable(onClick = onBack))
             Text("보정", color = OnDarkHigh, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             Text(
-                text = if (savedPath == null) "완료" else "저장됨",
+                text = if (saved == null) "완료" else "저장됨",
                 color = Sage,
                 fontSize = 13.5.sp,
                 fontWeight = FontWeight.Bold,
@@ -495,9 +498,45 @@ fun ResultScreen(
                     },
                 )
             }
+            // §4-2 하단: [저장] [공유] [다시 찍기]. 공유 and 다시 찍기 sit beside the
+            // save rather than under it — the design gives this row one line, and a
+            // secondary action that pushes the primary one off-screen is worse than
+            // a narrower primary.
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SecondaryPill(
+                    text = "공유",
+                    // Sharing an unsaved edit would hand out the *original* file,
+                    // which is not what is on screen. Enabled only once there is a
+                    // saved result to share.
+                    enabled = saved != null,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        val path = saved?.filePath ?: return@SecondaryPill
+                        if (!shareImage(context, File(path))) {
+                            gpuStatus = "공유할 수 있는 앱이 없어요"
+                        }
+                    },
+                )
+                SecondaryPill(
+                    text = "다시 찍기",
+                    enabled = true,
+                    modifier = Modifier.weight(1f),
+                    onClick = onBack,
+                )
+            }
+
             PrimaryPillButton(
                 text = when {
-                    savedPath != null -> "갤러리에 저장됨"
+                    // Three states, not two. A save whose MediaStore insert was
+                    // refused still wrote the app's own copy, and telling the user
+                    // it is "갤러리에 저장됨" when it is not there is the kind of
+                    // claim AGENTS.md §7-6 rules out.
+                    saved?.savedToGallery == true -> "갤러리에 저장됨"
+                    saved != null -> "앱에 저장됨"
                     saving -> "저장 중…"
                     else -> "저장"
                 },
@@ -516,7 +555,7 @@ fun ResultScreen(
                                 EditSourceLoader.decode(File(captureValue.filePath), SAVE_MAX_SIDE)
                                     ?.let { QuickFilterEditor.apply(it, selectedFilter, adjustments) }
                             } ?: edited ?: source ?: return@launch
-                            savedPath = container.captureRepository.saveEditedCapture(
+                            val written = container.captureRepository.saveEditedCapture(
                                 captureId = captureValue.id,
                                 bitmap = result,
                                 // §4-1 비파괴: the record has to hold every control,
@@ -525,6 +564,10 @@ fun ResultScreen(
                                 paramsJson = "{\"filter\":\"${selectedFilter.name}\"," +
                                     "\"adjustments\":${EditTool.toJson(adjustments)}}",
                             )
+                            saved = written
+                            if (!written.savedToGallery) {
+                                gpuStatus = "갤러리에 못 넣었어요. 앱에는 저장했습니다"
+                            }
                         } catch (t: Throwable) {
                             // Without this the exception left `scope`'s Job and took
                             // the process with it: a full disk or a revoked
@@ -543,6 +586,33 @@ fun ResultScreen(
                 },
             )
         }
+    }
+}
+
+/** Outlined counterpart to [PrimaryPillButton] for the secondary row (§4-2). */
+@Composable
+private fun SecondaryPill(
+    text: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(22.dp))
+            .background(Charcoal700)
+            // `clickable(enabled = false)` also stops the ripple, so a disabled pill
+            // cannot look pressed — the greyed label and the dead tap agree.
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            color = if (enabled) OnDarkHigh else OnDarkMuted,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 

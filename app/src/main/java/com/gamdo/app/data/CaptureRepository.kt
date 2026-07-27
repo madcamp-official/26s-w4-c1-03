@@ -19,6 +19,7 @@ import com.gamdo.app.data.local.entity.CaptureEditStack
 import com.gamdo.app.data.local.entity.EditResultsLocal
 import com.gamdo.app.data.local.entity.Captures
 import com.gamdo.app.edit.EditStep
+import com.gamdo.app.edit.EditStepType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -291,8 +292,10 @@ class CaptureRepository(
         bitmap: Bitmap,
         paramsJson: String,
         stepOrder: Int = 1,
-    ): String = withContext(Dispatchers.IO) {
-        val id = "edit_" + Ulid.generate()
+    ): SavedEdit = withContext(Dispatchers.IO) {
+        // `stk_`, matching saveEditedResult. The old `edit_` prefix collided with
+        // the naming `edit_results_local` uses for a different kind of row.
+        val id = "stk_" + Ulid.generate()
         val fileName = "$id.jpg"
         val bytes = ByteArrayOutputStream().use { out ->
             bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
@@ -300,20 +303,42 @@ class CaptureRepository(
         }
         val dir = File(appContext.filesDir, "edits").apply { mkdirs() }
         val file = File(dir, fileName).apply { writeBytes(bytes) }
-        runCatching { exportToGallery(bytes, fileName) }
+
+        // Whether it reached the gallery is the user's question, so it has to be an
+        // answer and not a shrug. The old code ran the export inside a runCatching
+        // whose result it discarded, and the screen said "갤러리에 저장됨"
+        // unconditionally — including when the insert had been refused.
+        val exported = runCatching { exportToGallery(bytes, fileName) }
             .onFailure { Log.w(TAG, "Edited gallery export failed (kept local copy)", it) }
+            .isSuccess
+
         val persistedStepOrder = editStackDao?.nextStepOrder(captureId) ?: stepOrder
         editStackDao?.insert(
             CaptureEditStack(
                 id = id,
                 captureId = captureId,
                 stepOrder = persistedStepOrder,
-                stepType = "local_adjustment",
+                // DB schema v2.0 §3.9 fixes this vocabulary to
+                // geometry|optical|style|semantic|generative_ref. "local_adjustment"
+                // was outside it, so 담당 B's replay script would have skipped every
+                // row this path wrote.
+                stepType = EditStepType.STYLE.value,
                 paramsJson = paramsJson,
                 createdAt = System.currentTimeMillis(),
             ),
         )
-        file.absolutePath
+
+        // §4-2 "저장 시 saved_to_gallery=1 기록". The column existed, the DAO existed,
+        // and nothing set it.
+        runCatching { editStackRecorder?.markSavedToGallery(captureId, exported) }
+            .onFailure { Log.w(TAG, "saved_to_gallery update failed", it) }
+
+        SavedEdit(
+            captureId = captureId,
+            filePath = file.absolutePath,
+            stepsRecorded = if (editStackDao != null) 1 else 0,
+            savedToGallery = exported,
+        )
     }
 
     /**
