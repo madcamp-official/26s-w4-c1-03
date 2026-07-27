@@ -5,7 +5,7 @@ from pathlib import Path
 from PIL import Image
 
 from app.db import Database
-from app.generative import CandidateValidator, GeneratedCandidate
+from app.generative import CandidateValidator, GeneratedCandidate, ValidationResult
 from app.worker import JobWorker
 
 
@@ -79,6 +79,14 @@ class SameIdentity:
         return True
 
 
+class RejectingCandidateValidator:
+    def mask_is_safe(self, original_path, operations):
+        return True
+
+    def validate(self, original_path, candidate):
+        return ValidationResult(False, "candidate_aliases_input", {})
+
+
 def test_worker_done_requires_provider_and_identity_validation(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("app.db.DEFAULT_DB_PATH", tmp_path / "gamdo.sqlite3")
     database = Database()
@@ -100,6 +108,26 @@ def test_worker_done_requires_provider_and_identity_validation(tmp_path: Path, m
     assert job is not None
     assert job["status"] == "done"
     assert len(database.get_results("job_worker_001")) == 1
+
+
+def test_worker_removes_rejected_generated_candidate(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("app.db.DEFAULT_DB_PATH", tmp_path / "gamdo.sqlite3")
+    database = Database()
+    database.initialize()
+    input_path = tmp_path / "inputs" / "job_worker_001.png"
+    input_path.parent.mkdir()
+    seed_job(database, input_path)
+    output_path = tmp_path / "results" / "rejected.png"
+    output_path.parent.mkdir()
+
+    worker = JobWorker(
+        database,
+        provider=CopyProvider(output_path),
+        validator=RejectingCandidateValidator(),
+    )
+    assert worker.process_once() is True
+    assert not output_path.exists()
+    assert database.get_job("job_worker_001")["status"] == "fallback"
 
 
 def test_worker_falls_back_before_provider_when_mask_touches_face(tmp_path: Path, monkeypatch) -> None:

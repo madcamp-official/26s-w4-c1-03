@@ -64,6 +64,13 @@ class JobWorker:
         for candidate in candidates[: job["result_count"]]:
             validation = self.validator.validate(Path(input_row["storage_path"]), candidate)
             if not validation.passed:
+                # Rejected candidates are not DB-managed results. Remove them now,
+                # but never unlink the input if a faulty provider returned an alias.
+                try:
+                    if candidate.path.resolve() != Path(input_row["storage_path"]).resolve():
+                        candidate.path.unlink(missing_ok=True)
+                except OSError:
+                    pass
                 continue
             self.database.insert_result(
                 file_id=candidate_id(job["id"], candidate),

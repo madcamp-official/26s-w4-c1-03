@@ -175,6 +175,8 @@ class CandidateValidator:
 
     def validate(self, original_path: Path, candidate: GeneratedCandidate) -> ValidationResult:
         try:
+            if candidate.path.resolve() == original_path.resolve():
+                return ValidationResult(False, "candidate_aliases_input", {})
             with Image.open(original_path) as original, Image.open(candidate.path) as generated:
                 original.load()
                 generated.load()

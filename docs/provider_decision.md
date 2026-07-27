@@ -42,3 +42,10 @@
 - 실제 인물 카드 사진으로 `queued → processing → validating → done`, 후보 2개, seed 0·1, `validation=passed`를 재확인했다.
 - `/files/...png` 결과 다운로드 HTTP 200을 확인했다.
 - 실기기 `SM-G970N` Android API 테스트 2개를 CAMP-2 SSH 터널 경유로 통과시켰다.
+
+## 2026-07-27 — CAMP-2 AI 품질 게이트 보강
+
+- CAMP-2 재접속 확인: RTX 3090 24GB, NVIDIA 580.173.02, ComfyUI/FastAPI/worker 모두 `active`, ComfyUI `/system_stats`와 FastAPI `/health` 응답 정상.
+- LaMa 5종 benchmark를 재실행해 5/5 케이스에서 seed 0·1 후보 2개씩 생성했다. 총 5.56초(케이스당 약 1.11초)였다.
+- 각 후보에 PNG 디코드 가능·원본과 동일 해상도·원본 바이트와 불일치·케이스 간 결과 중복 없음 검사를 추가했고 10/10 후보가 통과했다. 이는 미적 품질 점수가 아니라 생성 결과 위장·손상·해상도 변경을 막는 최소 게이트다.
+- 워커는 검증 탈락 후보를 즉시 삭제하고, 후보 경로가 입력 원본을 가리키는 경우 `candidate_aliases_input`으로 거부하도록 보강했다. 원본 파일은 삭제하지 않는다.
