@@ -1,5 +1,10 @@
 package com.gamdo.app.data.preset
 
+// `add` for Number/String/Boolean is an extension on JsonArrayBuilder, not a member:
+// without this import `add(0.2)` binds to the member add(JsonElement) and fails to
+// compile. That failure took the whole test source set down, so *no* unit test ran.
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
@@ -15,9 +20,7 @@ class ResolvedStyleTest {
                 put("targetAspectRatio", "1:1")
                 put("subjectPosition", "third_left")
                 put("horizonPosition", 0.42)
-                put("subjectScaleRange", kotlinx.serialization.json.buildJsonArray {
-                    add(0.2); add(0.5)
-                })
+                put("subjectScaleRange", buildJsonArray { add(0.2); add(0.5) })
             },
             colorTarget = buildJsonObject {
                 put("colorTemperature", 6100)
