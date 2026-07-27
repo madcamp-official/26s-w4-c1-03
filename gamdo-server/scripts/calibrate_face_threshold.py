@@ -62,6 +62,11 @@ def main() -> int:
         )
     if any(not isinstance(item["sameIdentity"], bool) for item in valid_scores):
         raise SystemExit("every measurable pair must include a boolean sameIdentity label")
+    labels = [bool(item["sameIdentity"]) for item in valid_scores]
+    if set(labels) != {True, False} or labels.count(True) < 2 or labels.count(False) < 2:
+        raise SystemExit(
+            "calibration needs at least 2 same-identity and 2 different-identity pairs"
+        )
 
     print(json.dumps({"pairs": observations, "thresholds": thresholds}, ensure_ascii=False, indent=2))
     print("threshold metrics:")
