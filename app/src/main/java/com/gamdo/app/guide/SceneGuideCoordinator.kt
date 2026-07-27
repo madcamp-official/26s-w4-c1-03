@@ -85,7 +85,12 @@ class SceneGuideCoordinator(
             }
         }
         val template = baseTemplate?.let { GenericLayoutSynthesizer.transform(it, styleTarget) }
-        val fixedLayout = template?.let { FixedLayoutGuide(it) }
+        val fixedLayout = template?.let {
+            FixedLayoutGuide(
+                template = it,
+                assignments = LayoutSlotAssigner.assign(it, observation.slotDetections),
+            )
+        }
         val layoutGuide = layoutGuideEngine.build(observation, proposal).copy(
             fixedLayout = fixedLayout,
         )

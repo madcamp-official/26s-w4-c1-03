@@ -64,6 +64,7 @@ data class SlotDetection(
     val role: SlotRole = if (category == GuideObjectCategory.PERSON) SlotRole.PERSON else SlotRole.OBJECT,
     val visualKind: SlotVisualKind = SlotVisualKind.GENERIC_OBJECT,
     val semanticConfidence: Float? = null,
+    val outline: List<LayoutGuidePoint> = emptyList(),
 ) {
     fun normalized() = copy(
         bounds = NormalizedBox(
@@ -92,12 +93,63 @@ data class FixedLayoutGuide(
     val template: LayoutTemplate,
     /** Debug/KPI only. CameraOverlay must render template slots uniformly. */
     val matches: List<SlotMatch> = emptyList(),
+    /** Detection-to-slot correspondence for downstream KPI and rendering seams. */
+    val assignments: List<LayoutSlotAssignment> = emptyList(),
 ) {
     @Deprecated("Never use this value to decide whether the shutter works.")
     val allRequiredFilled: Boolean
         get() = template.slots.filter { it.required }.all { slot ->
             matches.firstOrNull { it.slotId == slot.id }?.status == SlotMatchStatus.FILLED
         }
+}
+
+data class LayoutSlotAssignment(
+    val slotId: String,
+    val detectionId: String?,
+    val overlap: Float,
+    val centerDistance: Float,
+)
+
+/** Greedy one-to-one correspondence; it never changes the fixed template. */
+object LayoutSlotAssigner {
+    fun assign(template: LayoutTemplate, detections: List<SlotDetection>): List<LayoutSlotAssignment> {
+        val available = detections.filter { it.isReliable }.toMutableList()
+        return template.slots.map { slot ->
+            val candidate = available
+                .filter { detection ->
+                    slot.expectedCategory == null ||
+                        detection.category == slot.expectedCategory ||
+                        detection.category == GuideObjectCategory.UNKNOWN
+                }
+                .maxByOrNull { score(slot.bounds, it.bounds) }
+            candidate?.let { available.remove(it) }
+            LayoutSlotAssignment(
+                slotId = slot.id,
+                detectionId = candidate?.id,
+                overlap = candidate?.let { overlap(slot.bounds, it.bounds) } ?: 0f,
+                centerDistance = candidate?.let { centerDistance(slot.bounds, it.bounds) } ?: 1f,
+            )
+        }
+    }
+
+    private fun score(slot: RectN, detection: NormalizedBox): Float =
+        overlap(slot, detection) * 0.7f +
+            (1f - centerDistance(slot, detection)).coerceIn(0f, 1f) * 0.3f
+
+    private fun overlap(slot: RectN, detection: NormalizedBox): Float {
+        val left = maxOf(slot.left, detection.left)
+        val top = maxOf(slot.top, detection.top)
+        val right = minOf(slot.right, detection.right)
+        val bottom = minOf(slot.bottom, detection.bottom)
+        val intersection = ((right - left).coerceAtLeast(0f) * (bottom - top).coerceAtLeast(0f))
+        return (intersection / (slot.width * slot.height).coerceAtLeast(0.0001f)).coerceIn(0f, 1f)
+    }
+
+    private fun centerDistance(slot: RectN, detection: NormalizedBox): Float =
+        maxOf(abs(slot.centerX - detection.centerX), abs(slot.centerY - detection.centerY))
+
+    private val RectN.centerX get() = (left + right) / 2f
+    private val RectN.centerY get() = (top + bottom) / 2f
 }
 
 /** Compatibility matcher used only by legacy KPI tests, never by product state. */
