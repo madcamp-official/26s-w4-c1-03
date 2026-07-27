@@ -129,6 +129,15 @@ fun OnboardingScreen(container: AppContainer, onFinished: () -> Unit) {
 
         else -> SavedStep(
             summary = profile?.summary,
+            // §6-2: the palette has to come from the profile the picks produced.
+            // Three constants under "당신의 감도" is a claim the screen cannot back.
+            palette = profile?.color?.let { c ->
+                ProfilePalette.swatches(
+                    brightness = c["brightness"]?.mean ?: 0.5f,
+                    colorTemperatureK = c["colorTemperature"]?.mean ?: 5500f,
+                    saturation = c["saturation"]?.mean ?: 0.4f,
+                ).map { Color(it) }
+            }.orEmpty(),
             recommendations = profile?.recommendedPresetIds.orEmpty().map { presetNames[it] ?: it },
             onStart = {
                 scope.launch {
@@ -236,7 +245,12 @@ private fun PickCard(card: OnboardingCard, selected: Boolean, onToggle: () -> Un
 }
 
 @Composable
-private fun SavedStep(summary: String?, recommendations: List<String>, onStart: () -> Unit) {
+private fun SavedStep(
+    summary: String?,
+    palette: List<Color>,
+    recommendations: List<String>,
+    onStart: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -249,9 +263,10 @@ private fun SavedStep(summary: String?, recommendations: List<String>, onStart: 
             verticalArrangement = Arrangement.Center,
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SavedSwatch(Color(0xFF7D8F6A))
-                SavedSwatch(Color(0xFFC9C4A6))
-                SavedSwatch(Color(0xFFE8E2D2))
+                // Empty only when the profile failed to build, in which case the
+                // bullets below already say so — better a missing palette than an
+                // invented one.
+                palette.forEach { SavedSwatch(it) }
             }
             Text(
                 text = "당신의 감도를\n저장했어요",
