@@ -118,7 +118,6 @@ class MlKitObjectDetector : ObjectSceneDetector {
                 // it as an unclassified box so the scene guide can use a valid
                 // segmentation mask without claiming to know the object type.
                 val classificationConfidence = item.labels.maxOfOrNull { it.confidence }
-                val confidence = classificationConfidence ?: 0f
                 val category = SceneRecognitionPolicy.categoryFor(labels)
                 ObjectObservation(
                     box = NormalizedBox(
@@ -127,7 +126,6 @@ class MlKitObjectDetector : ObjectSceneDetector {
                         bounds.right / w,
                         bounds.bottom / h,
                     ),
-                    confidence = confidence.coerceIn(0f, 1f),
                     trackingId = item.trackingId,
                     labels = labels,
                     classificationConfidence = classificationConfidence,

@@ -16,6 +16,7 @@ data class SceneGuideState(
     val proposal: CompositionProposal,
     val layoutGuide: SceneLayoutGuide,
     val fixedLayout: FixedLayoutGuide? = null,
+    val layoutState: GuideLayoutState = GuideLayoutState.Searching,
 )
 
 /**
@@ -26,9 +27,14 @@ class SceneGuideCoordinator(
     private val structureAnalyzer: SceneStructureAnalyzer = SceneStructureAnalyzer(),
     private val proposalEngine: SceneProposalEngine = SceneProposalEngine(),
     private val layoutGuideEngine: SceneLayoutGuideEngine = SceneLayoutGuideEngine(),
-    private val fixedLayoutMatcher: FixedLayoutSlotMatcher = FixedLayoutSlotMatcher(),
     private val autoLayoutResolver: AutoLayoutTemplateResolver = AutoLayoutTemplateResolver(),
 ) {
+    private var layoutState: GuideLayoutState = GuideLayoutState.Searching
+    private var manualTemplateId: String? = null
+    private var fixedBaseTemplate: LayoutTemplate? = null
+
+    val currentLayoutState: GuideLayoutState get() = layoutState
+
     fun update(
         detection: DetectionResult,
         styleTarget: StyleTarget,
@@ -53,14 +59,33 @@ class SceneGuideCoordinator(
             subjectOutline = detected.subjectOutline,
             subjectLabels = detected.subjectLabels,
             slotDetections = detected.slotDetections,
+            objectsFresh = detected.objectsFresh,
         )
         val proposal = proposalEngine.propose(observation, styleTarget)
-        val template = signals.layoutTemplate ?:
-            signals.layoutTemplateId?.let(LayoutTemplateCatalog::resolve) ?:
-            autoLayoutResolver.resolve(observation.slotDetections, styleTarget.layoutTemplateId)
-        val fixedLayout = template?.let {
-            fixedLayoutMatcher.match(it, observation.slotDetections)
+        val explicitTemplate = signals.layoutTemplate
+            ?: signals.layoutTemplateId?.let(LayoutTemplateCatalog::resolve)
+            ?: styleTarget.layoutTemplateId?.let(LayoutTemplateCatalog::resolve)
+        if (explicitTemplate != null && manualTemplateId == null) {
+            manualTemplateId = explicitTemplate.id
+            fixedBaseTemplate = explicitTemplate
+            layoutState = GuideLayoutState.Fixed(
+                GenericLayoutSynthesizer.transform(explicitTemplate, styleTarget),
+                LayoutSource.MANUAL,
+            )
         }
+        val baseTemplate = when (val current = layoutState) {
+            is GuideLayoutState.Fixed -> fixedBaseTemplate ?: current.template
+            GuideLayoutState.Searching -> autoLayoutResolver.resolve(
+                detections = observation.slotDetections,
+                objectsFresh = observation.objectsFresh,
+                styleTarget = styleTarget,
+            )?.also {
+                fixedBaseTemplate = it
+                layoutState = GuideLayoutState.Fixed(GenericLayoutSynthesizer.transform(it, styleTarget), LayoutSource.AUTO)
+            }
+        }
+        val template = baseTemplate?.let { GenericLayoutSynthesizer.transform(it, styleTarget) }
+        val fixedLayout = template?.let { FixedLayoutGuide(it) }
         val layoutGuide = layoutGuideEngine.build(observation, proposal).copy(
             fixedLayout = fixedLayout,
         )
@@ -69,13 +94,35 @@ class SceneGuideCoordinator(
             proposal = proposal,
             layoutGuide = layoutGuide,
             fixedLayout = fixedLayout,
+            layoutState = layoutState,
         )
+    }
+
+    fun selectManualLayout(templateId: String, styleTarget: StyleTarget = StyleTarget()): Boolean {
+        val template = LayoutTemplateCatalog.resolve(templateId) ?: return false
+        manualTemplateId = templateId
+        autoLayoutResolver.reset()
+        fixedBaseTemplate = template
+        layoutState = GuideLayoutState.Fixed(
+            GenericLayoutSynthesizer.transform(template, styleTarget),
+            LayoutSource.MANUAL,
+        )
+        return true
+    }
+
+    fun rescan() {
+        manualTemplateId = null
+        fixedBaseTemplate = null
+        layoutState = GuideLayoutState.Searching
+        autoLayoutResolver.reset()
     }
 
     fun reset() {
         proposalEngine.reset()
         layoutGuideEngine.reset()
-        fixedLayoutMatcher.reset()
         autoLayoutResolver.reset()
+        manualTemplateId = null
+        fixedBaseTemplate = null
+        layoutState = GuideLayoutState.Searching
     }
 }

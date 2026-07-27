@@ -17,8 +17,16 @@ interface PoseDetector {
 
 interface ObjectSceneDetector {
     fun detect(frame: AnalysisFrame): List<ObjectObservation>
+    fun detectBatch(frame: AnalysisFrame): ObjectDetectionBatch =
+        ObjectDetectionBatch(detect(frame), isFresh = true, sequenceId = 0L)
     fun close()
 }
+
+data class ObjectDetectionBatch(
+    val objects: List<ObjectObservation>,
+    val isFresh: Boolean,
+    val sequenceId: Long,
+)
 
 interface SubjectSceneSegmenter {
     fun detect(frame: AnalysisFrame): SegmentationObservation?
@@ -40,13 +48,20 @@ class ThrottledObjectSceneDetector(
 
     private var frameCount = 0
     private var lastResult: List<ObjectObservation> = emptyList()
+    private var sequenceId = 0L
 
     override fun detect(frame: AnalysisFrame): List<ObjectObservation> {
+        return detectBatch(frame).objects
+    }
+
+    override fun detectBatch(frame: AnalysisFrame): ObjectDetectionBatch {
         frameCount++
         if (frameCount == 1 || frameCount % refreshEveryFrames == 0) {
             lastResult = delegate.detect(frame)
+            sequenceId++
+            return ObjectDetectionBatch(lastResult, isFresh = true, sequenceId = sequenceId)
         }
-        return lastResult
+        return ObjectDetectionBatch(lastResult, isFresh = false, sequenceId = sequenceId)
     }
 
     override fun close() = delegate.close()
@@ -54,6 +69,7 @@ class ThrottledObjectSceneDetector(
     fun reset() {
         frameCount = 0
         lastResult = emptyList()
+        sequenceId = 0L
     }
 }
 
@@ -95,43 +111,26 @@ class SceneDetector(
     private val subjectSegmenter: SubjectSceneSegmenter? = null,
     private val customObjectDetector: CustomSceneDetector? = null,
 ) {
-    private val guideCandidateStabilizer = GuideCandidateStabilizer()
+    private val stableSceneTracker = StableSceneTracker()
 
-    fun detect(frame: AnalysisFrame): DetectionResult =
-        DetectionResult(
-            faces = faceDetector.detect(frame),
-            pose = poseDetector.detect(frame),
-            objects = customObjectDetector?.detect(frame).orEmpty()
-                .ifEmpty { objectDetector?.detect(frame).orEmpty() },
-            segmentation = subjectSegmenter?.detect(frame),
-        ).let { result ->
-            val segmentation = result.segmentation
-            val candidate = result.objects
-                .maxByOrNull { it.box.width * it.box.height * it.confidence }
-                ?.let { candidateObject ->
-                    val eligible = SceneRecognitionPolicy.isGuideEligible(
-                        category = candidateObject.category,
-                        detectionConfidence = candidateObject.confidence,
-                        mask = candidateObject.mask ?: segmentation,
-                    )
-                    guideCandidateStabilizer.accept(
-                        candidateObject.copy(
-                            mask = candidateObject.mask ?: segmentation,
-                            isGuideEligible = eligible,
-                        ),
-                    )
-                }
-            val stabilizedObjects: List<ObjectObservation> = if (candidate != null) {
-                result.objects.map { sceneObject: ObjectObservation ->
-                    if (sceneObject.trackingId == candidate.trackingId &&
-                        sceneObject.box == candidate.box
-                    ) candidate else sceneObject
-                }
-            } else {
-                result.objects
-            }
-            result.copy(objects = stabilizedObjects)
+    fun detect(frame: AnalysisFrame): DetectionResult {
+        val faces = faceDetector.detect(frame)
+        val pose = poseDetector.detect(frame)
+        val objectBatch = when {
+            customObjectDetector != null -> customObjectDetector.detectBatch(frame)
+            objectDetector != null -> objectDetector.detectBatch(frame)
+            else -> ObjectDetectionBatch(emptyList(), isFresh = true, sequenceId = 0L)
         }
+        val stableObjects = stableSceneTracker.accept(objectBatch)
+        return DetectionResult(
+            faces = faces,
+            pose = pose,
+            objects = stableObjects,
+            segmentation = subjectSegmenter?.detect(frame),
+            objectsFresh = objectBatch.isFresh,
+            objectSequenceId = objectBatch.sequenceId,
+        )
+    }
 
     fun close() {
         faceDetector.close()
@@ -141,5 +140,5 @@ class SceneDetector(
         customObjectDetector?.close()
     }
 
-    fun reset() = guideCandidateStabilizer.reset()
+    fun reset() = stableSceneTracker.reset()
 }

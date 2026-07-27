@@ -8,6 +8,7 @@ import com.gamdo.app.detect.SegmentationObservation
 import com.gamdo.app.detect.SegmentationPoint
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SceneGuideCoordinatorTest {
@@ -73,7 +74,9 @@ class SceneGuideCoordinatorTest {
         }
         val state = coordinator.update(detection, StyleTarget(), SceneFrameSignals(layoutTemplate = template))
 
-        assertEquals(SlotMatchStatus.FILLED, state.fixedLayout!!.matches.single().status)
-        assertEquals(template.slots.single().bounds, state.layoutGuide.fixedLayout!!.template.slots.single().bounds)
+        assertTrue(state.layoutState is GuideLayoutState.Fixed)
+        assertTrue(state.fixedLayout!!.matches.isEmpty())
+        val fixedBounds = state.layoutGuide.fixedLayout!!.template.slots.single().bounds
+        assertTrue(fixedBounds.left in 0f..1f && fixedBounds.right in 0f..1f)
     }
 }

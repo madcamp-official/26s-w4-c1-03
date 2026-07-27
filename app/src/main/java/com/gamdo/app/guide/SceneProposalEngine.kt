@@ -2,6 +2,7 @@ package com.gamdo.app.guide
 
 import com.gamdo.app.detect.NormalizedBox
 import com.gamdo.app.detect.DetectionResult
+import com.gamdo.app.detect.SceneRecognitionPolicy
 import kotlin.math.abs
 
 /** What the camera adapter believes the primary subject is. */
@@ -29,6 +30,7 @@ data class SceneObservation(
     val subjectLabels: List<String> = emptyList(),
     val hasReliableOutline: Boolean = false,
     val slotDetections: List<SlotDetection> = emptyList(),
+    val objectsFresh: Boolean = true,
 ) {
     fun normalized(): SceneObservation = copy(
         subjectBox = subjectBox?.clamped(),
@@ -88,7 +90,7 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
     val personBox = poseBox ?: faces.maxByOrNull { it.box.width * it.box.height }?.box
     val objectCandidate = objects
         .filter { it.box.width > 0f && it.box.height > 0f }
-        .maxByOrNull { it.box.width * it.box.height * it.confidence }
+        .maxByOrNull { it.box.width * it.box.height * (it.detectionConfidence ?: it.confidence.takeIf { confidence -> confidence > 0f } ?: 0.7f) }
     val segmented = segmentation
     val subjectBox = segmented?.bounds ?: personBox ?: objectCandidate?.box
     val kind = when {
@@ -98,7 +100,9 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
     }
     val detectorConfidence = when {
         personBox != null -> pose?.averageInFrameLikelihood ?: faces.maxOfOrNull { it.leftEyeOpenProbability ?: 0f } ?: 0f
-        objectCandidate != null -> objectCandidate.confidence
+        objectCandidate != null -> objectCandidate.detectionConfidence
+            ?: objectCandidate.confidence.takeIf { it > 0f }
+            ?: 0.7f
         else -> 0f
     }
     val confidence = maxOf(detectorConfidence, segmented?.confidence ?: 0f)
@@ -117,7 +121,7 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
         hasReliableOutline = when {
             segmented?.outline?.size ?: 0 >= 3 -> true
             personBox != null -> (pose?.landmarks?.count { it.inFrameLikelihood >= 0.3f } ?: 0) >= 3
-            else -> objectCandidate?.isGuideEligible == true && objectCandidate.mask != null
+            else -> objectCandidate?.mask?.outline?.size?.let { it >= 3 } == true
         },
         slotDetections = buildList {
             if (personBox != null) {
@@ -127,7 +131,9 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
                         category = com.gamdo.app.detect.GuideObjectCategory.PERSON,
                         bounds = personBox,
                         confidence = detectorConfidence,
-                        isReliable = (pose?.landmarks?.count { it.inFrameLikelihood >= 0.3f } ?: 0) >= 3,
+                        isReliable = true,
+                        role = SlotRole.PERSON,
+                        visualKind = SlotVisualKind.PERSON_SILHOUETTE,
                     ),
                 )
             }
@@ -136,13 +142,23 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
                     SlotDetection(
                         id = detectedObject.trackingId?.toString() ?: "object-$index",
                         category = detectedObject.category,
-                        bounds = detectedObject.mask?.bounds ?: detectedObject.box,
-                        confidence = detectedObject.confidence,
-                        isReliable = detectedObject.isGuideEligible && detectedObject.mask != null,
+                        bounds = detectedObject.box,
+                        confidence = detectedObject.detectionConfidence
+                            ?: detectedObject.confidence.takeIf { it > 0f }
+                            ?: 0.7f,
+                        isReliable = SceneRecognitionPolicy.isValidBox(detectedObject.box),
+                        role = SlotRole.OBJECT,
+                        visualKind = when (detectedObject.category) {
+                            com.gamdo.app.detect.GuideObjectCategory.DRINKWARE -> SlotVisualKind.CUP
+                            com.gamdo.app.detect.GuideObjectCategory.FOOD_TABLEWARE -> SlotVisualKind.PLATE
+                            else -> SlotVisualKind.GENERIC_OBJECT
+                        },
+                        semanticConfidence = detectedObject.classificationConfidence,
                     ),
                 )
             }
         },
+        objectsFresh = objectsFresh,
     )
 }
 

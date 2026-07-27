@@ -205,7 +205,9 @@ class CameraViewModel(
         )
         val projection = stabilizer.stabilize(engineState.toProjection())
         val fixedLayout = sceneGuide.fixedLayout
-        val effectiveAligned = fixedLayout?.allRequiredFilled ?: projection.aligned
+        // A fixed layout is a user-facing composition target, not a checklist.
+        // The shutter must never wait for every slot to be filled.
+        val effectiveAligned = fixedLayout != null || projection.aligned
         val effectiveVisible = fixedLayout != null || projection.visible
 
         _detectionLabel.value = detectionLabelOf(detection) +

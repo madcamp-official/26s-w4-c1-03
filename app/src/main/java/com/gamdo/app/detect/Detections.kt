@@ -44,12 +44,16 @@ data class PoseObservation(
 /** A tracked on-device object candidate in normalized upright coordinates. */
 data class ObjectObservation(
     val box: NormalizedBox,
-    val confidence: Float,
+    /** Optional objectness confidence. ML Kit does not expose one. */
+    val detectionConfidence: Float? = null,
+    @Deprecated("Use detectionConfidence or classificationConfidence.")
+    val confidence: Float = 0f,
     val trackingId: Int? = null,
     val labels: List<String> = emptyList(),
     val classificationConfidence: Float? = null,
     val category: GuideObjectCategory = GuideObjectCategory.UNKNOWN,
     val mask: SegmentationObservation? = null,
+    @Deprecated("Guide eligibility is derived by the scene policy.")
     val isGuideEligible: Boolean = false,
 )
 
@@ -78,6 +82,9 @@ data class DetectionResult(
     val pose: PoseObservation?,
     val objects: List<ObjectObservation> = emptyList(),
     val segmentation: SegmentationObservation? = null,
+    /** True only when the object detector actually ran for this frame. */
+    val objectsFresh: Boolean = true,
+    val objectSequenceId: Long = 0L,
 )
 
 /**

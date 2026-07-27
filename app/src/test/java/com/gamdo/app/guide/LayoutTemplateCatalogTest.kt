@@ -30,6 +30,7 @@ class LayoutTemplateCatalogTest {
                 bounds = NormalizedBox(0.1f * index, 0.3f, 0.2f + 0.1f * index, 0.7f),
                 confidence = 0.9f,
                 isReliable = true,
+                semanticConfidence = 0.9f,
             )
         }
 
@@ -42,9 +43,9 @@ class LayoutTemplateCatalogTest {
     fun `two drinks and food automatically select cafe layout`() {
         val resolver = AutoLayoutTemplateResolver()
         val scene = listOf(
-            SlotDetection("a", GuideObjectCategory.DRINKWARE, NormalizedBox(0.1f, 0.3f, 0.3f, 0.7f), 0.9f, true),
-            SlotDetection("b", GuideObjectCategory.DRINKWARE, NormalizedBox(0.7f, 0.3f, 0.9f, 0.7f), 0.9f, true),
-            SlotDetection("cake", GuideObjectCategory.FOOD_TABLEWARE, NormalizedBox(0.4f, 0.5f, 0.6f, 0.8f), 0.9f, true),
+            SlotDetection("a", GuideObjectCategory.DRINKWARE, NormalizedBox(0.1f, 0.3f, 0.3f, 0.7f), 0.9f, true, semanticConfidence = 0.9f),
+            SlotDetection("b", GuideObjectCategory.DRINKWARE, NormalizedBox(0.7f, 0.3f, 0.9f, 0.7f), 0.9f, true, semanticConfidence = 0.9f),
+            SlotDetection("cake", GuideObjectCategory.FOOD_TABLEWARE, NormalizedBox(0.4f, 0.5f, 0.6f, 0.8f), 0.9f, true, semanticConfidence = 0.9f),
         )
         repeat(3) { resolver.resolve(scene) }
 

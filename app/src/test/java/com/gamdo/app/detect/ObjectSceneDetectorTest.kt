@@ -26,9 +26,9 @@ class ObjectSceneDetectorTest {
             override fun close() = Unit
         }
 
-        val result = SceneDetector(face, pose, objectDetector).detect(
-            AnalysisFrame(image = null, width = 100, height = 100),
-        )
+        val detector = SceneDetector(face, pose, objectDetector)
+        repeat(3) { detector.detect(AnalysisFrame(image = null, width = 100, height = 100)) }
+        val result = detector.detect(AnalysisFrame(image = null, width = 100, height = 100))
 
         assertEquals(1, result.objects.size)
         assertEquals(4, result.objects.single().trackingId)
