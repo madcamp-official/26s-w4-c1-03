@@ -75,7 +75,9 @@ class ThrottledObjectSceneDetector(
 
 class ThrottledSubjectSceneSegmenter(
     private val delegate: SubjectSceneSegmenter,
-    private val refreshEveryFrames: Int = 6,
+    // Segmentation is the expensive generic-object fallback. Refresh it less
+    // often than face/object detection and reuse the last mask between runs.
+    private val refreshEveryFrames: Int = 12,
 ) : SubjectSceneSegmenter {
     init {
         require(refreshEveryFrames >= 1)

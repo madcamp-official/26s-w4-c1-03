@@ -33,7 +33,7 @@ class StableSceneTracker(
     fun accept(batch: ObjectDetectionBatch): List<ObjectObservation> {
         if (!batch.isFresh) return lastStable
 
-        val candidates = batch.objects.filter { SceneRecognitionPolicy.isValidBox(it.box) }
+        val candidates = sanitize(batch.objects)
         val matchedKeys = mutableSetOf<String>()
         candidates.forEachIndexed { index, candidate ->
             val track = tracks.values
@@ -78,6 +78,27 @@ class StableSceneTracker(
             objectObservation.box.centerY - 0.5f,
         ).coerceIn(0f, 0.7072f) / 0.7072f
         return area * 0.7f + (1f - centerDistance) * 0.3f
+    }
+
+    /** Remove full-frame/background proposals and duplicate boxes before tracking. */
+    private fun sanitize(objects: List<ObjectObservation>): List<ObjectObservation> {
+        val selected = mutableListOf<ObjectObservation>()
+        objects
+            .filter { SceneRecognitionPolicy.isValidBox(it.box) }
+            .filter { candidate ->
+                val area = candidate.box.width * candidate.box.height
+                val fullWidthBackground = candidate.box.width >= 0.92f && area >= 0.45f
+                val fullHeightBackground = candidate.box.height >= 0.92f && area >= 0.45f
+                candidate.mask != null || (!fullWidthBackground && !fullHeightBackground)
+            }
+            .sortedByDescending(::rankingScore)
+            .forEach { candidate ->
+                val duplicate = selected.any { existing ->
+                    intersectionOverUnion(existing.box, candidate.box) >= 0.75f
+                }
+                if (!duplicate) selected += candidate
+            }
+        return selected
     }
 
     private fun sameSubject(a: ObjectObservation, b: ObjectObservation): Boolean =
