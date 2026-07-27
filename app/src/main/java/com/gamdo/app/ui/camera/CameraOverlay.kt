@@ -234,10 +234,19 @@ private fun mapRect(rect: RectN, data: OverlayData, vw: Float, vh: Float): RectN
     )
 }
 
-/** Show/hide gate for the horizon with hysteresis around the posture boundary. */
+/**
+ * Show/hide gate for the horizon with hysteresis around the posture boundary.
+ *
+ * `hideAboveDeg` is [MAX_MEANINGFUL_PITCH_DEG] — the same boundary §3-3 uses to
+ * decide whether the roll is worth recording. Moving one without the other would
+ * leave the app drawing a horizon it refuses to store, or storing one it refuses
+ * to draw. The lower `showBelowDeg` is display-only hysteresis so the indicator
+ * does not flicker on and off at the boundary; a one-shot record has nothing to
+ * flicker.
+ */
 private class HorizonGate(
     private val showBelowDeg: Float = 55f,
-    private val hideAboveDeg: Float = 65f,
+    private val hideAboveDeg: Float = MAX_MEANINGFUL_PITCH_DEG,
 ) {
     private var visible = true
 

@@ -39,7 +39,14 @@ fun buildCaptureSnapshot(
     if (frame == null) return CaptureSnapshot(sessionId = sessionId)
 
     val conditions = CaptureConditions(
-        tiltDeg = frame.features.tiltDeg.takeIf { tiltRecorded && it.isFinite() },
+        // Posture-gated, the same rule the horizon indicator draws under. Roll is
+        // meaningless near face-up/face-down, and recording it there is not a
+        // harmless extra number: §4-3 reads it back and tells the user their photo
+        // is crooked. Measured on device — a shot taken with the phone flat on a
+        // desk wrote tiltDeg 93.4 and produced exactly that false chip.
+        tiltDeg = frame.features.tiltDeg.takeIf {
+            tiltRecorded && it.isFinite() && isRollMeaningful(frame.features.pitchDeg)
+        },
         subject = SubjectProjection.project(
             box = frame.features.personBox ?: frame.features.faceBox,
             paneRatioWtoH = paneRatioWtoH,

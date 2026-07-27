@@ -31,6 +31,7 @@ class ShutterSnapshotTest {
         person: NormalizedBox? = NormalizedBox(0.3f, 0.2f, 0.7f, 0.9f),
         face: NormalizedBox? = NormalizedBox(0.42f, 0.22f, 0.58f, 0.38f),
         tilt: Float = -4.5f,
+        pitch: Float = 2.5f,
     ) = FrameFeatures(
         personBox = person,
         faceBox = face,
@@ -39,7 +40,7 @@ class ShutterSnapshotTest {
         headroom = 0.22f,
         sideMargins = SideMargins(left = 0.3f, right = 0.3f),
         tiltDeg = tilt,
-        pitchDeg = 2.5f,
+        pitchDeg = pitch,
         brightnessMean = 0.41f,
         backlightFlag = true,
         lowLightFlag = false,
@@ -138,6 +139,40 @@ class ShutterSnapshotTest {
             snapshot(f = frame(features(tilt = 0f)), tiltRecorded = true).conditionsJson,
         )
         assertEquals(0f, recorded.tiltDeg!!, 1e-6f)
+    }
+
+    /**
+     * Found on device. The phone was flat on a desk (pitch 88.6°), roll read 93.4°,
+     * §3-3 stored it, and §4-3 told the user their photo was crooked. Roll is
+     * `atan2(gx, gy)` and near face-up both components are noise, so the number was
+     * never about the horizon.
+     */
+    @Test
+    fun `a face-up phone records no tilt, because roll means nothing there`() {
+        val flat = CaptureConditions.parse(
+            snapshot(f = frame(features(tilt = 93.4f, pitch = 88.6f))).conditionsJson,
+        )
+        assertNull(flat.tiltDeg)
+
+        // The same roll in a shooting posture is a real measurement and survives.
+        val upright = CaptureConditions.parse(
+            snapshot(f = frame(features(tilt = 12.0f, pitch = 3.0f))).conditionsJson,
+        )
+        assertEquals(12.0f, upright.tiltDeg!!, 1e-5f)
+    }
+
+    @Test
+    fun `the posture gate matches the one the horizon indicator draws under`() {
+        // Just inside: recorded. Just outside: not. The overlay hides its indicator
+        // at the same boundary, so the app never stores a horizon it will not draw.
+        val inside = CaptureConditions.parse(
+            snapshot(f = frame(features(tilt = 5f, pitch = MAX_MEANINGFUL_PITCH_DEG - 1f))).conditionsJson,
+        )
+        val outside = CaptureConditions.parse(
+            snapshot(f = frame(features(tilt = 5f, pitch = MAX_MEANINGFUL_PITCH_DEG + 1f))).conditionsJson,
+        )
+        assertEquals(5f, inside.tiltDeg!!, 1e-5f)
+        assertNull(outside.tiltDeg)
     }
 
     @Test
