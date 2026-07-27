@@ -54,15 +54,20 @@ def main() -> int:
             }
         )
 
+    valid_scores = [item for item in observations if item["score"] is not None]
+    if len(valid_scores) < 5:
+        raise SystemExit(
+            f"calibration requires at least 5 pairs with detectable faces; "
+            f"only {len(valid_scores)} were measurable"
+        )
+    if any(not isinstance(item["sameIdentity"], bool) for item in valid_scores):
+        raise SystemExit("every measurable pair must include a boolean sameIdentity label")
+
     print(json.dumps({"pairs": observations, "thresholds": thresholds}, ensure_ascii=False, indent=2))
-    labeled = [item for item in observations if isinstance(item["sameIdentity"], bool) and item["score"] is not None]
-    if labeled:
-        print("threshold metrics:")
-        for threshold in thresholds:
-            correct = sum((item["score"] >= threshold) == item["sameIdentity"] for item in labeled)
-            print(f"  {threshold:.2f}: {correct}/{len(labeled)} correct")
-    else:
-        print("threshold metrics: skipped (manifest has no sameIdentity labels)")
+    print("threshold metrics:")
+    for threshold in thresholds:
+        correct = sum((item["score"] >= threshold) == item["sameIdentity"] for item in valid_scores)
+        print(f"  {threshold:.2f}: {correct}/{len(valid_scores)} correct")
     return 0
 
 
