@@ -72,6 +72,7 @@ fun StylePreset.toStyleTarget(): StyleTarget {
         headroomRange = headroom,
         horizonPosition = composition.horizonPosition.toFloat(),
         cameraPitchRange = pitch,
+        backgroundRatioRange = composition.backgroundRatio.toFloatRange(default = 0.25f..0.85f),
     )
 }
 
@@ -96,6 +97,7 @@ fun ResolvedStyle.toStyleTarget(): StyleTarget {
         headroomRange = headroom,
         horizonPosition = composition.horizonPosition.toFloat(),
         cameraPitchRange = pitch,
+        backgroundRatioRange = composition.backgroundRatio.toFloatRange(default = 0.25f..0.85f),
     )
 }
 

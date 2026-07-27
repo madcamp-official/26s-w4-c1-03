@@ -38,6 +38,7 @@ data class StyleTarget(
     val headroomRange: ClosedFloatingPointRange<Float> = 0.05f..0.12f,
     val horizonPosition: Float = 0.5f,
     val cameraPitchRange: ClosedFloatingPointRange<Float> = -5f..5f,
+    val backgroundRatioRange: ClosedFloatingPointRange<Float>? = 0.25f..0.85f,
     /** Optional fixed-layout ID; null keeps the legacy single-subject contract. */
     val layoutTemplateId: String? = null,
 )
