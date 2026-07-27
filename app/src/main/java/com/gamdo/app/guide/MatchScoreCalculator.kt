@@ -1,6 +1,7 @@
 package com.gamdo.app.guide
 
 import com.gamdo.app.data.preset.StylePreset
+import com.gamdo.app.data.preset.ResolvedStyle
 import com.gamdo.app.detect.FrameFeatures
 import kotlin.math.abs
 
@@ -54,6 +55,30 @@ fun StylePreset.toStyleTarget(): StyleTarget {
         } else {
             null
         }
+    } ?: (4f / 5f)
+    val scale = composition.subjectScaleRange.toFloatRange(default = 0.35f..0.55f)
+    val headroom = composition.headroomRange.toFloatRange(default = 0.05f..0.12f)
+    val pitch = composition.cameraPitchRange.toFloatRange(default = -5f..5f)
+    val anchorX = when (composition.subjectPosition) {
+        "third_left" -> 1f / 3f
+        "third_right" -> 2f / 3f
+        else -> 0.5f
+    }
+    return StyleTarget(
+        targetAspectRatio = aspect,
+        subjectScaleRange = scale,
+        subjectAnchorX = anchorX,
+        subjectAnchorY = 0.5f,
+        headroomRange = headroom,
+        horizonPosition = composition.horizonPosition.toFloat(),
+        cameraPitchRange = pitch,
+    )
+}
+
+/** Reference remix adapter; composition stays independent from color rendering. */
+fun ResolvedStyle.toStyleTarget(): StyleTarget {
+    val aspect = composition.targetAspectRatio.split(':').let { parts ->
+        if (parts.size == 2) parts[0].toFloatOrNull()?.div(parts[1].toFloatOrNull() ?: 1f) else null
     } ?: (4f / 5f)
     val scale = composition.subjectScaleRange.toFloatRange(default = 0.35f..0.55f)
     val headroom = composition.headroomRange.toFloatRange(default = 0.05f..0.12f)

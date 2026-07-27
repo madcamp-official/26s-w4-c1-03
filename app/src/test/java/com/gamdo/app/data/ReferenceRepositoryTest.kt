@@ -31,6 +31,15 @@ private class FakeCachedReferencesDao : CachedReferencesDao {
         rows.values.sortedByDescending { it.createdAt }.take(limit)
 
     override suspend fun count(): Int = rows.size
+
+    override suspend fun deleteExpiredInactive(cutoff: Long, activeHash: String) {
+        rows.entries.removeIf { it.key != activeHash && it.value.createdAt < cutoff }
+    }
+
+    override suspend fun trimInactive(keep: Int, activeHash: String) {
+        val retained = rows.values.sortedByDescending { it.createdAt }.take(keep).map { it.contentHash }.toSet()
+        rows.keys.removeIf { it != activeHash && it !in retained }
+    }
 }
 
 /**

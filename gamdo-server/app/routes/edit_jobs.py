@@ -71,6 +71,12 @@ def parse_operations(raw: str) -> list[dict[str, Any]]:
             "message": "operations must be a non-empty JSON array",
             "retryable": False,
         })
+    if len(value) != 1:
+        raise HTTPException(status_code=422, detail={
+            "code": "single_operation_required",
+            "message": "one edit job may contain exactly one generative operation",
+            "retryable": False,
+        })
     for operation in value:
         if not isinstance(operation, dict) or operation.get("type") not in ALLOWED_OPERATIONS:
             raise HTTPException(status_code=422, detail={
@@ -111,6 +117,22 @@ def parse_operations(raw: str) -> list[dict[str, Any]]:
             # Keep the server-side measurement authoritative even when a client
             # omits or misreports the convenience field.
             operation["maskAreaRatio"] = round(measured_area, 6)
+        elif operation.get("type") == "outpaint":
+            direction = operation.get("direction")
+            ratio = operation.get("ratio")
+            if direction not in {"top", "bottom", "left", "right"}:
+                raise HTTPException(status_code=422, detail={
+                    "code": "invalid_outpaint_direction",
+                    "message": "outpaint direction must be top, bottom, left, or right",
+                    "retryable": False,
+                })
+            if not isinstance(ratio, (int, float)) or not math.isfinite(float(ratio)) or not 0 < float(ratio) <= 0.15:
+                raise HTTPException(status_code=422, detail={
+                    "code": "invalid_outpaint_ratio",
+                    "message": "outpaint ratio must be greater than 0 and at most 0.15",
+                    "retryable": False,
+                })
+            operation["ratio"] = round(float(ratio), 6)
     return value
 
 

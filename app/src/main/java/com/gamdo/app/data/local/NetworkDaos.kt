@@ -40,6 +40,16 @@ interface CachedReferencesDao {
 
     @Query("SELECT COUNT(*) FROM cached_references")
     suspend fun count(): Int
+
+    @Query("DELETE FROM cached_references WHERE created_at < :cutoff AND content_hash != :activeHash")
+    suspend fun deleteExpiredInactive(cutoff: Long, activeHash: String)
+
+    @Query(
+        "DELETE FROM cached_references WHERE content_hash != :activeHash " +
+            "AND content_hash NOT IN (SELECT content_hash FROM cached_references " +
+            "ORDER BY created_at DESC LIMIT :keep)",
+    )
+    suspend fun trimInactive(keep: Int, activeHash: String)
 }
 
 @Dao

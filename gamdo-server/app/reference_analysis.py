@@ -14,13 +14,19 @@ def analyze_reference(payload: bytes) -> dict[str, Any]:
     pixels = list(image.getdata())
     width, height = image.size
     subject = _skin_candidate_box(pixels, width, height)
+    horizon = _estimate_horizon(pixels, width, height)
     subjects = []
     if subject is not None:
         left, top, right, bottom = subject
         subjects.append({
             "bbox": [round(left, 4), round(top, 4), round(right - left, 4), round(bottom - top, 4)],
             "faceSize": round((right - left) * (bottom - top), 4),
-            "pose": {"centerX": round((left + right) / 2, 4), "centerY": round((top + bottom) / 2, 4)},
+            "pose": {
+                "centerX": round((left + right) / 2, 4),
+                "centerY": round((top + bottom) / 2, 4),
+                "confidence": 0.35,
+            },
+            "landmarks": _landmarks(left, top, right, bottom),
         })
 
     palette = _palette(image)
@@ -33,32 +39,59 @@ def analyze_reference(payload: bytes) -> dict[str, Any]:
     subject_y = subject_box[1] if subject_box else 0.05
     color_temperature = int(max(3000, min(7500, 5200 + (average[0] - average[2]) * 12)))
 
+    mean_luminance = _mean_luminance(pixels)
+    contrast = _histogram_contrast(pixels)
     return {
+        "analysisVersion": 2,
         "analysis": {
             "peopleCount": len(subjects),
             "subjects": subjects,
             "cameraHeight": "chest_level" if subjects else "unknown",
-            "horizon": 0.5,
+            "horizon": round(horizon, 4),
             "tilt": 0.0,
             "backgroundRatio": round(max(0.0, 1.0 - subject_scale * (subject_box[2] if subject_box else 0.0)), 4),
             "aspectRatio": target_aspect,
             "palette": palette,
             "colorTemperature": color_temperature,
             "luminanceHistogram": _luminance_histogram(pixels),
+            "poseConfidence": round(subjects[0]["pose"]["confidence"], 4) if subjects else 0.0,
         },
         "targetComposition": {
             "targetAspectRatio": target_aspect,
             "subjectScaleRange": [round(max(0.2, subject_scale * 0.8), 4), round(min(0.8, subject_scale * 1.2), 4)],
             "subjectPosition": _subject_position(subject_x),
             "headroomRange": [round(max(0.02, subject_y * 0.8), 4), round(min(0.3, subject_y * 1.2 + 0.02), 4)],
-            "horizonPosition": 0.5,
+            "horizonPosition": round(horizon, 4),
             "cameraPitchRange": [-5, 5],
+            "posePattern": "portrait" if subjects else "static",
+            "backgroundRatio": [round(max(0.0, 1.0 - subject_scale), 4), 0.85],
         },
         "colorTarget": {
             "palette": palette,
             "colorTemperature": color_temperature,
-            "exposureBias": round((0.5 - _mean_luminance(pixels)) * 1.2, 4),
+            "exposureBias": round((0.5 - mean_luminance) * 1.2, 4),
+            "contrast": round((contrast - 0.18) * 1.8, 4),
+            "saturation": round(_saturation_bias(pixels), 4),
+            "fade": round(max(0.0, 0.25 - contrast), 4),
+            "grain": 0.08 if contrast < 0.16 else 0.02,
+            "vignette": 0.08,
         },
+    }
+
+
+def _landmarks(left: float, top: float, right: float, bottom: float) -> dict[str, list[float]]:
+    """Conservative normalized landmarks used only as a guide target.
+
+    The optional GPU pose adapter can replace these values without changing the
+    response shape. Low confidence makes the client keep the static fallback.
+    """
+    center_x = (left + right) / 2
+    return {
+        "head": [round(center_x, 4), round(top, 4)],
+        "leftShoulder": [round(left, 4), round(top + (bottom - top) * 0.28, 4)],
+        "rightShoulder": [round(right, 4), round(top + (bottom - top) * 0.28, 4)],
+        "leftHip": [round(left, 4), round(top + (bottom - top) * 0.72, 4)],
+        "rightHip": [round(right, 4), round(top + (bottom - top) * 0.72, 4)],
     }
 
 
@@ -104,6 +137,33 @@ def _mean_luminance(pixels: list[tuple[int, int, int]]) -> float:
     if not pixels:
         return 0.0
     return sum((0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 for r, g, b in pixels) / len(pixels)
+
+
+def _histogram_contrast(pixels: list[tuple[int, int, int]]) -> float:
+    values = sorted((0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 for r, g, b in pixels)
+    if not values:
+        return 0.0
+    low = values[max(0, int(len(values) * 0.05))]
+    high = values[min(len(values) - 1, int(len(values) * 0.95))]
+    return max(0.0, high - low)
+
+
+def _saturation_bias(pixels: list[tuple[int, int, int]]) -> float:
+    if not pixels:
+        return 0.0
+    return sum((max(rgb) - min(rgb)) / 255 for rgb in pixels) / len(pixels) - 0.25
+
+
+def _estimate_horizon(pixels: list[tuple[int, int, int]], width: int, height: int) -> float:
+    """Find the strongest horizontal luminance transition, with a safe fallback."""
+    if width < 2 or height < 4:
+        return 0.5
+    row_means = []
+    for y in range(height):
+        row = pixels[y * width:(y + 1) * width]
+        row_means.append(_mean_luminance(row))
+    index = max(range(1, height - 1), key=lambda y: abs(row_means[y] - row_means[y - 1]))
+    return index / height
 
 
 def _subject_position(center_x: float) -> str:

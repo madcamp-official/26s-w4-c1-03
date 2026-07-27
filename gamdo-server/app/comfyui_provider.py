@@ -63,6 +63,30 @@ class ComfyUiProvider(GenerativeEditProvider):
             if temporary_upload is not None:
                 temporary_upload.unlink(missing_ok=True)
 
+    def outpaint(
+        self,
+        image_path: Path,
+        operations: list[dict[str, Any]],
+        result_count: int,
+    ) -> list[GeneratedCandidate]:
+        workflow_value = os.getenv("GAMDO_COMFYUI_OUTPAINT_WORKFLOW")
+        workflow_path = Path(workflow_value) if workflow_value else None
+        if not self.base_url or workflow_path is None or not workflow_path.exists():
+            raise ProviderNotReady("ComfyUI outpaint workflow is not configured")
+        workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+        input_name = self._upload_image(image_path)
+        candidates: list[GeneratedCandidate] = []
+        for seed in range(max(1, result_count)):
+            seeded = _inject_workflow_inputs(workflow, input_name, operations, 1, seed)
+            prompt = self._request_json("/prompt", {"prompt": seeded})
+            prompt_id = prompt.get("prompt_id")
+            if not prompt_id:
+                raise ProviderNotReady("ComfyUI did not return an outpaint prompt id")
+            item = self._wait_for_history(str(prompt_id))
+            for candidate in self._download_outputs(item["outputs"], str(prompt_id), 1, seed):
+                candidates.append(GeneratedCandidate(candidate.path, candidate.seed, "outpaint"))
+        return candidates
+
     def _wait_for_history(self, prompt_id: str) -> dict[str, Any]:
         deadline = time.monotonic() + self.timeout_seconds
         while time.monotonic() < deadline:
@@ -139,7 +163,7 @@ class ComfyUiProvider(GenerativeEditProvider):
                         path.write_bytes(response.read())
                 except OSError as exc:
                     raise ProviderNotReady("ComfyUI output download failed") from exc
-                candidates.append(GeneratedCandidate(path=path, seed=seed + index, operation="remove_objects"))
+        candidates.append(GeneratedCandidate(path=path, seed=seed + index, operation="remove_objects"))
         return candidates
 
 
