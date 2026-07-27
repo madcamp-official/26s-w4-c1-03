@@ -135,38 +135,6 @@ object ProfileEngine {
     }
 }
 
-/**
- * Projects the preset contract into ProfileEngine's card-feature space. The
- * source schema intentionally has no direct framing/sharpness/candidness
- * counterparts, so those three values use stable documented proxies.
- */
-fun StylePreset.toPresetProfile(): PresetProfile {
-    fun midpoint(range: List<Double>) = ((range[0] + range[1]) / 2.0).toFloat()
-    return PresetProfile(
-        id = id,
-        composition = mapOf(
-            "subjectScale" to midpoint(composition.subjectScaleRange),
-            "subjectPosition" to when (composition.subjectPosition) {
-                "third_left" -> 1f / 3f
-                "third_right" -> 2f / 3f
-                else -> 0.5f
-            },
-            "headroom" to midpoint(composition.headroomRange),
-            "backgroundRatio" to midpoint(composition.backgroundRatio),
-            "framing" to (1f - cropFreedom.toFloat()).coerceIn(0f, 1f),
-        ),
-        color = mapOf(
-            "brightness" to (0.5f + color.exposureBias.toFloat()).coerceIn(0f, 1f),
-            "colorTemperature" to color.colorTemperature.toFloat(),
-            "saturation" to (0.5f + color.saturation.toFloat()).coerceIn(0f, 1f),
-            "contrast" to (0.5f + color.contrast.toFloat()).coerceIn(0f, 1f),
-            "sharpness" to (1f - color.blurStrength.toFloat()).coerceIn(0f, 1f),
-            "grain" to color.grain.toFloat(),
-            "candidness" to when (composition.posePattern) {
-                "candid_motion" -> 0.85f
-                "natural_standing" -> 0.6f
-                else -> 0.4f
-            },
-        ),
-    )
-}
+// StylePreset.toPresetProfile() lives in PresetProfileMapper.kt — the copy carrying
+// the Kelvin-normalisation canary test. An identical extension was declared here too
+// after the merge; only a clean build reported it.

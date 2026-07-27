@@ -47,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
@@ -67,10 +68,13 @@ import com.gamdo.app.camera.CameraController
 import com.gamdo.app.camera.FrameAnalyzer
 import com.gamdo.app.camera.ShakeMeter
 import com.gamdo.app.camera.TiltSensor
+import com.gamdo.app.camera.ZoomBounds
 import com.gamdo.app.camera.centerCropToRatio
 import com.gamdo.app.camera.brightnessSample
 import com.gamdo.app.camera.scaledToMaxSide
+import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
+import com.gamdo.app.data.preset.StylePreset
 import com.gamdo.app.detect.DetectionResult
 import com.gamdo.app.detect.MlKitFaceDetector
 import com.gamdo.app.detect.MlKitPoseDetector
@@ -85,6 +89,7 @@ import com.gamdo.app.ui.theme.Charcoal950
 import com.gamdo.app.ui.theme.OnDarkHigh
 import com.gamdo.app.ui.theme.OnDarkMedium
 import com.gamdo.app.ui.theme.OnDarkMuted
+import com.gamdo.app.ui.theme.OnSage
 import com.gamdo.app.ui.theme.Sage
 import java.util.concurrent.Executors
 import kotlin.math.abs
@@ -97,6 +102,9 @@ import kotlinx.coroutines.withContext
 // GridLine is white at 28% alpha — a translucent neutral, not a hue.
 private val GridLine = Color(0x47FFFFFF)
 private const val TAG = "CameraScreen"
+
+/** 52dp thumbnail + 4dp gap + label, fixed so the preview pane is laid out once. */
+private val STYLE_STRIP_HEIGHT = 78.dp
 
 enum class CaptureAspect(val label: String, val ratioWtoH: Float) {
     RATIO_4_5("4:5", 4f / 5f),
@@ -223,6 +231,9 @@ fun CameraScreen(
 
     var aspect by rememberSaveable { mutableStateOf(CaptureAspect.RATIO_4_5) }
     val actualZoom by controller.zoomRatio.collectAsState()
+    // Which stops the lens can actually reach — 2c's `.5` is absent, not
+    // disabled, on a device without an ultra-wide.
+    val zoomBounds by controller.zoomBounds.collectAsState()
     var isFront by remember { mutableStateOf(false) }
     var capturing by remember { mutableStateOf(false) }
     var lastThumb by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
@@ -270,34 +281,25 @@ fun CameraScreen(
         }
     }
 
-    // Measured, not hard-coded: the floating style strip has to start exactly at
-    // the preview's top edge, and a dp constant would drift the moment a chip's
-    // padding or font size changes. It covers the *preview*, never the controls
-    // above it — offsetting by the top bar alone put the strip's scrim over the
-    // aspect toggle and made 4:5 / 1:1 unreachable while the picker was open.
-    var topControlsHeightPx by remember { mutableIntStateOf(0) }
-
-    Box(
+    // 2c has no floating picker and no separate aspect row: one top bar, the
+    // preview, a persistent style strip, the shutter. Because the strip is always
+    // present the preview pane never changes height, which also retires the
+    // PreviewView surface-bleed workaround the picker needed.
+    Column(
         modifier = modifier
             .fillMaxSize()
             .background(Charcoal950),
     ) {
-    Column(modifier = Modifier.fillMaxSize()) {
-    Column(modifier = Modifier.onSizeChanged { topControlsHeightPx = it.height }) {
-        CameraStatusBar(
-            styleName = activePreset?.displayName,
-            pickerOpen = stylePickerOpen,
-            onTogglePicker = { stylePickerOpen = !stylePickerOpen },
+        CameraTopBar(
             guideVisible = guideVisible,
             onToggleGuide = { guideVisible = !guideVisible },
+            aspect = aspect,
+            onSelectAspect = { aspect = it },
             hudToggleEnabled = hudAvailable,
             onToggleHud = { showHud = !showHud },
             referenceEntry = referenceEntry,
             demoControls = demoControls,
         )
-
-        AspectSelector(selected = aspect, onSelect = { aspect = it })
-    }
 
         CameraPreviewPane(
             modifier = Modifier
@@ -320,6 +322,8 @@ fun CameraScreen(
             // Pinch-to-zoom lives inside the pane and drives CameraX directly;
             // this is the read-back of CameraX's actual ZoomState, not a request.
             zoomRatio = actualZoom,
+            zoomBounds = zoomBounds,
+            onSelectZoom = { controller.setZoom(it) },
             referenceLayer = referenceLayer,
             hud = {
                 if (hudAvailable && showHud) {
@@ -334,6 +338,19 @@ fun CameraScreen(
                     )
                 }
             },
+        )
+
+        // 2c: the style strip is a permanent row between the preview and the
+        // shutter, not something you open. Choosing a look is the screen's primary
+        // job, so it costs no taps and its state is always readable.
+        CameraStyleStrip(
+            presets = presets,
+            selectedIndex = styleIndex,
+            // Session-only: this never reaches SettingsRepository (TEAM.md §8) —
+            // that key is the D4 personalisation profile, so a relaunch returns to
+            // the onboarding style.
+            onSelect = { index -> sessionStyleId = presetIds.getOrNull(index) },
+            modifier = Modifier.padding(top = 12.dp),
         )
 
         CameraBottomBar(
@@ -381,68 +398,39 @@ fun CameraScreen(
             },
         )
     }
-
-        // Floats over the preview instead of taking a row in the [Column].
-        //
-        // In the Column it changed the preview pane's height, and PreviewView's
-        // SurfaceView does not follow that resize. Measured on SM-G970N: opening
-        // the picker shrank the pane by the strip's 140px, the surface kept its
-        // old height, and it bled 70px above and below the pane — covering the
-        // aspect toggle and the top of the bottom bar with live camera image.
-        // Floating the strip keeps the pane's size constant, so the surface is
-        // never asked to resize, and the preview no longer jumps open/closed.
-        if (stylePickerOpen && presetNames.isNotEmpty()) {
-            StyleStrip(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .offset { IntOffset(0, topControlsHeightPx) },
-                styleNames = presetNames,
-                selectedIndex = styleIndex,
-                // Session-only: this never reaches SettingsRepository.
-                onSelect = { index -> sessionStyleId = presetIds.getOrNull(index) },
-            )
-        }
-    }
 }
 
 /**
- * Top bar (§3-2), in three zones: **start** = guide on/off, **center** = the
- * active style name and its change button, **end** = [referenceEntry] then
- * [demoControls].
+ * Top bar, per **2c** of `감도 화면 디자인.dc.html`: one centred pill saying the
+ * personalisation is on, and nothing else competing with it.
  *
- * Zones are laid out in a [Row] with the centre zone weighted, not aligned inside
- * a [Box]. A Box centres the style chip against the screen but lets it overlap the
- * side zones, and the overlap is silent *and* input-stealing: with `부드러운 필름`
- * (6 glyphs) the chip covered the debug HUD chip on SM-G970N and ate its taps,
- * while `밝은 리뷰` (4) left it alone — a bug whose existence depended on the
- * preset name. The weighted centre can never overlap; the name ellipsizes instead,
- * and `변경` keeps its width so the chip never loses its verb.
+ * The design's bar is *only* that pill — style selection lives in the permanent
+ * strip above the shutter ([CameraStyleStrip]), so the top of the screen has no job
+ * beyond telling you the app is doing something on your behalf.
  *
- * D2 line: everything here is chrome — a control label and a style name. No
- * instruction banner, no direction arrow, no match gauge, no auto-capture.
- * Sage is the only accent (D11-5). §3-2's "프리뷰가 주인공" is why the whole bar
- * is chips on charcoal rather than a surface.
+ * Two controls the design does not draw are kept, in its own chip language, on
+ * owner instruction: the guide on/off toggle (§3-2 requires it) and the 4:5 / 1:1
+ * selector (D9 allows exactly those two ratios and §1-5 requires the choice).
+ * Dropping them would make plan items unreachable rather than merely unstyled.
  *
- * The style chip is absent, not disabled, when there is no style to name
- * (presets.json failed to parse): a chip that opens an empty list would be dead
- * UI, and the only honest label for that state would be the asset name — which
- * is exactly the jargon R7-1 forbids.
+ * Zones are a [Row] with the centre weighted, never a [Box] with alignments: a Box
+ * lets the centre chip overlap the sides, and that overlap steals input as well as
+ * being silent — with `부드러운 필름` (6 glyphs) the old style chip covered the
+ * debug HUD chip on SM-G970N and ate its taps, while `밝은 리뷰` (4) left it alone.
  */
 @Composable
-private fun CameraStatusBar(
-    modifier: Modifier = Modifier,
-    styleName: String?,
-    pickerOpen: Boolean,
-    onTogglePicker: () -> Unit,
+private fun CameraTopBar(
     guideVisible: Boolean,
     onToggleGuide: () -> Unit,
+    aspect: CaptureAspect,
+    onSelectAspect: (CaptureAspect) -> Unit,
     hudToggleEnabled: Boolean,
     onToggleHud: () -> Unit,
     referenceEntry: @Composable () -> Unit,
     demoControls: @Composable () -> Unit,
 ) {
     Row(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = 10.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
@@ -474,33 +462,26 @@ private fun CameraStatusBar(
         }
 
         Box(
-            modifier = Modifier.weight(1f).padding(horizontal = 6.dp),
+            modifier = Modifier.weight(1f).padding(horizontal = 3.dp),
             contentAlignment = Alignment.Center,
         ) {
-            if (styleName != null) {
-                BarChip(onClick = onTogglePicker) {
-                    Text(
-                        text = styleName,
-                        color = OnDarkHigh,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        // fill = false so a short name still hugs its text; the
-                        // weight only matters when the name would otherwise push
-                        // `변경` out of the chip.
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    // §3-2 asks for "스타일 이름 + 변경 버튼" literally. A word beats a
-                    // caret here: it says what the tap does without a glyph that
-                    // could be read as one of D2-1's direction arrows.
-                    Text(
-                        text = if (pickerOpen) "닫기" else "변경",
-                        color = Sage,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Charcoal600.copy(alpha = 0.9f))
+                    .padding(horizontal = 11.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Sage))
+                Text(
+                    text = "내 감도 적용 중",
+                    color = OnDarkHigh,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
 
@@ -508,8 +489,113 @@ private fun CameraStatusBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+            AspectChip(selected = aspect, onSelect = onSelectAspect)
             referenceEntry()
             demoControls()
+        }
+    }
+}
+
+/** 4:5 / 1:1 only (D9), as a segmented chip in the top bar's language. */
+@Composable
+private fun AspectChip(selected: CaptureAspect, onSelect: (CaptureAspect) -> Unit) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(Charcoal600.copy(alpha = 0.9f))
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        CaptureAspect.entries.forEach { option ->
+            val isSelected = option == selected
+            Text(
+                text = option.label,
+                color = if (isSelected) OnSage else OnDarkMedium,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (isSelected) Sage else Color.Transparent)
+                    .clickable { onSelect(option) }
+                    .padding(horizontal = 7.dp, vertical = 4.dp),
+            )
+        }
+    }
+}
+
+/**
+ * The permanent style strip, per 2c: a circular thumbnail per preset with its name
+ * underneath, the active one ringed in sage.
+ *
+ * Round rather than square, and always on screen rather than behind a picker,
+ * because choosing a look is the job this screen exists for. The thumbnails are the
+ * presets’ own bundled images, so the strip shows what each look *is* rather than
+ * only what it is called — which matters for `자연스러운 피드` and `밤거리`, whose
+ * bracket geometry is identical and whose names are the only thing separating them.
+ */
+@Composable
+private fun CameraStyleStrip(
+    presets: List<StylePreset>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // Reserve the row even with nothing to put in it: `presets` arrives from disk a
+    // frame or two after first composition, and a strip that appears late makes the
+    // preview visibly jump. (It no longer *breaks* anything — the preview spill that
+    // used to follow a pane resize was an unclipped interop view, fixed at the
+    // AndroidView — but a fixed height is still the right shape for a row whose
+    // contents are async.)
+    if (presets.isEmpty()) {
+        Box(modifier = modifier.fillMaxWidth().height(STYLE_STRIP_HEIGHT))
+        return
+    }
+    val listState = rememberLazyListState()
+    LaunchedEffect(selectedIndex) {
+        if (selectedIndex >= 0) listState.animateScrollToItem(selectedIndex)
+    }
+    LazyRow(
+        modifier = modifier.fillMaxWidth().height(STYLE_STRIP_HEIGHT),
+        state = listState,
+        contentPadding = PaddingValues(horizontal = 18.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        itemsIndexed(presets) { index, preset ->
+            val isSelected = index == selectedIndex
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.clickable { onSelect(index) },
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(52.dp)
+                        .then(
+                            if (isSelected) {
+                                Modifier.border(2.dp, Sage, CircleShape).padding(2.dp)
+                            } else {
+                                Modifier.padding(4.dp)
+                            },
+                        )
+                        .clip(CircleShape)
+                        .background(Charcoal600),
+                ) {
+                    AsyncImage(
+                        model = "file:///android_asset/" + (preset.thumbnail ?: "presets/${preset.id}.jpg"),
+                        contentDescription = preset.displayName,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                Text(
+                    text = preset.displayName,
+                    color = if (isSelected) Sage else OnDarkMedium,
+                    fontSize = 10.sp,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                    maxLines = 1,
+                )
+            }
         }
     }
 }
@@ -527,97 +613,6 @@ private fun BarChip(onClick: () -> Unit, content: @Composable RowScope.() -> Uni
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         content = content,
     )
-}
-
-/**
- * The style list, opened from the top bar's change button.
- *
- * Laid out in the chrome column (between the bar and the aspect selector), not
- * over the preview. Two reasons, both structural rather than aesthetic:
- * `CameraPreviewPane`'s touch surface must stay the only pointer-input node over
- * the preview (see its KDoc — a sibling above it silently kills pinch *and*
- * tap-to-focus together), and a list drawn over the preview invites being read
- * as a fourth overlay element against §3-2's "브래킷+실루엣+수평선 셋만".
- *
- * It stays open after a pick. Switching styles moves the guide bracket, and the
- * point of the control is to see that happen — closing on every tap would make
- * comparing two styles a four-tap operation.
- *
- * [styleNames] arrives in display order and is consumed as given: §6-2 orders it
- * by recommendation rank, and re-sorting it here would discard that.
- */
-@Composable
-private fun StyleStrip(
-    modifier: Modifier = Modifier,
-    styleNames: List<String>,
-    selectedIndex: Int,
-    onSelect: (Int) -> Unit,
-) {
-    val listState = rememberLazyListState()
-    // The active style can be off-screen once the list is recommendation-ordered.
-    LaunchedEffect(selectedIndex) {
-        if (selectedIndex >= 0) listState.scrollToItem(selectedIndex)
-    }
-    LazyRow(
-        // The scrim is load-bearing now that the strip floats over live preview:
-        // the unselected chips are Charcoal600 at 60% alpha, which is legible on
-        // charcoal but not against a bright frame.
-        modifier = modifier
-            .fillMaxWidth()
-            .background(Charcoal950.copy(alpha = 0.88f))
-            .padding(vertical = 8.dp),
-        state = listState,
-        contentPadding = PaddingValues(horizontal = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        itemsIndexed(styleNames) { index, name ->
-            val isSelected = index == selectedIndex
-            Text(
-                text = name,
-                color = if (isSelected) Charcoal950 else OnDarkMedium,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(if (isSelected) Sage else Charcoal600.copy(alpha = 0.6f))
-                    .clickable { onSelect(index) }
-                    .padding(horizontal = 14.dp, vertical = 7.dp),
-            )
-        }
-    }
-}
-
-/** 4:5 / 1:1 only (D9). */
-@Composable
-private fun AspectSelector(selected: CaptureAspect, onSelect: (CaptureAspect) -> Unit) {
-    Box(
-        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(20.dp))
-                .background(Charcoal600.copy(alpha = 0.4f))
-                .padding(3.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            CaptureAspect.entries.forEach { option ->
-                val isSelected = option == selected
-                Text(
-                    text = option.label,
-                    color = if (isSelected) Charcoal950 else OnDarkMedium,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(if (isSelected) Sage else Color.Transparent)
-                        .clickable { onSelect(option) }
-                        .padding(horizontal = 14.dp, vertical = 5.dp),
-                )
-            }
-        }
-    }
 }
 
 /**
@@ -654,6 +649,8 @@ private fun CameraPreviewPane(
     showGuide: Boolean,
     showDetections: Boolean,
     zoomRatio: Float,
+    zoomBounds: ZoomBounds,
+    onSelectZoom: (Float) -> Unit,
     referenceLayer: @Composable BoxScope.() -> Unit,
     hud: @Composable BoxScope.() -> Unit,
 ) {
@@ -677,9 +674,42 @@ private fun CameraPreviewPane(
         val currentAspect by rememberUpdatedState(aspect)
 
         AndroidView(
-            modifier = Modifier.fillMaxSize(),
+            // clipToBounds, and it is load-bearing.
+            //
+            // FILL_CENTER scales PreviewView's content to *cover* the pane, so a
+            // 4:3 sensor feed in a 4:5 window produces a child taller than its
+            // parent — and Compose does not clip an interop view's overflow. The
+            // spill showed up as a band of live camera image above and below the
+            // preview, over the top bar's gap and over the style strip: 36px each
+            // side here, 70px each side under the layout this replaced.
+            //
+            // It was first read as PreviewView's SurfaceView failing to follow a
+            // resize, because the spill did change with the pane's height and was
+            // always symmetric. It is not: switching to
+            // ImplementationMode.COMPATIBLE (TextureView) changed nothing, and this
+            // one modifier fixed it with the SurfaceView default left alone. The
+            // earlier layout gymnastics to stop the pane ever resizing were
+            // treating the symptom.
+            modifier = Modifier.fillMaxSize().clipToBounds(),
             factory = { ctx ->
                 PreviewView(ctx).apply {
+                    // COMPATIBLE (TextureView), not the PERFORMANCE default
+                    // (SurfaceView).
+                    //
+                    // A SurfaceView's buffer is composited by SurfaceFlinger, not
+                    // drawn by the view tree, and it does not follow a layout change
+                    // reliably: whenever the preview pane's height changed after the
+                    // surface was created, the old size stayed and live camera image
+                    // bled over the rows above and below it — measured at 70px each
+                    // when the old style picker opened, and 36px each when the style
+                    // strip arrived a frame after `presets` loaded from disk.
+                    //
+                    // Fixing it by never resizing the pane worked twice and broke
+                    // twice, because *anything* that appears late resizes it. A
+                    // TextureView is an ordinary view: it resizes with layout and
+                    // clips to its bounds, so the failure mode does not exist. The
+                    // cost is one extra copy per frame, which on the target device
+                    // is a better trade than a band of camera image over the chrome.
                     scaleType = PreviewView.ScaleType.FILL_CENTER
                     this.controller = controller.camera
                     controller.bind(lifecycleOwner)
@@ -785,19 +815,12 @@ private fun CameraPreviewPane(
             Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
             Box(modifier = Modifier.fillMaxWidth().height(windowHeight)) {
                 RuleOfThirds()
-                Column(
+                ZoomStops(
                     modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    // Galaxy Camera-style readout: pinch on the preview to zoom;
-                    // keep one fixed indicator instead of adding a second slider.
-                    Text(
-                        text = formatZoom(zoomRatio),
-                        color = Sage,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
+                    zoomRatio = zoomRatio,
+                    bounds = zoomBounds,
+                    onSelect = onSelectZoom,
+                )
             }
             Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
         }
@@ -1019,6 +1042,58 @@ private fun GuideDebugBadge(debug: GuideDebug) {
         }
     }
 }
+
+/**
+ * The `.5 / 1x / 2x` stops from 2c, sitting at the bottom of the preview window.
+ *
+ * Stops the lens cannot reach are **absent, not disabled**: `.5` needs an
+ * ultra-wide, and offering a control that silently clamps to 1x is worse than not
+ * offering it. Which stop reads as active is decided by proximity to the live
+ * `ZoomState`, so pinching between stops still highlights the nearest one instead
+ * of leaving the row looking inert.
+ */
+@Composable
+private fun ZoomStops(
+    modifier: Modifier,
+    zoomRatio: Float,
+    bounds: ZoomBounds,
+    onSelect: (Float) -> Unit,
+) {
+    val stops = remember(bounds) {
+        listOf(0.5f, 1f, 2f).filter { it >= bounds.min - 1e-3f && it <= bounds.max + 1e-3f }
+    }
+    if (stops.isEmpty()) return
+    val active = stops.minByOrNull { kotlin.math.abs(it - zoomRatio) }
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        stops.forEach { stop ->
+            val isActive = stop == active
+            Box(
+                modifier = Modifier
+                    .size(if (isActive) 34.dp else 30.dp)
+                    .clip(CircleShape)
+                    .background(Color(0x99141614))
+                    .then(if (isActive) Modifier.border(1.8.dp, Sage, CircleShape) else Modifier)
+                    .clickable { onSelect(stop) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = formatZoomStop(stop),
+                    color = if (isActive) Sage else OnDarkMedium,
+                    fontSize = if (isActive) 11.sp else 10.5.sp,
+                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                )
+            }
+        }
+    }
+}
+
+/** `.5` / `1x` / `2x` — the design's labels, not a formatted ratio. */
+private fun formatZoomStop(stop: Float): String =
+    if (stop < 1f) ".5" else "${stop.toInt()}x"
 
 @Composable
 private fun DetectionBadge(text: String) {

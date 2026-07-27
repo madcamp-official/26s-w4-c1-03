@@ -24,23 +24,11 @@ interface AppSettingsDao {
     suspend fun put(setting: AppSettings)
 }
 
-@Dao
-interface StyleProfileDao {
-    @Query("SELECT * FROM style_profile WHERE id = 1")
-    suspend fun get(): StyleProfile?
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsert(profile: StyleProfile)
-}
-
-@Dao
-interface CardSelectionsDao {
-    @Query("DELETE FROM card_selections WHERE round = :round")
-    suspend fun deleteRound(round: Int)
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertAll(selections: List<CardSelections>)
-}
+// StyleProfileDao and CardSelectionsDao are NOT declared here — ProfileDaos.kt owns
+// them, with the fuller surface the repositories actually call (insertAll, forRound,
+// count). Both files declared them after the main<-p1 merge, and Kotlin's incremental
+// compiler kept serving cached output because neither file changed — so HEAD stopped
+// compiling from clean without anything ever going red.
 
 @Dao
 interface PresetsDao {

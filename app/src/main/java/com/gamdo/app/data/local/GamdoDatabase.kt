@@ -51,9 +51,13 @@ import com.gamdo.app.data.local.entity.StyleProfile
 )
 abstract class GamdoDatabase : RoomDatabase() {
     // Daos.kt — app_settings, presets, sessions, captures
+    //
+    // styleProfileDao / cardSelectionsDao are NOT here: they belong to the
+    // ProfileDaos.kt group below and were declared in both places, which Room
+    // rejects ("A database can use a DAO only once"). It survived in HEAD because
+    // KSP's incremental cache kept serving the last good result — a clean build,
+    // or any change that invalidates the processor, fails immediately.
     abstract fun appSettingsDao(): AppSettingsDao
-    abstract fun styleProfileDao(): StyleProfileDao
-    abstract fun cardSelectionsDao(): CardSelectionsDao
     abstract fun presetsDao(): PresetsDao
     abstract fun sessionsDao(): SessionsDao
     abstract fun capturesDao(): CapturesDao

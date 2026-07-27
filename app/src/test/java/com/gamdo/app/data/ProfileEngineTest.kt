@@ -90,7 +90,20 @@ class ProfileEngineTest {
 
         assertEquals(1f / 3f, result.composition.getValue("subjectPosition"), 0.001f)
         assertEquals(0.4f, result.composition.getValue("subjectScale"), 0.001f)
-        assertEquals(0.85f, result.color.getValue("candidness"), 0.001f)
         assertEquals(5500f, result.color.getValue("colorTemperature"), 0.001f)
+
+        // `candidness` and `framing` are deliberately absent. This test used to assert
+        // `candidness == 0.85` against a second `toPresetProfile()` that lived in
+        // ProfileEngine.kt and filled both dimensions from proxies (`posePattern` and
+        // `1 - cropFreedom`). The wave-0 lead ruling replaced that with the mapper in
+        // PresetProfileMapper.kt, which omits any dimension with no defensible
+        // counterpart — `recommend()` reads a missing key as zero distance for every
+        // preset equally, whereas a guessed value tilts the ranking arbitrarily.
+        //
+        // Both copies then sat in the tree, compiled only by Kotlin's incremental
+        // cache, each with a test asserting the opposite behaviour. Removing the
+        // superseded copy is what finally surfaced the disagreement.
+        assertTrue("candidness must not be invented", "candidness" !in result.color)
+        assertTrue("framing must not be invented", "framing" !in result.composition)
     }
 }

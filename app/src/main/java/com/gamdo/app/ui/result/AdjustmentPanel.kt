@@ -1,77 +1,76 @@
 package com.gamdo.app.ui.result
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.Bedtime
-import androidx.compose.material.icons.filled.Circle
-import androidx.compose.material.icons.outlined.Circle
-import androidx.compose.material.icons.outlined.Contrast
-import androidx.compose.material.icons.outlined.Exposure
-import androidx.compose.material.icons.outlined.Gradient
-import androidx.compose.material.icons.outlined.Grain
-import androidx.compose.material.icons.outlined.Opacity
-import androidx.compose.material.icons.outlined.Palette
-import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Vignette
-import androidx.compose.material.icons.outlined.WbIncandescent
-import androidx.compose.material.icons.outlined.WbSunny
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gamdo.app.edit.EditTool
 import com.gamdo.app.edit.FilterEngine
-import com.gamdo.app.ui.theme.Charcoal700
+import com.gamdo.app.ui.theme.Charcoal600
+import com.gamdo.app.ui.theme.Charcoal900
+import com.gamdo.app.ui.theme.OnDarkHigh
 import com.gamdo.app.ui.theme.OnDarkMedium
 import com.gamdo.app.ui.theme.OnDarkMuted
-import com.gamdo.app.ui.theme.OnSage
+import com.gamdo.app.ui.theme.OutlineDim
 import com.gamdo.app.ui.theme.Sage
-import kotlin.math.roundToInt
+import kotlin.math.abs
 
 /**
- * The manual adjustment surface: one slider for the selected tool, and a
- * horizontally scrolling strip of tools under it.
+ * The manual adjustment surface, per **2f** of `감도 화면 디자인.dc.html`: a row of
+ * value dials, and one tick ruler you push sideways to move the held control.
  *
- * ## Why a strip and not a list
+ * ## Why dials rather than icons with a value line
  *
- * The version this replaces stacked one labelled slider per adjustment. That reads
- * fine at three rows and collapses at fourteen — the photo would be pushed off the
- * screen by its own controls, on a screen whose entire premise (§3-2, D11) is that
- * the picture is the subject. One slider at a time keeps the panel a fixed height
- * no matter how many adjustments exist, which is also why adding a fifteenth costs
- * nothing here.
+ * The design puts the number *inside* the control it belongs to. That removes the
+ * separate label/value row entirely, and with it the question of which control a
+ * readout is describing — a real risk at thirteen tools, where the strip scrolls
+ * independently of anything above it. Each dial then carries two facts at once,
+ * and they are deliberately given different channels:
  *
- * ## What the strip has to communicate
+ *  - **ring and number** — whether this control has a value (sage) or sits at zero
+ *  - **label weight** — whether this is the control you are currently holding
  *
- * Two things at once, and they are different: **which tool you are holding**
- * (filled sage) and **which tools are doing something** (a dot). Without the
- * second, a user who set 대비 four tools ago has no way to find it again except by
- * visiting all fourteen, and no way to know whether the photo in front of them is
- * the filter's doing or their own.
+ * Collapsing those into one signal is what made an earlier version unreadable:
+ * after choosing a filter almost every control is non-zero, so "has a value" and
+ * "is selected" have to look different or the strip says nothing.
+ *
+ * ## Why a ruler rather than a slider
+ *
+ * A slider encodes the value by thumb *position*, so at thirteen controls the thumb
+ * jumps on every tool switch and the eye has to re-find it. The ruler's indicator
+ * never moves — the scale slides under it — so switching tools changes the numbers
+ * and nothing else. It also gives single-step control anywhere in the range, which
+ * a 320dp slider spanning 200 units cannot resolve.
  */
 @Composable
 fun AdjustmentPanel(
@@ -82,125 +81,191 @@ fun AdjustmentPanel(
     onChange: (FilterEngine.Adjustments) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val value = selected.get(adjustments)
-    val edited = selected.isEdited(adjustments, baseline)
     val listState = rememberLazyListState()
-    // Keep the held tool on screen. Selection can move without a tap — resetting
-    // everything, or arriving from a filter change — and a highlighted control
-    // scrolled out of view reads as no selection at all.
+    // Keep the held tool on screen. Selection can move without a tap — choosing a
+    // filter reseeds everything — and a highlighted control scrolled out of view
+    // reads as no selection at all.
     LaunchedEffect(selected) {
         listState.animateScrollToItem(EditTool.entries.indexOf(selected))
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = selected.label,
-                color = OnDarkMedium,
-                fontSize = 12.5.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Box(Modifier.width(8.dp))
-            Text(
-                text = formatValue(selected, value),
-                color = if (value != 0) Sage else OnDarkMuted,
-                fontSize = 12.5.sp,
-                fontWeight = FontWeight.Bold,
-            )
-            Box(Modifier.weight(1f))
-            // Reset goes back to the filter's value, not to zero. Zero would be
-            // "remove the filter from this one control", which is a different and
-            // much less useful thing to want than "undo what I just did".
-            if (edited) {
-                Icon(
-                    imageVector = Icons.Outlined.Refresh,
-                    contentDescription = "${selected.label}을 필터 값으로 되돌리기",
-                    tint = OnDarkMedium,
-                    modifier = Modifier
-                        .size(18.dp)
-                        .clickable {
-                            onChange(selected.set(adjustments, selected.get(baseline)))
-                        },
-                )
-            }
-        }
-
-        Slider(
-            value = value.toFloat(),
-            onValueChange = { onChange(selected.set(adjustments, it.roundToInt())) },
-            valueRange = selected.range.first.toFloat()..selected.range.last.toFloat(),
-            colors = SliderDefaults.colors(
-                thumbColor = Sage,
-                activeTrackColor = Sage,
-                inactiveTrackColor = Charcoal700,
-            ),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-        )
-
         LazyRow(
             state = listState,
             contentPadding = PaddingValues(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            modifier = Modifier.fillMaxWidth(),
         ) {
-            itemsIndexed(EditTool.entries) { _, tool ->
-                ToolButton(
+            items(EditTool.entries) { tool ->
+                ToolDial(
                     tool = tool,
+                    value = tool.get(adjustments),
                     selected = tool == selected,
-                    set = tool.get(adjustments) != 0,
-                    edited = tool.isEdited(adjustments, baseline),
                     onClick = { onSelect(tool) },
                 )
             }
         }
+
+        TickRuler(
+            value = selected.get(adjustments),
+            range = selected.range,
+            onValueChange = { onChange(selected.set(adjustments, it)) },
+            // Double-tap goes back to what the filter set. Reset lives on the ruler
+            // rather than on a separate button because the ruler is the surface the
+            // finger is already on, and the design leaves no room for a third row.
+            onReset = { onChange(selected.set(adjustments, selected.get(baseline))) },
+            modifier = Modifier.padding(top = 16.dp),
+        )
+
+        Text(
+            text = "좌우로 밀어서 ${selected.label} 조절",
+            color = OnDarkMuted,
+            fontSize = 11.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+        )
     }
 }
 
+/**
+ * One adjustment as a filled arc with its value in the middle.
+ *
+ * The arc sweeps clockwise from 12 o'clock across the control's whole range, so a
+ * bipolar control at zero reads as a half-filled dial and a one-sided control at
+ * zero reads as empty — which is what each of those means.
+ */
 @Composable
-private fun ToolButton(
+private fun ToolDial(
     tool: EditTool,
+    value: Int,
     selected: Boolean,
-    set: Boolean,
-    edited: Boolean,
     onClick: () -> Unit,
 ) {
+    val active = value != 0
+    val fraction = tool.fraction(value)
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(5.dp),
         modifier = Modifier.clickable(onClick = onClick),
     ) {
-        Box(
-            modifier = Modifier
-                .size(42.dp)
-                .background(if (selected) Sage else Charcoal700, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = iconFor(tool),
-                contentDescription = tool.label,
-                tint = if (selected) OnSage else if (set) Sage else OnDarkMedium,
-                modifier = Modifier.size(20.dp),
-            )
+        Box(modifier = Modifier.size(46.dp), contentAlignment = Alignment.Center) {
+            Canvas(modifier = Modifier.size(46.dp)) {
+                drawArc(color = Charcoal600, startAngle = -90f, sweepAngle = 360f, useCenter = true)
+                drawArc(
+                    color = if (active) Sage else OutlineDim,
+                    startAngle = -90f,
+                    sweepAngle = 360f * fraction,
+                    useCenter = true,
+                )
+            }
+            Box(
+                modifier = Modifier.size(38.dp).background(Charcoal900, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = formatValue(tool, value),
+                    color = if (active) Sage else OnDarkMuted,
+                    fontSize = 11.sp,
+                    fontWeight = if (active) FontWeight.ExtraBold else FontWeight.Bold,
+                )
+            }
         }
-        // The dot means "you moved this", not "this is non-zero" — after picking a
-        // filter almost every control is non-zero, and a strip of thirteen dots
-        // says nothing. Non-zero is carried by the icon tint instead, so the two
-        // facts stay separable: what the filter set, and what you changed.
-        Box(
-            modifier = Modifier
-                .padding(top = 4.dp)
-                .size(4.dp)
-                .background(if (edited) Sage else Color.Transparent, CircleShape),
-        )
         Text(
             text = tool.label,
-            color = if (selected) Sage else OnDarkMuted,
-            fontSize = 9.5.sp,
+            color = if (selected) OnDarkHigh else OnDarkMedium,
+            fontSize = 10.5.sp,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            modifier = Modifier.padding(top = 2.dp),
         )
+    }
+}
+
+/**
+ * A ruler that slides under a fixed centre indicator.
+ *
+ * Ticks are placed in the *value* domain and projected onto the screen, so the
+ * marks stay locked to the numbers rather than to the widget. Contrast falls off
+ * toward the edges, which pulls the eye to the value under the indicator instead
+ * of to the ends of the range.
+ */
+@Composable
+private fun TickRuler(
+    value: Int,
+    range: IntRange,
+    onValueChange: (Int) -> Unit,
+    onReset: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current
+    val pxPerUnit = with(density) { 2.4.dp.toPx() }
+    // rememberUpdatedState rather than pointerInput keys: re-keying on every value
+    // restarts the gesture mid-drag and drops the rest of the stroke — the same
+    // failure that ate the first preview tap after an aspect change.
+    val currentValue by rememberUpdatedState(value)
+    val change by rememberUpdatedState(onValueChange)
+    val reset by rememberUpdatedState(onReset)
+    // Sub-unit motion has to accumulate, or a slow drag is swallowed by rounding
+    // and the ruler feels stuck.
+    var residual by remember { mutableStateOf(0f) }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .pointerInput(range) {
+                detectHorizontalDragGestures(onDragStart = { residual = 0f }) { evt, dragAmount ->
+                    evt.consume()
+                    residual -= dragAmount / pxPerUnit
+                    val steps = residual.toInt()
+                    if (steps != 0) {
+                        residual -= steps
+                        change((currentValue + steps).coerceIn(range.first, range.last))
+                    }
+                }
+            }
+            .pointerInput(Unit) {
+                detectTapGestures(onDoubleTap = { reset() })
+            },
+    ) {
+        Canvas(modifier = Modifier.fillMaxWidth().height(44.dp)) {
+            val centreX = size.width / 2f
+            val midY = size.height / 2f
+            val minorHalf = 8.dp.toPx()
+            val majorHalf = 11.dp.toPx()
+            val tickWidth = 2.dp.toPx()
+
+            var tick = range.first
+            while (tick <= range.last) {
+                val x = centreX + (tick - currentValue) * pxPerUnit
+                if (x >= -tickWidth && x <= size.width + tickWidth) {
+                    val half = if (tick % 25 == 0) majorHalf else minorHalf
+                    val near = 1f - (abs(x - centreX) / (size.width / 2f)).coerceIn(0f, 1f)
+                    drawLine(
+                        color = if (near > 0.45f) OnDarkMuted else OutlineDim,
+                        start = Offset(x, midY - half),
+                        end = Offset(x, midY + half),
+                        strokeWidth = tickWidth,
+                    )
+                }
+                tick += 5
+            }
+
+            val indicatorHalf = 18.dp.toPx()
+            val indicatorWidth = 3.dp.toPx()
+            // The design asks for a box-shadow glow, which a Canvas line has no
+            // equivalent for; a wider faint pass underneath reads the same.
+            drawLine(
+                color = Sage.copy(alpha = 0.30f),
+                start = Offset(centreX, midY - indicatorHalf),
+                end = Offset(centreX, midY + indicatorHalf),
+                strokeWidth = indicatorWidth * 3f,
+            )
+            drawLine(
+                color = Sage,
+                start = Offset(centreX, midY - indicatorHalf),
+                end = Offset(centreX, midY + indicatorHalf),
+                strokeWidth = indicatorWidth,
+            )
+        }
     }
 }
 
@@ -212,26 +277,3 @@ private fun ToolButton(
  */
 private fun formatValue(tool: EditTool, value: Int): String =
     if (tool.range.first < 0) "%+d".format(value) else "$value"
-
-/**
- * Icons are chosen here rather than on [EditTool] so the domain enum stays free of
- * Compose — it is also read by the JSON writer and by tests.
- */
-private fun iconFor(tool: EditTool): ImageVector = when (tool) {
-    EditTool.EXPOSURE -> Icons.Outlined.Exposure
-    EditTool.HIGHLIGHTS -> Icons.Outlined.WbSunny
-    EditTool.SHADOWS -> Icons.Outlined.Bedtime
-    EditTool.CONTRAST -> Icons.Outlined.Contrast
-    // An empty ring and a solid disc: whites and blacks are the two ends of the
-    // same control, and the pair reads as that. Brightness3/Brightness7 were both
-    // crescents on this device and 검정 계열 was indistinguishable from 어두운 영역.
-    EditTool.WHITES -> Icons.Outlined.Circle
-    EditTool.BLACKS -> Icons.Filled.Circle
-    EditTool.SATURATION -> Icons.Outlined.Opacity
-    EditTool.VIBRANCE -> Icons.Outlined.AutoAwesome
-    EditTool.WARMTH -> Icons.Outlined.WbIncandescent
-    EditTool.TINT -> Icons.Outlined.Palette
-    EditTool.FADE -> Icons.Outlined.Gradient
-    EditTool.GRAIN -> Icons.Outlined.Grain
-    EditTool.VIGNETTE -> Icons.Outlined.Vignette
-}

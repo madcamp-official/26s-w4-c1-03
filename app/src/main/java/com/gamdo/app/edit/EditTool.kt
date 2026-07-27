@@ -13,8 +13,10 @@ package com.gamdo.app.edit
  * loop over [entries] with no per-tool code at all, so a new adjustment is one
  * entry here and nothing anywhere else.
  *
- * Order follows the Photos app's: exposure-ish first, then tone, then colour, then
- * the film effects. It is the order people reach for them.
+ * Order follows **2f** of `감도 화면 디자인.dc.html` for the six controls it shows
+ * (밝기 · 따뜻함 · 대비 · 채도 · 하이라이트 · 그림자), then the seven the design does
+ * not name. Labels come from the design too where it names one — it says 밝기 and
+ * 하이라이트 where Lightroom would say 노출 and 밝은 영역.
  */
 enum class EditTool(
     val label: String,
@@ -23,20 +25,28 @@ enum class EditTool(
     val set: (FilterEngine.Adjustments, Int) -> FilterEngine.Adjustments,
 ) {
     EXPOSURE(
-        "노출", -100..100,
+        "밝기", -100..100,
         { it.exposure }, { a, v -> a.copy(exposure = v) },
     ),
-    HIGHLIGHTS(
-        "밝은 영역", -100..100,
-        { it.highlights }, { a, v -> a.copy(highlights = v) },
-    ),
-    SHADOWS(
-        "어두운 영역", -100..100,
-        { it.shadows }, { a, v -> a.copy(shadows = v) },
+    WARMTH(
+        "따뜻함", -100..100,
+        { it.warmth }, { a, v -> a.copy(warmth = v) },
     ),
     CONTRAST(
         "대비", -100..100,
         { it.contrast }, { a, v -> a.copy(contrast = v) },
+    ),
+    SATURATION(
+        "채도", -100..100,
+        { it.saturation }, { a, v -> a.copy(saturation = v) },
+    ),
+    HIGHLIGHTS(
+        "하이라이트", -100..100,
+        { it.highlights }, { a, v -> a.copy(highlights = v) },
+    ),
+    SHADOWS(
+        "그림자", -100..100,
+        { it.shadows }, { a, v -> a.copy(shadows = v) },
     ),
     WHITES(
         "흰색 계열", -100..100,
@@ -46,17 +56,9 @@ enum class EditTool(
         "검정 계열", -100..100,
         { it.blacks }, { a, v -> a.copy(blacks = v) },
     ),
-    SATURATION(
-        "채도", -100..100,
-        { it.saturation }, { a, v -> a.copy(saturation = v) },
-    ),
     VIBRANCE(
         "생동감", -100..100,
         { it.vibrance }, { a, v -> a.copy(vibrance = v) },
-    ),
-    WARMTH(
-        "따뜻함", -100..100,
-        { it.warmth }, { a, v -> a.copy(warmth = v) },
     ),
     TINT(
         "색조", -100..100,
