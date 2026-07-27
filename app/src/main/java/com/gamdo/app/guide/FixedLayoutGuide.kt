@@ -228,12 +228,15 @@ object GenericLayoutSynthesizer {
 
     fun generic(count: Int, arrangement: Arrangement, id: String = "generic_${count}_$arrangement"): LayoutTemplate {
         val positions = when (arrangement) {
-            Arrangement.SINGLE -> listOf(RectN(0.34f, 0.30f, 0.66f, 0.70f))
+            // Generic objects are guides to place the subject, not large
+            // portrait frames. Keep them compact so the camera scene remains
+            // visible around the layout.
+            Arrangement.SINGLE -> listOf(RectN(0.38f, 0.38f, 0.62f, 0.62f))
             Arrangement.ROW -> (0 until count).map { index -> slotRect(index, count, horizontal = true) }
             Arrangement.COLUMN -> (0 until count).map { index -> slotRect(index, count, horizontal = false) }
-            Arrangement.DIAGONAL -> listOf(RectN(0.18f, 0.28f, 0.48f, 0.62f), RectN(0.52f, 0.42f, 0.82f, 0.76f))
-            Arrangement.TRIANGLE -> listOf(RectN(0.18f, 0.42f, 0.46f, 0.76f), RectN(0.54f, 0.42f, 0.82f, 0.76f), RectN(0.36f, 0.14f, 0.64f, 0.48f))
-            Arrangement.GRID -> listOf(RectN(0.16f, 0.18f, 0.46f, 0.48f), RectN(0.54f, 0.18f, 0.84f, 0.48f), RectN(0.16f, 0.54f, 0.46f, 0.84f), RectN(0.54f, 0.54f, 0.84f, 0.84f)).take(count)
+            Arrangement.DIAGONAL -> listOf(RectN(0.23f, 0.33f, 0.47f, 0.61f), RectN(0.53f, 0.41f, 0.77f, 0.69f))
+            Arrangement.TRIANGLE -> listOf(RectN(0.23f, 0.46f, 0.45f, 0.72f), RectN(0.55f, 0.46f, 0.77f, 0.72f), RectN(0.39f, 0.18f, 0.61f, 0.44f))
+            Arrangement.GRID -> listOf(RectN(0.21f, 0.22f, 0.45f, 0.46f), RectN(0.55f, 0.22f, 0.79f, 0.46f), RectN(0.21f, 0.54f, 0.45f, 0.78f), RectN(0.55f, 0.54f, 0.79f, 0.78f)).take(count)
         }
         return LayoutTemplate(
             id = id,
@@ -263,8 +266,8 @@ object GenericLayoutSynthesizer {
     }
 
     private fun slotRect(index: Int, count: Int, horizontal: Boolean): RectN {
-        val size = if (count <= 2) 0.32f else 0.25f
-        val gap = if (count <= 2) 0.36f else 0.27f
+        val size = if (count <= 2) 0.24f else 0.20f
+        val gap = if (count <= 2) 0.31f else 0.23f
         val center = if (horizontal) 0.5f + (index - (count - 1) / 2f) * gap else 0.5f
         val vertical = if (horizontal) 0.55f else 0.5f + (index - (count - 1) / 2f) * gap
         return RectN(center - size / 2f, vertical - size / 2f, center + size / 2f, vertical + size / 2f)

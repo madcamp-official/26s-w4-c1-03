@@ -116,19 +116,39 @@ class SceneDetector(
     fun detect(frame: AnalysisFrame): DetectionResult {
         val faces = faceDetector.detect(frame)
         val pose = poseDetector.detect(frame)
+        // Subject segmentation is the generic foreground path. ML Kit's
+        // classifier intentionally returns no item for many ordinary objects;
+        // that must not make the camera behave as if the scene were empty.
+        val segmentation = subjectSegmenter?.detect(frame)
         val objectBatch = when {
             customObjectDetector != null -> customObjectDetector.detectBatch(frame)
             objectDetector != null -> objectDetector.detectBatch(frame)
             else -> ObjectDetectionBatch(emptyList(), isFresh = true, sequenceId = 0L)
         }
-        val stableObjects = stableSceneTracker.accept(objectBatch)
+        val genericBatch = if (objectBatch.objects.isEmpty() && segmentation != null) {
+            objectBatch.copy(
+                objects = listOf(
+                    ObjectObservation(
+                        box = segmentation.bounds,
+                        detectionConfidence = segmentation.confidence,
+                        labels = emptyList(),
+                        classificationConfidence = null,
+                        category = GuideObjectCategory.UNKNOWN,
+                        mask = segmentation,
+                    ),
+                ),
+            )
+        } else {
+            objectBatch
+        }
+        val stableObjects = stableSceneTracker.accept(genericBatch)
         return DetectionResult(
             faces = faces,
             pose = pose,
             objects = stableObjects,
-            segmentation = subjectSegmenter?.detect(frame),
-            objectsFresh = objectBatch.isFresh,
-            objectSequenceId = objectBatch.sequenceId,
+            segmentation = segmentation,
+            objectsFresh = genericBatch.isFresh,
+            objectSequenceId = genericBatch.sequenceId,
         )
     }
 
