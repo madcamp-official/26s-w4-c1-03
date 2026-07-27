@@ -106,8 +106,24 @@ class TiltSensor(
     private val _reading = MutableStateFlow(TiltReading(0f, 0f))
     val reading: StateFlow<TiltReading> = _reading
 
+    /**
+     * Whether the sensor has ever reported, exposed because §3-3 needs to tell
+     * "not recorded" from "measured level".
+     *
+     * [reading]'s initial value is `TiltReading(0f, 0f)` — the same numbers a
+     * perfectly level phone produces. A device with neither TYPE_GRAVITY nor
+     * TYPE_ACCELEROMETER, and a shutter pressed before the first
+     * `onSensorChanged`, both hand the shutter that zero. Writing it into
+     * `conditions_json` as a measurement is exactly the information loss
+     * `CaptureConditions`' nullable `tiltDeg` exists to prevent, and it is silent:
+     * the editor would simply never level a photo and never say why.
+     */
+    val hasReading: Boolean get() = initialized
+
     private var filteredRoll = 0f
     private var filteredPitch = 0f
+
+    @Volatile
     private var initialized = false
 
     fun start() {

@@ -36,6 +36,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -74,6 +75,7 @@ import com.gamdo.app.camera.brightnessSample
 import com.gamdo.app.camera.scaledToMaxSide
 import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
+import com.gamdo.app.data.GuideKpiRepository
 import com.gamdo.app.data.preset.StylePreset
 import com.gamdo.app.detect.DetectionResult
 import com.gamdo.app.detect.MlKitFaceDetector
@@ -95,6 +97,9 @@ import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -238,6 +243,51 @@ fun CameraScreen(
     var capturing by remember { mutableStateOf(false) }
     var lastThumb by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
 
+    // §3-3. The preview pane's aspect is the viewport crop the saved pixels go
+    // through; SubjectProjection needs it to place the subject box in file space.
+    var paneRatioWtoH by remember { mutableFloatStateOf(0f) }
+
+    // §3-3: one session per (camera visit × style), opened as soon as a style is
+    // active rather than lazily at the first shutter. Overlay events happen while
+    // the user is still framing, so a session created at capture time would drop
+    // every guide event that led up to the photo — which is exactly the sequence
+    // 담당 B's metric script is trying to see.
+    var sessionId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(activePreset?.id) {
+        val preset = activePreset ?: return@LaunchedEffect
+        sessionId?.let { container.guideKpiRepository.endSession(it) }
+        sessionId = container.guideKpiRepository.startSession(
+            stylePresetId = preset.id,
+            resolvedStyleJson = "{}",
+        )
+    }
+
+    // §3-3 `session_guides`: overlay show/hide transitions.
+    //
+    // Collected in a coroutine rather than through collectAsState on purpose —
+    // `lastFrame` updates at the analysis rate, and observing it as Compose state
+    // would recompose this whole screen 12 times a second to write a row that only
+    // changes when the overlay appears or disappears. `distinctUntilChanged` on the
+    // flag is what keeps this to two rows per framing attempt instead of ~700 a minute.
+    LaunchedEffect(sessionId) {
+        val sid = sessionId ?: return@LaunchedEffect
+        viewModel.lastFrame
+            .map { it?.visible }
+            .filterNotNull()
+            .distinctUntilChanged()
+            .collect { visible ->
+                container.guideKpiRepository.recordGuideShown(
+                    sessionId = sid,
+                    guideType = if (visible) {
+                        GuideKpiRepository.GUIDE_TARGET_FRAME
+                    } else {
+                        GuideKpiRepository.GUIDE_HIDDEN
+                    },
+                    message = activePreset?.id.orEmpty(),
+                )
+            }
+    }
+
     DisposableEffect(controller) {
         // Attach the analysis pipeline (§2-1) running ML Kit face + pose (§2-2).
         // FrameAnalyzer times onFrame, so the HUD reflects real detection cost.
@@ -324,6 +374,7 @@ fun CameraScreen(
             zoomRatio = actualZoom,
             zoomBounds = zoomBounds,
             onSelectZoom = { controller.setZoom(it) },
+            onPaneRatio = { paneRatioWtoH = it },
             referenceLayer = referenceLayer,
             hud = {
                 if (hudAvailable && showHud) {
@@ -377,6 +428,13 @@ fun CameraScreen(
                         // therefore bought nothing and threw IllegalStateException on
                         // every shutter press, losing the shot; three presses, three
                         // "촬영에 실패했어요" toasts, verified on SM-G970N.
+                        // §3-3: read the analysis state *before* awaiting the
+                        // capture. takePicture() takes a few hundred ms, during
+                        // which the analyzer keeps publishing — awaiting first
+                        // would record the frame the shutter produced rather than
+                        // the one the user was looking at when they pressed it.
+                        val frame = viewModel.lastFrame.value
+
                         val captured = controller.capture()
                         // Heavy bitmap work stays off the main thread; the thumb
                         // is a downscaled copy so we never retain a
@@ -387,7 +445,31 @@ fun CameraScreen(
                         lastThumb = withContext(Dispatchers.Default) {
                             bitmap.scaledToMaxSide(256)
                         }
-                        container.captureRepository.saveCameraCapture(bitmap)
+
+                        val score = frame?.let { viewModel.matchScoreOf(it) }
+                        container.captureRepository.saveCameraCapture(
+                            bitmap,
+                            buildCaptureSnapshot(
+                                frame = frame,
+                                matchScore = score,
+                                sessionId = sessionId,
+                                paneRatioWtoH = paneRatioWtoH,
+                                targetRatioWtoH = aspect.ratioWtoH,
+                                mirror = isFront,
+                                tiltRecorded = tiltSensor.hasReading,
+                            ),
+                        )
+
+                        // KPI, and never a reason to fail a capture — the repository
+                        // swallows its own errors. `ended_at` is refreshed with every
+                        // press so it tracks the last shot of the session; the screen
+                        // can be left without warning, so there is no other moment
+                        // that reliably closes one.
+                        val sid = sessionId
+                        if (sid != null && score != null) {
+                            container.guideKpiRepository.recordFinalScore(sid, score)
+                            container.guideKpiRepository.endSession(sid)
+                        }
                     } catch (t: Throwable) {
                         Log.e(TAG, "capture failed", t)
                         Toast.makeText(context, "촬영에 실패했어요", Toast.LENGTH_SHORT).show()
@@ -651,6 +733,7 @@ private fun CameraPreviewPane(
     zoomRatio: Float,
     zoomBounds: ZoomBounds,
     onSelectZoom: (Float) -> Unit,
+    onPaneRatio: (Float) -> Unit,
     referenceLayer: @Composable BoxScope.() -> Unit,
     hud: @Composable BoxScope.() -> Unit,
 ) {
@@ -659,6 +742,15 @@ private fun CameraPreviewPane(
         // stay in step with it — the bars are also the no-focus zone.
         val windowHeight = (maxWidth / aspect.ratioWtoH).coerceAtMost(maxHeight)
         val barHeight = (maxHeight - windowHeight) / 2
+
+        // §3-3 needs the viewport aspect, and this is where it is exact. CameraX
+        // attaches the PreviewView's viewport as the capture's cropRect, the
+        // PreviewView fills this box, so the box's aspect *is* the first of the two
+        // centre crops the saved pixels go through (see SubjectProjection). Read off
+        // an outer `onSizeChanged` it would include this pane's padding and be wrong
+        // by a few pixels — enough to misplace a subject box near an edge.
+        val paneRatio = if (maxHeight > 0.dp) maxWidth / maxHeight else 0f
+        LaunchedEffect(paneRatio) { onPaneRatio(paneRatio) }
 
         // Tap-to-focus needs the PreviewView's own metering point factory, so the
         // instance has to escape the factory lambda. Cleared in onRelease: holding

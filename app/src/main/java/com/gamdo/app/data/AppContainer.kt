@@ -64,6 +64,14 @@ class AppContainer(context: Context) {
 
     val settingsRepository: SettingsRepository = SettingsRepository(database.appSettingsDao())
 
+    // §3-3 KPI. Referenced by CaptureRepository's KDoc since Day 1 but never built,
+    // which is why `sessions` and `session_guides` both read 0 rows on device.
+    val guideKpiRepository: GuideKpiRepository = GuideKpiRepository(
+        sessionsDao = database.sessionsDao(),
+        sessionKpiDao = database.sessionKpiDao(),
+        sessionGuidesDao = database.sessionGuidesDao(),
+    )
+
     // P2's preference engine persists the on-device profile only. The server never
     // receives this data (D4); camera and result defaults read its recommendation.
     val profileRepository: ProfileRepository = ProfileRepository(

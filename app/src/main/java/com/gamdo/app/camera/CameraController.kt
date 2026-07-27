@@ -98,6 +98,18 @@ class CameraController(context: Context) {
             previewResolutionSelector = ResolutionSelector.Builder()
                 .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                 .build()
+            // The capture has to share that FOV too, and until now it did not — it
+            // took the device default. §3-3 projects the detector's normalized
+            // subject box into stored-file coordinates (`SubjectProjection`), and
+            // that projection starts from "the capture is 4:3". On SM-G970N it
+            // happened to be (3024×4032), which is why the arithmetic matched the
+            // measured file — but a device defaulting ImageCapture to 16:9 has a
+            // different vertical field of view, and the box would land off the
+            // person with nothing failing. This turns the coincidence into a
+            // contract.
+            imageCaptureResolutionSelector = ResolutionSelector.Builder()
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                .build()
         }
 
     var isFront: Boolean = false

@@ -31,6 +31,27 @@ data class GuideDebug(
 )
 
 /**
+ * What §3-3 records at the shutter: the analysis state of the last frame before
+ * the user pressed it.
+ *
+ * Separate from [GuideDebug] on purpose. `GuideDebug` is collected only when
+ * `collectDebugSignals` is on, i.e. debug builds — and a KPI that exists only in
+ * debug builds records nothing from the device the numbers are actually about.
+ * This one is populated on every frame regardless of build type.
+ *
+ * `matchScore` is deliberately **not** a field. It is a weighted computation
+ * needed once per photo, not twelve times a second; call [CameraViewModel.matchScoreOf]
+ * at the shutter instead. Note this is the §4.2 weighted score, not
+ * `AlignmentEngine`'s IoU — same word, different quantity.
+ */
+data class ShutterFrame(
+    val features: FrameFeatures,
+    val target: StyleTarget,
+    val aligned: Boolean,
+    val visible: Boolean,
+)
+
+/**
  * Rolling cost of [com.gamdo.app.detect.FrameFeatureCalculator.calculate] against
  * the §2-4 30ms budget. Measurement only — the budget is never enforced, because
  * silently skipping feature extraction would break the guide instead of the log.
@@ -98,6 +119,20 @@ class CameraViewModel(
     private val _guideDebug = MutableStateFlow<GuideDebug?>(null)
     val guideDebug: StateFlow<GuideDebug?> = _guideDebug.asStateFlow()
 
+    /** §3-3 shutter snapshot source. Populated in release builds too — see [ShutterFrame]. */
+    private val _lastFrame = MutableStateFlow<ShutterFrame?>(null)
+    val lastFrame: StateFlow<ShutterFrame?> = _lastFrame.asStateFlow()
+
+    /**
+     * The §4.2 weighted match score for [frame], computed on demand.
+     *
+     * Called once per capture rather than once per frame: the shutter is the only
+     * consumer, and paying for it at 12Hz to have it ready would be twelve times
+     * the cost for the same one number.
+     */
+    fun matchScoreOf(frame: ShutterFrame): Float =
+        matchScoreCalculator.calculate(frame.features, frame.target)
+
     private val _featureBudget = MutableStateFlow<FeatureBudgetStats?>(null)
     val featureBudget: StateFlow<FeatureBudgetStats?> = _featureBudget.asStateFlow()
 
@@ -153,6 +188,14 @@ class CameraViewModel(
 
         _detectionLabel.value = detectionLabelOf(detection)
 
+        // §3-3: unconditional, unlike the debug block below.
+        _lastFrame.value = ShutterFrame(
+            features = features,
+            target = target,
+            aligned = projection.aligned,
+            visible = projection.visible,
+        )
+
         if (collectDebugSignals) {
             _guideDebug.value = GuideDebug(
                 features = features,
@@ -185,6 +228,9 @@ class CameraViewModel(
         _overlay.value = null
         _detectionLabel.value = ""
         _guideDebug.value = null
+        // Cleared with the rest: a snapshot from before a background/rebind would
+        // describe a scene the camera is no longer pointed at.
+        _lastFrame.value = null
         alignmentEngine.reset()
         stabilizer.reset()
     }
