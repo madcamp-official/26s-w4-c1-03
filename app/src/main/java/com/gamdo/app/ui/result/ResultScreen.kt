@@ -2,6 +2,7 @@ package com.gamdo.app.ui.result
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -90,26 +91,37 @@ private data class NormalizedMask(
     val area: Float get() = width * height
 }
 
+private const val TAG = "ResultScreen"
+
 private data class GpuCandidate(
     val bitmap: Bitmap,
     val seed: Int?,
     val validation: String?,
 )
 
-private fun maskFromOffsets(start: Offset, end: Offset, width: Int, height: Int): NormalizedMask? {
-    if (width <= 0 || height <= 0) return null
-    val left = (minOf(start.x, end.x) / width).coerceIn(0f, 1f)
-    val top = (minOf(start.y, end.y) / height).coerceIn(0f, 1f)
-    val right = (maxOf(start.x, end.x) / width).coerceIn(0f, 1f)
-    val bottom = (maxOf(start.y, end.y) / height).coerceIn(0f, 1f)
+/**
+ * Drag rectangle → mask normalized against the **image**, not its container.
+ *
+ * [rect] is where `ContentScale.Fit` actually put the bitmap. Dividing by the
+ * container size instead — which this did — inflates the mask by
+ * container/image on each axis, so the server erases a region offset from the
+ * one the user drew. It never showed on screen because the overlay Canvas
+ * divided by the same wrong number and so disagreed consistently.
+ */
+private fun maskFromOffsets(start: Offset, end: Offset, rect: FitRect?): NormalizedMask? {
+    if (rect == null || rect.width <= 0f || rect.height <= 0f) return null
+    val left = rect.normalizeX(minOf(start.x, end.x))
+    val top = rect.normalizeY(minOf(start.y, end.y))
+    val right = rect.normalizeX(maxOf(start.x, end.x))
+    val bottom = rect.normalizeY(maxOf(start.y, end.y))
     return NormalizedMask(left, top, right, bottom)
 }
 
-private fun minimumMaskAt(point: Offset, width: Int, height: Int): NormalizedMask? {
-    if (width <= 0 || height <= 0) return null
+private fun minimumMaskAt(point: Offset, rect: FitRect?): NormalizedMask? {
+    if (rect == null || rect.width <= 0f || rect.height <= 0f) return null
     val half = 0.1f
-    val centerX = (point.x / width).coerceIn(half, 1f - half)
-    val centerY = (point.y / height).coerceIn(half, 1f - half)
+    val centerX = rect.normalizeX(point.x).coerceIn(half, 1f - half)
+    val centerY = rect.normalizeY(point.y).coerceIn(half, 1f - half)
     return NormalizedMask(centerX - half, centerY - half, centerX + half, centerY + half)
 }
 
@@ -217,6 +229,17 @@ fun ResultScreen(
                 .clip(RoundedCornerShape(16.dp)).background(Charcoal950),
         ) {
             val displayBitmap = generated ?: edited ?: source
+            // Where Fit actually put those pixels. Every mask coordinate below is
+            // relative to this and never to `imageAreaSize`, which includes the
+            // letterbox bars.
+            val fitRect = displayBitmap?.let {
+                fitImageRect(
+                    containerW = imageAreaSize.width.toFloat(),
+                    containerH = imageAreaSize.height.toFloat(),
+                    imageW = it.width,
+                    imageH = it.height,
+                )
+            }
             // Show the untouched source immediately while the full-resolution
             // local edit is still being computed. Waiting for `edited` here
             // made a valid gallery photo look like a placeholder on device.
@@ -231,6 +254,11 @@ fun ResultScreen(
                         .pointerInput(source, generated) {
                             detectDragGestures(
                                 onDragStart = { offset ->
+                                    // A drag that starts on a letterbox bar is not
+                                    // on the photo, so there is nothing to erase.
+                                    if (fitRect?.contains(offset.x, offset.y) != true) {
+                                        return@detectDragGestures
+                                    }
                                     dragStart = offset
                                     dragCurrent = offset
                                     maskSelection = null
@@ -240,20 +268,15 @@ fun ResultScreen(
                                     val start = dragStart ?: return@detectDragGestures
                                     val current = (dragCurrent ?: start) + dragAmount
                                     dragCurrent = current
-                                    maskSelection = maskFromOffsets(
-                                        start,
-                                        current,
-                                        imageAreaSize.width,
-                                        imageAreaSize.height,
-                                    )
+                                    maskSelection = maskFromOffsets(start, current, fitRect)
                                 },
                                 onDragEnd = {
                                     val start = dragStart
                                     val end = dragCurrent
                                     maskSelection = if (start != null && end != null) {
-                                        maskFromOffsets(start, end, imageAreaSize.width, imageAreaSize.height)
+                                        maskFromOffsets(start, end, fitRect)
                                             ?.takeIf { it.width >= 0.02f && it.height >= 0.02f }
-                                            ?: minimumMaskAt(end, imageAreaSize.width, imageAreaSize.height)
+                                            ?: minimumMaskAt(end, fitRect)
                                     } else {
                                         null
                                     }
@@ -271,10 +294,15 @@ fun ResultScreen(
                 )
                 maskSelection?.let { mask ->
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        val topLeft = Offset(mask.left * size.width, mask.top * size.height)
+                        // Drawn through the same rect the mask was normalized
+                        // against. Using `size` here would put the overlay back on
+                        // the container and hide the very mismatch this fixes —
+                        // the old code was wrong in both places and so looked right.
+                        val r = fitRect ?: return@Canvas
+                        val topLeft = Offset(r.toContainerX(mask.left), r.toContainerY(mask.top))
                         val rectSize = androidx.compose.ui.geometry.Size(
-                            mask.width * size.width,
-                            mask.height * size.height,
+                            mask.width * r.width,
+                            mask.height * r.height,
                         )
                         drawRect(
                             color = Sage.copy(alpha = 0.22f),
@@ -474,6 +502,17 @@ fun ResultScreen(
                                 paramsJson = "{\"filter\":\"${selectedFilter.name}\"," +
                                     "\"adjustments\":${EditTool.toJson(adjustments)}}",
                             )
+                        } catch (t: Throwable) {
+                            // Without this the exception left `scope`'s Job and took
+                            // the process with it: a full disk or a revoked
+                            // MediaStore insert crashed the app on the save tap,
+                            // while the camera's shutter one screen away had caught
+                            // the same class of failure since Day 1. §6-1's "크래시
+                            // 0건" is the standard, and silence is not the fix
+                            // either — the button snapping back from "저장 중…" with
+                            // nothing saved and nothing said is what the user saw.
+                            Log.e(TAG, "save failed", t)
+                            gpuStatus = "저장하지 못했어요. 저장 공간을 확인해 주세요"
                         } finally {
                             saving = false
                         }
