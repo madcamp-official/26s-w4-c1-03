@@ -39,6 +39,18 @@ def test_candidate_validator_requires_identity_verifier(tmp_path: Path) -> None:
     assert result.reason == "face_identity_unverified"
 
 
+def test_candidate_validator_rejects_input_path_alias(tmp_path: Path) -> None:
+    original = tmp_path / "original.png"
+    Image.new("RGB", (16, 16), (120, 140, 120)).save(original)
+
+    result = CandidateValidator(SameIdentity()).validate(
+        original, GeneratedCandidate(original, 99)
+    )
+
+    assert result.passed is False
+    assert result.reason == "candidate_aliases_input"
+
+
 def test_candidate_validator_accepts_only_verified_matching_candidate(tmp_path: Path) -> None:
     original = tmp_path / "original.png"
     candidate = tmp_path / "candidate.png"

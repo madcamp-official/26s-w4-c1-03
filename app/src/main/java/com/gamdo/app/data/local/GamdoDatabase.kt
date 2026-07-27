@@ -52,6 +52,8 @@ import com.gamdo.app.data.local.entity.StyleProfile
 abstract class GamdoDatabase : RoomDatabase() {
     // Daos.kt — app_settings, presets, sessions, captures
     abstract fun appSettingsDao(): AppSettingsDao
+    abstract fun styleProfileDao(): StyleProfileDao
+    abstract fun cardSelectionsDao(): CardSelectionsDao
     abstract fun presetsDao(): PresetsDao
     abstract fun sessionsDao(): SessionsDao
     abstract fun capturesDao(): CapturesDao

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import json
 import os
 from dataclasses import dataclass
@@ -58,8 +59,10 @@ class InsightFaceVerifier:
     the duration of ``verify`` and are never serialized.
     """
 
-    def __init__(self, threshold: float = 0.35) -> None:
-        self.threshold = threshold
+    DEFAULT_THRESHOLD = 0.35
+
+    def __init__(self, threshold: float = DEFAULT_THRESHOLD) -> None:
+        self.threshold = threshold if 0.0 <= threshold <= 1.0 and math.isfinite(threshold) else self.DEFAULT_THRESHOLD
         self._app: Any | None = None
 
     @classmethod
@@ -67,7 +70,7 @@ class InsightFaceVerifier:
         if os.getenv("GAMDO_INSIGHTFACE_ENABLED", "0") != "1":
             return None
         try:
-            return cls(float(os.getenv("GAMDO_FACE_SIMILARITY_THRESHOLD", "0.35")))
+            return cls(float(os.getenv("GAMDO_FACE_SIMILARITY_THRESHOLD", str(cls.DEFAULT_THRESHOLD))))
         except ValueError:
             return cls()
 
@@ -175,6 +178,8 @@ class CandidateValidator:
 
     def validate(self, original_path: Path, candidate: GeneratedCandidate) -> ValidationResult:
         try:
+            if candidate.path.resolve() == original_path.resolve():
+                return ValidationResult(False, "candidate_aliases_input", {})
             with Image.open(original_path) as original, Image.open(candidate.path) as generated:
                 original.load()
                 generated.load()

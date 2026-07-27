@@ -7,11 +7,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -21,25 +19,26 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import kotlinx.coroutines.launch
+import com.gamdo.app.data.AppContainer
+import com.gamdo.app.data.CardFeature
+import com.gamdo.app.data.ProfileEngine
+import com.gamdo.app.data.StyleProfileResult
+import com.gamdo.app.data.toPresetProfile
 import com.gamdo.app.ui.components.PrimaryPillButton
 import com.gamdo.app.ui.theme.Charcoal900
 import com.gamdo.app.ui.theme.OnDarkHigh
@@ -47,7 +46,9 @@ import com.gamdo.app.ui.theme.OnDarkMedium
 import com.gamdo.app.ui.theme.OnDarkMuted
 import com.gamdo.app.ui.theme.OnSage
 import com.gamdo.app.ui.theme.Sage
-import com.gamdo.app.data.AppContainer
+import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 // 5, not 3: P1_Plan_1.md §6-2 says "5장 이상", and ProfileEngine derives per-dimension
 // confidence from the variance of the picks — three samples cannot make §6-2's criterion
@@ -60,11 +61,44 @@ private val CardJson = Json { ignoreUnknownKeys = true }
 private data class CardCatalog(val v: Int = 1, val cards: List<OnboardingCard>)
 
 @Serializable
-private data class OnboardingCard(val id: String, val thumbnail: String)
+private data class OnboardingCard(
+    val id: String,
+    val thumbnail: String,
+    val subjectScale: Float,
+    val subjectPosition: Float,
+    val headroom: Float,
+    val backgroundRatio: Float,
+    val brightness: Float,
+    val lightType: String,
+    val colorTemperature: Float,
+    val saturation: Float,
+    val contrast: Float,
+    val sharpness: Float,
+    val grain: Float,
+    val candidness: Float,
+    val framing: Float,
+) {
+    fun toFeature() = CardFeature(
+        id = id,
+        subjectScale = subjectScale,
+        subjectPosition = subjectPosition,
+        headroom = headroom,
+        backgroundRatio = backgroundRatio,
+        brightness = brightness,
+        lightType = lightType,
+        colorTemperature = colorTemperature,
+        saturation = saturation,
+        contrast = contrast,
+        sharpness = sharpness,
+        grain = grain,
+        candidness = candidness,
+        framing = framing,
+    )
+}
 
 /**
- * Onboarding (t2): pick preferences (2a) → "내 감도 저장" summary (2b) → done.
- * Card grid is a placeholder — real cards + on-device profiling land in §6-2.
+ * t2 onboarding: pick preferences → save on-device profile → enter camera.
+ * No photo leaves the device while this profile is created.
  */
 @Composable
 fun OnboardingScreen(container: AppContainer, onFinished: () -> Unit) {
@@ -76,14 +110,34 @@ fun OnboardingScreen(container: AppContainer, onFinished: () -> Unit) {
             CardJson.decodeFromString<CardCatalog>(text).cards
         }.getOrDefault(emptyList())
     }
+    val presets = remember {
+        runCatching { container.presetRepository.loadBundledPresets() }.getOrDefault(emptyList())
+    }
+    val presetNames = remember(presets) { presets.associate { it.id to it.displayName } }
+    val presetProfiles = remember(presets) { presets.map { it.toPresetProfile() } }
     var step by rememberSaveable { mutableStateOf(0) }
     var selectedIds by remember { mutableStateOf(emptySet<String>()) }
+    var profile by remember { mutableStateOf<StyleProfileResult?>(null) }
+
     when (step) {
-        0 -> PickStep(cards = cards, onNext = { ids -> selectedIds = ids; step = 1 })
+        0 -> PickStep(cards = cards, onNext = { ids ->
+            val selectedCards = cards.filter { it.id in ids }.map { it.toFeature() }
+            profile = runCatching { ProfileEngine.build(selectedCards, presetProfiles) }.getOrNull()
+            selectedIds = ids
+            step = 1
+        })
+
         else -> SavedStep(
+            summary = profile?.summary,
+            recommendations = profile?.recommendedPresetIds.orEmpty().map { presetNames[it] ?: it },
             onStart = {
                 scope.launch {
-                    container.settingsRepository.saveStylePreference(selectedIds)
+                    profile?.let { container.profileRepository.saveInitialProfile(selectedIds, it) }
+                    container.settingsRepository.saveStylePreference(
+                        cardIds = selectedIds,
+                        recommendedPresetId = profile?.recommendedPresetIds?.firstOrNull()
+                            ?: "clean_social",
+                    )
                     onFinished()
                 }
             },
@@ -156,13 +210,7 @@ private fun PickCard(card: OnboardingCard, selected: Boolean, onToggle: () -> Un
             .aspectRatio(3f / 4f)
             .clip(RoundedCornerShape(14.dp))
             .background(Charcoal900)
-            .then(
-                if (selected) {
-                    Modifier.border(2.5.dp, Sage, RoundedCornerShape(14.dp))
-                } else {
-                    Modifier
-                },
-            )
+            .then(if (selected) Modifier.border(2.5.dp, Sage, RoundedCornerShape(14.dp)) else Modifier)
             .clickable(onClick = onToggle),
     ) {
         AsyncImage(
@@ -188,7 +236,7 @@ private fun PickCard(card: OnboardingCard, selected: Boolean, onToggle: () -> Un
 }
 
 @Composable
-private fun SavedStep(onStart: () -> Unit) {
+private fun SavedStep(summary: String?, recommendations: List<String>, onStart: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -217,9 +265,12 @@ private fun SavedStep(onStart: () -> Unit) {
                 modifier = Modifier.padding(top = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                SavedBullet("부드럽고 자연스러운 색감")
-                SavedBullet("밝은 자연광의 감성")
-                SavedBullet("여백을 살린 구도")
+                (summary?.split(", ") ?: listOf("선택한 취향을 정리하고 있어요")).forEach { bullet ->
+                    SavedBullet(bullet)
+                }
+                if (recommendations.isNotEmpty()) {
+                    SavedBullet("추천: ${recommendations.joinToString(" · ")}")
+                }
             }
             Text(
                 text = "앞으로 촬영 가이드와 보정에 이 느낌을 자동으로 반영해요.",

@@ -64,6 +64,14 @@ class AppContainer(context: Context) {
 
     val settingsRepository: SettingsRepository = SettingsRepository(database.appSettingsDao())
 
+    // P2's preference engine persists the on-device profile only. The server never
+    // receives this data (D4); camera and result defaults read its recommendation.
+    val profileRepository: ProfileRepository = ProfileRepository(
+        styleProfileDao = database.styleProfileDao(),
+        cardSelectionsDao = database.cardSelectionsDao(),
+        json = json,
+    )
+
     // All three are wired on purpose. They are not alternatives: each feeds different
     // methods, and both sets of callers survived the main<-p1 merge. Dropping either
     // group still compiles and still passes every test — the parameters are nullable and

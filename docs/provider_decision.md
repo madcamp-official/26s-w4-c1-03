@@ -42,3 +42,26 @@
 - 실제 인물 카드 사진으로 `queued → processing → validating → done`, 후보 2개, seed 0·1, `validation=passed`를 재확인했다.
 - `/files/...png` 결과 다운로드 HTTP 200을 확인했다.
 - 실기기 `SM-G970N` Android API 테스트 2개를 CAMP-2 SSH 터널 경유로 통과시켰다.
+
+## 2026-07-27 — CAMP-2 AI 품질 게이트 보강
+
+- CAMP-2 재접속 확인: RTX 3090 24GB, NVIDIA 580.173.02, ComfyUI/FastAPI/worker 모두 `active`, ComfyUI `/system_stats`와 FastAPI `/health` 응답 정상.
+- LaMa 5종 benchmark를 재실행해 5/5 케이스에서 seed 0·1 후보 2개씩 생성했다. 총 5.56초(케이스당 약 1.11초)였다.
+- 각 후보에 PNG 디코드 가능·원본과 동일 해상도·원본 바이트와 불일치·케이스 간 결과 중복 없음 검사를 추가했고 10/10 후보가 통과했다. 이는 미적 품질 점수가 아니라 생성 결과 위장·손상·해상도 변경을 막는 최소 게이트다.
+- 워커는 검증 탈락 후보를 즉시 삭제하고, 후보 경로가 입력 원본을 가리키는 경우 `candidate_aliases_input`으로 거부하도록 보강했다. 원본 파일은 삭제하지 않는다.
+- 캘리브레이션 도구는 이제 얼굴이 실제로 검출된 측정 쌍이 5개 미만이거나 `sameIdentity` 라벨이 빠지면 실패한다. 카드 에셋·앱 화면 캡처·합성 이미지는 임계값 산출에 사용하지 않는다.
+- 캘리브레이션은 같은 사람 2쌍 이상과 다른 사람 2쌍 이상을 모두 요구하며, `GAMDO_FACE_SIMILARITY_THRESHOLD`가 `0~1` 범위를 벗어나거나 `NaN`·무한대·비숫자이면 운영 기본값 `0.35`로 되돌린다. 실제 사진 전에는 기본값을 변경하지 않는다.
+
+## 2026-07-27 — InsightFace CUDA provider 재검증
+
+- CAMP-2 worker와 동일하게 `/etc/gamdo/gamdo.env`의 `LD_LIBRARY_PATH`를 적용해 InsightFace `buffalo_l`을 초기화했다.
+- detection·landmark 2종·genderage·recognition 모델 전부에서 `CUDAExecutionProvider`가 활성 provider로 확인됐다. 환경 파일을 적용하지 않은 단독 점검에서는 `libcublasLt.so.12`를 찾지 못해 CPU로 fallback했으나, 운영 worker 환경에서는 재현되지 않았다.
+- InsightFace 패키지의 비개인 다인 테스트 이미지 `t1.jpg`로 명시적 마스크를 얼굴에서 떨어진 위치에 지정해 FastAPI E2E를 재실행했다. `queued → processing → validating → done`, 후보 2개, 두 후보 모두 `validation=passed`를 확인했다. 이 이미지는 threshold 캘리브레이션 라벨 쌍에는 사용하지 않는다.
+
+## 2026-07-27 — LaMa 입력·후보 품질 게이트 보강
+
+- `remove_objects` 요청의 마스크를 서버에서 다시 계산한다. 정규화 좌표 밖의 사각형·다각형, 너무 작은 영역, 과도한 마스크 개수, 실제 면적 30% 초과는 ComfyUI 호출 전에 `422`로 거부한다. 클라이언트가 보낸 `maskAreaRatio`는 편의 필드일 뿐이며 저장되는 작업에는 서버 측 측정값을 사용한다.
+- ComfyUI로 보내는 임시 마스크는 해상도에 비례해 소폭 팽창시켜 드래그 경계의 잔여 halo를 줄인다. 임시 업로드와 마스크 파일은 기존과 같이 요청 처리 후 삭제한다.
+- InsightFace·무결성 검증을 통과한 후보는 히스토그램 변화량이 작은 순서로 결과 rank를 부여한다. 이는 미적 품질 점수가 아니라 원본 장면 보존을 위한 전달 순서 신호이며, 검증 실패 후보를 통과시키지는 않는다.
+- 필수 서버 테스트 `31 passed`를 확인했다. 실제 인물 사진의 육안 품질 평가는 사용자 제공 사진 확보 후 별도로 진행한다.
+- 변경사항을 CAMP-2에 반영한 뒤 InsightFace 패키지의 `t1.jpg`에서 얼굴과 떨어진 하단 마스크로 재검증했다. `queued → processing → validating → done`, 후보 2개, 두 후보 모두 `validation=passed`, 결과 다운로드 HTTP 200(`image/png`)을 확인했다. 얼굴을 덮는 기존 테스트 마스크는 `face_mask_protected`로 안전하게 폴백했다.

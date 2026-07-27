@@ -9,7 +9,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 from .generative import GeneratedCandidate, GenerativeEditProvider, ProviderNotReady, UnavailableProvider
 
@@ -210,6 +210,13 @@ def _masked_upload_path(image_path: Path, operations: list[dict[str, Any]]) -> P
                 x, y = _point((rect["x"], rect["y"]), image.size)
                 w, h = _size((rect["width"], rect["height"]), image.size)
                 drawer.rectangle((x, y, x + w, y + h), fill=255)
+    # Expand the selected region by a small, resolution-aware margin. This
+    # prevents untouched pixels at a hard drag boundary from producing halos.
+    # The mask remains transient and is deleted in the provider finally block.
+    dilation_ratio = float(os.getenv("GAMDO_MASK_DILATION_RATIO", "0.008"))
+    if dilation_ratio > 0:
+        kernel = max(3, min(31, round(min(image.size) * dilation_ratio) * 2 + 1))
+        mask = mask.filter(ImageFilter.MaxFilter(kernel))
     image.putalpha(Image.eval(mask, lambda value: 255 - value))
     handle = tempfile.NamedTemporaryFile(prefix="gamdo-mask-", suffix=".png", delete=False)
     temporary = Path(handle.name)

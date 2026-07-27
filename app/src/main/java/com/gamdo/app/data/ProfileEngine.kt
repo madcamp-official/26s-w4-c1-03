@@ -1,5 +1,7 @@
 package com.gamdo.app.data
 
+import com.gamdo.app.data.preset.StylePreset
+import kotlinx.serialization.Serializable
 import kotlin.math.abs
 import kotlin.math.sqrt
 
@@ -21,6 +23,7 @@ data class CardFeature(
     val framing: Float,
 )
 
+@Serializable
 data class ProfileDimension(val mean: Float, val confidence: Float)
 
 data class PresetProfile(
@@ -130,4 +133,40 @@ object ProfileEngine {
         val framing = if ((composition["backgroundRatio"]?.mean ?: 0.5f) >= 0.5f) "넓은 배경" else "피사체 중심"
         return "$light, $framing, 자연스러운 인물 배치"
     }
+}
+
+/**
+ * Projects the preset contract into ProfileEngine's card-feature space. The
+ * source schema intentionally has no direct framing/sharpness/candidness
+ * counterparts, so those three values use stable documented proxies.
+ */
+fun StylePreset.toPresetProfile(): PresetProfile {
+    fun midpoint(range: List<Double>) = ((range[0] + range[1]) / 2.0).toFloat()
+    return PresetProfile(
+        id = id,
+        composition = mapOf(
+            "subjectScale" to midpoint(composition.subjectScaleRange),
+            "subjectPosition" to when (composition.subjectPosition) {
+                "third_left" -> 1f / 3f
+                "third_right" -> 2f / 3f
+                else -> 0.5f
+            },
+            "headroom" to midpoint(composition.headroomRange),
+            "backgroundRatio" to midpoint(composition.backgroundRatio),
+            "framing" to (1f - cropFreedom.toFloat()).coerceIn(0f, 1f),
+        ),
+        color = mapOf(
+            "brightness" to (0.5f + color.exposureBias.toFloat()).coerceIn(0f, 1f),
+            "colorTemperature" to color.colorTemperature.toFloat(),
+            "saturation" to (0.5f + color.saturation.toFloat()).coerceIn(0f, 1f),
+            "contrast" to (0.5f + color.contrast.toFloat()).coerceIn(0f, 1f),
+            "sharpness" to (1f - color.blurStrength.toFloat()).coerceIn(0f, 1f),
+            "grain" to color.grain.toFloat(),
+            "candidness" to when (composition.posePattern) {
+                "candid_motion" -> 0.85f
+                "natural_standing" -> 0.6f
+                else -> 0.4f
+            },
+        ),
+    )
 }

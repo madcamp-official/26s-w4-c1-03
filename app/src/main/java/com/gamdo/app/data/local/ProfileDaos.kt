@@ -22,6 +22,9 @@ import com.gamdo.app.data.local.entity.StyleProfile
 
 @Dao
 interface CardSelectionsDao {
+    @Query("DELETE FROM card_selections WHERE round = :round")
+    suspend fun deleteRound(round: Int)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(selection: CardSelections)
 

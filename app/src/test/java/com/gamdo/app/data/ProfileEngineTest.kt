@@ -1,5 +1,8 @@
 package com.gamdo.app.data
 
+import com.gamdo.app.data.preset.ColorParams
+import com.gamdo.app.data.preset.Composition
+import com.gamdo.app.data.preset.StylePreset
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
@@ -63,5 +66,31 @@ class ProfileEngineTest {
         val result = ProfileEngine.build(listOf(selected), listOf(temperatureMatch, compositionMatch))
 
         assertEquals("composition_match", result.recommendedPresetIds.first())
+    }
+
+    @Test fun `preset contract projects consistently into profile feature space`() {
+        val preset = StylePreset(
+            id = "candid_feed",
+            name = "Candid Feed",
+            displayName = "자연스러운 피드",
+            composition = Composition(
+                targetAspectRatio = "4:5",
+                subjectScaleRange = listOf(0.3, 0.5),
+                subjectPosition = "third_left",
+                headroomRange = listOf(0.06, 0.14),
+                horizonPosition = 0.55,
+                cameraPitchRange = listOf(-6.0, 6.0),
+                posePattern = "candid_motion",
+                backgroundRatio = listOf(0.45, 0.65),
+            ),
+            color = ColorParams(5500.0, 0.15, 0.05, 0.0, 0.08, 0.05, 0.0, 0.12),
+        )
+
+        val result = preset.toPresetProfile()
+
+        assertEquals(1f / 3f, result.composition.getValue("subjectPosition"), 0.001f)
+        assertEquals(0.4f, result.composition.getValue("subjectScale"), 0.001f)
+        assertEquals(0.85f, result.color.getValue("candidness"), 0.001f)
+        assertEquals(5500f, result.color.getValue("colorTemperature"), 0.001f)
     }
 }

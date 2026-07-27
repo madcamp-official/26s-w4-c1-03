@@ -149,6 +149,26 @@ def test_remove_objects_requires_an_explicit_mask() -> None:
     assert response.json()["code"] == "mask_required"
 
 
+def test_edit_job_rejects_out_of_bounds_or_tiny_mask() -> None:
+    form = {
+        "jobId": "job_invalid_mask",
+        "captureRef": "cap_invalid_mask",
+        "operations": json.dumps([{
+            "type": "remove_objects",
+            "masks": [{"rect": {"x": 0.98, "y": 0.1, "width": 0.05, "height": 0.01}}],
+        }]),
+    }
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/edit-jobs",
+            headers={"X-Device-Id": "invalid-mask-device"},
+            data=form,
+            files={"image": ("input.png", image_bytes(), "image/png")},
+        )
+    assert response.status_code == 422
+    assert response.json()["code"] == "invalid_mask"
+
+
 def test_edit_job_rejects_non_image_payload_without_persisting_file() -> None:
     form = {
         "jobId": "job_bad_image",

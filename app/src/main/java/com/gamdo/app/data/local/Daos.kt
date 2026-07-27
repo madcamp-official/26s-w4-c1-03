@@ -5,11 +5,13 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import com.gamdo.app.data.local.entity.AppSettings
+import com.gamdo.app.data.local.entity.CardSelections
 import com.gamdo.app.data.local.entity.Captures
 import com.gamdo.app.data.local.entity.CaptureEditStack
 import com.gamdo.app.data.local.entity.EditResultsLocal
 import com.gamdo.app.data.local.entity.Presets
 import com.gamdo.app.data.local.entity.Sessions
+import com.gamdo.app.data.local.entity.StyleProfile
 
 /** DAOs for the 4 tables actively used on Day 1 (§1-3). */
 
@@ -20,6 +22,24 @@ interface AppSettingsDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun put(setting: AppSettings)
+}
+
+@Dao
+interface StyleProfileDao {
+    @Query("SELECT * FROM style_profile WHERE id = 1")
+    suspend fun get(): StyleProfile?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(profile: StyleProfile)
+}
+
+@Dao
+interface CardSelectionsDao {
+    @Query("DELETE FROM card_selections WHERE round = :round")
+    suspend fun deleteRound(round: Int)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(selections: List<CardSelections>)
 }
 
 @Dao
