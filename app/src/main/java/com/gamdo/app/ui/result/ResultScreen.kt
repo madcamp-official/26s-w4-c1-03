@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -185,7 +187,6 @@ fun ResultScreen(
         adjustments = seeded
     }
     var saved by remember { mutableStateOf<SavedEdit?>(null) }
-    val context = LocalContext.current
     // Saving re-renders the full-resolution file, which takes seconds. Without a
     // state for it the button looks inert and invites a second tap.
     var saving by remember { mutableStateOf(false) }
@@ -202,6 +203,109 @@ fun ResultScreen(
             withContext(Dispatchers.Default) {
                 QuickFilterEditor.apply(it, selectedFilter, adjustments)
             }
+        }
+    }
+
+    var generating by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    /**
+     * §5-3 생성 복구. Guarded by [generating] — the old entry point was the primary
+     * button whose label doubled as the progress text, so a user watching
+     * "방해 요소를 지우는 중…" could press it again and queue a second job against
+     * the same capture.
+     *
+     * Everything heavy runs off the main thread. Opening the Room writable database
+     * and `BitmapFactory.decodeFile` were both being called straight from the
+     * composition scope, which is Main.
+     */
+    val onRescue: () -> Unit = onRescue@{
+        val selected = capture ?: return@onRescue
+        val mask = maskSelection ?: return@onRescue
+        if (generating) return@onRescue
+        generating = true
+        scope.launch {
+            gpuStatus = "방해 요소를 지우는 중…"
+            val jobId = "job_" + Ulid.generate()
+            val operations = buildJsonArray {
+                add(
+                    buildJsonObject {
+                        put("type", "remove_objects")
+                        put("maskAreaRatio", mask.area)
+                        put(
+                            "masks",
+                            buildJsonArray {
+                                add(
+                                    buildJsonObject {
+                                        put(
+                                            "rect",
+                                            buildJsonObject {
+                                                put("x", mask.left)
+                                                put("y", mask.top)
+                                                put("width", mask.width)
+                                                put("height", mask.height)
+                                            },
+                                        )
+                                    },
+                                )
+                            },
+                        )
+                    },
+                )
+            }
+            runCatching {
+                container.apiClient.createEditJob(
+                    jobId = jobId,
+                    captureRef = selected.id,
+                    operations = operations,
+                    image = File(selected.filePath),
+                )
+                var final = container.apiClient.getEditJob(jobId)
+                for (attempt in 0 until 180) {
+                    if (final.status in setOf("done", "fallback", "failed")) break
+                    delay(1_000)
+                    final = container.apiClient.getEditJob(jobId)
+                }
+                if (final.status == "done" && final.results.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        // Results go to filesDir/edits/, not the databases/ directory
+                        // the old code derived from `openHelper.writableDatabase.path`.
+                        // Writing PNGs beside the Room database risks a name collision
+                        // with its journal files and leaves them outside the
+                        // FileProvider paths, so they could never be shared.
+                        val dir = File(context.filesDir, "edits").apply { mkdirs() }
+                        final.results.mapIndexed { index, result ->
+                            val output = File(dir, "gen_${jobId}_$index.png")
+                            container.apiClient.downloadResult(result.url, output)
+                            container.captureRepository.recordDownloadedEditResult(
+                                captureId = selected.id,
+                                jobId = jobId,
+                                filePath = output.absolutePath,
+                                rank = index,
+                                seed = result.seed,
+                                validationJson = "{\"status\":\"${result.validation}\"}",
+                                operationsJson = operations.toString(),
+                            )
+                            GpuCandidate(
+                                bitmap = BitmapFactory.decodeFile(output.absolutePath)
+                                    ?: error("AI result $index is not decodable"),
+                                seed = result.seed,
+                                validation = result.validation,
+                            )
+                        }
+                    }.let { downloaded ->
+                        generatedCandidates = downloaded
+                        generated = downloaded.firstOrNull()?.bitmap
+                        gpuStatus = "AI 보정 결과를 적용했어요"
+                    }
+                } else {
+                    gpuStatus = "자연스러운 보정만 적용했어요"
+                }
+            }.onFailure {
+                Log.w(TAG, "generative rescue failed", it)
+                gpuStatus = "자연스러운 보정만 적용했어요"
+            }
+            generating = false
         }
     }
     // §4-3. Measured through `edit/ImageMetricsExtractor`, not `detect/`'s.
@@ -235,19 +339,43 @@ fun ResultScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().background(Charcoal900)) {
+        // Both ends are 48dp targets. "‹" was clickable on the glyph itself, which
+        // is a ~10dp hit area, and "완료" was Sage + Bold with **no click at all** —
+        // it looked like the primary way out of the screen and did nothing when
+        // tapped. It is now either a working exit or a plain status word, never a
+        // button-shaped no-op.
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text("‹", color = OnDarkMedium, fontSize = 18.sp, modifier = Modifier.clickable(onClick = onBack))
+            Box(
+                modifier = Modifier.size(48.dp).clip(CircleShape).clickable(onClick = onBack),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("‹", color = OnDarkMedium, fontSize = 18.sp)
+            }
+            Spacer(Modifier.weight(1f))
             Text("보정", color = OnDarkHigh, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-            Text(
-                text = if (saved == null) "완료" else "저장됨",
-                color = Sage,
-                fontSize = 13.5.sp,
-                fontWeight = FontWeight.Bold,
-            )
+            Spacer(Modifier.weight(1f))
+            if (saved == null) {
+                Box(
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .clickable(onClick = onBack)
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("완료", color = Sage, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                }
+            } else {
+                Box(
+                    modifier = Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("저장됨", color = OnDarkMedium, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                }
+            }
         }
 
         Box(
@@ -347,6 +475,41 @@ fun ResultScreen(
             if (displayBitmap == null) {
                 Text("사진을 불러오는 중이에요", color = OnDarkMuted, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center))
             }
+
+            // Mask actions live *inside* the image box.
+            //
+            // They used to be a PrimaryPillButton below it, rendered only while a
+            // mask existed — so the moment a drag produced one, the Column gained
+            // ~54dp, `weight(1f)` took it from the image, and `imageAreaSize` changed
+            // under the finger that was still dragging. The mask jumped away from the
+            // pointer mid-gesture. An overlay cannot do that: the layout is identical
+            // whether or not a mask exists.
+            //
+            // The cancel is new. There was no way to undo a mask — a tap did not
+            // clear it and a short drag force-created one covering 20% of the frame,
+            // so a mis-drag was permanent until the screen was left.
+            if (maskSelection != null) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    MaskActionChip(
+                        text = "선택 취소",
+                        onClick = {
+                            maskSelection = null
+                            gpuStatus = null
+                        },
+                    )
+                    MaskActionChip(
+                        text = if (generating) "지우는 중…" else "사진 살리기",
+                        emphasised = true,
+                        enabled = !generating,
+                        onClick = onRescue,
+                    )
+                }
+            }
             Box(
                 modifier = Modifier.padding(12.dp).clip(RoundedCornerShape(5.dp))
                     .background(Sage).padding(horizontal = 8.dp, vertical = 3.dp),
@@ -424,78 +587,16 @@ fun ResultScreen(
         )
 
         Column(modifier = Modifier.padding(horizontal = 20.dp).padding(top = 8.dp, bottom = 18.dp)) {
-            if (maskSelection != null) {
-                PrimaryPillButton(
-                    text = gpuStatus ?: "사진 살리기",
-                    onClick = {
-                        val selected = capture
-                        if (selected == null) return@PrimaryPillButton
-                        val mask = maskSelection ?: return@PrimaryPillButton
-                        scope.launch {
-                            gpuStatus = "방해 요소를 지우는 중…"
-                            val jobId = "job_" + Ulid.generate()
-                            val operations = buildJsonArray {
-                                add(buildJsonObject {
-                                    put("type", "remove_objects")
-                                    put("maskAreaRatio", mask.area)
-                                    put("masks", buildJsonArray {
-                                        add(buildJsonObject {
-                                            put("rect", buildJsonObject {
-                                                put("x", mask.left)
-                                                put("y", mask.top)
-                                                put("width", mask.width)
-                                                put("height", mask.height)
-                                            })
-                                        })
-                                    })
-                                })
-                            }
-                            runCatching {
-                                container.apiClient.createEditJob(
-                                    jobId = jobId,
-                                    captureRef = selected.id,
-                                    operations = operations,
-                                    image = File(selected.filePath),
-                                )
-                                var final = container.apiClient.getEditJob(jobId)
-                                for (attempt in 0 until 180) {
-                                    if (final.status in setOf("done", "fallback", "failed")) break
-                                    delay(1_000)
-                                    final = container.apiClient.getEditJob(jobId)
-                                }
-                                if (final.status == "done" && final.results.isNotEmpty()) {
-                                    val databasePath = container.database.openHelper.writableDatabase.path
-                                        ?: error("app database path is unavailable")
-                                    val downloaded = final.results.mapIndexed { index, result ->
-                                        val output = File(databasePath.substringBeforeLast('/'), "gamdo-edit-$jobId-$index.png")
-                                        container.apiClient.downloadResult(result.url, output)
-                                        container.captureRepository.recordDownloadedEditResult(
-                                            captureId = selected.id,
-                                            jobId = jobId,
-                                            filePath = output.absolutePath,
-                                            rank = index,
-                                            seed = result.seed,
-                                            validationJson = "{\"status\":\"${result.validation}\"}",
-                                            operationsJson = operations.toString(),
-                                        )
-                                        GpuCandidate(
-                                            bitmap = BitmapFactory.decodeFile(output.absolutePath)
-                                                ?: error("AI result $index is not decodable"),
-                                            seed = result.seed,
-                                            validation = result.validation,
-                                        )
-                                    }
-                                    generatedCandidates = downloaded
-                                    generated = downloaded.firstOrNull()?.bitmap
-                                    gpuStatus = "AI 보정 결과를 적용했어요"
-                                } else {
-                                    gpuStatus = "자연스러운 보정만 적용했어요"
-                                }
-                            }.onFailure {
-                                gpuStatus = "자연스러운 보정만 적용했어요"
-                            }
-                        }
-                    },
+            // Status has its own line now. It used to be written into the primary
+            // button's *label*, so the button read "방해 요소를 지우는 중…" while
+            // staying fully tappable — the one control that looked like a progress
+            // indicator was also the one that queued another job when pressed.
+            gpuStatus?.let { status ->
+                Text(
+                    text = status,
+                    color = OnDarkMedium,
+                    fontSize = 12.5.sp,
+                    modifier = Modifier.padding(bottom = 8.dp),
                 )
             }
             // §4-2 하단: [저장] [공유] [다시 찍기]. 공유 and 다시 찍기 sit beside the
@@ -586,6 +687,42 @@ fun ResultScreen(
                 },
             )
         }
+    }
+}
+
+/**
+ * Action chip drawn over the photo while a mask is selected.
+ *
+ * Deliberately not a [PrimaryPillButton]: D11-5 allows one sage accent, and the
+ * save button below already is it. Two identical filled pills stacked with no gap
+ * made the screen argue with itself about which action was primary.
+ */
+@Composable
+private fun MaskActionChip(
+    text: String,
+    emphasised: Boolean = false,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .heightIn(min = 44.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .background(if (emphasised) Sage.copy(alpha = 0.92f) else Charcoal950.copy(alpha = 0.85f))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            color = when {
+                !enabled -> OnDarkMuted
+                emphasised -> OnSage
+                else -> OnDarkHigh
+            },
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 

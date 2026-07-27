@@ -116,14 +116,53 @@ fun OnboardingScreen(container: AppContainer, onFinished: () -> Unit) {
     val presetNames = remember(presets) { presets.associate { it.id to it.displayName } }
     val presetProfiles = remember(presets) { presets.map { it.toPresetProfile() } }
     var step by rememberSaveable { mutableStateOf(0) }
-    var selectedIds by remember { mutableStateOf(emptySet<String>()) }
-    var profile by remember { mutableStateOf<StyleProfileResult?>(null) }
 
-    when (step) {
-        0 -> PickStep(cards = cards, onNext = { ids ->
-            val selectedCards = cards.filter { it.id in ids }.map { it.toFeature() }
-            profile = runCatching { ProfileEngine.build(selectedCards, presetProfiles) }.getOrNull()
-            selectedIds = ids
+    // Saved, and stored the way `app_settings.selected_card_ids` already stores it.
+    //
+    // `step` was already rememberSaveable while the picks and the profile were plain
+    // `remember`. After a configuration change or a process death the screen came
+    // back on step 1 — "당신의 감도를 저장했어요" — with no profile behind it: no
+    // palette, no bullets, no recommendations, and `onStart` would then write
+    // "clean_social" as if that had been the answer. The personalisation evaporated
+    // without anything failing.
+    var selectedCsv by rememberSaveable { mutableStateOf("") }
+    val selectedIds = remember(selectedCsv) {
+        selectedCsv.split(',').filter { it.isNotBlank() }.toSet()
+    }
+
+    // Derived rather than held. Rebuilding it from the saved ids is what makes the
+    // restore correct; keeping it in a `remember` is what made it disappear.
+    val profile = remember(selectedIds, cards, presetProfiles) {
+        if (selectedIds.isEmpty() || cards.isEmpty() || presetProfiles.isEmpty()) {
+            null
+        } else {
+            runCatching {
+                ProfileEngine.build(
+                    cards.filter { it.id in selectedIds }.map { it.toFeature() },
+                    presetProfiles,
+                )
+            }.getOrNull()
+        }
+    }
+
+    when {
+        // A parse failure used to leave an empty grid whose button never enables —
+        // and onboarding gates the whole app, so that is a permanent dead end on a
+        // silent `runCatching`. Say so, and leave a way through.
+        cards.isEmpty() || presetProfiles.isEmpty() -> CatalogUnavailableStep(
+            onSkip = {
+                scope.launch {
+                    container.settingsRepository.saveStylePreference(
+                        cardIds = emptySet(),
+                        recommendedPresetId = presets.firstOrNull()?.id ?: "clean_social",
+                    )
+                    onFinished()
+                }
+            },
+        )
+
+        step == 0 -> PickStep(cards = cards, onNext = { ids ->
+            selectedCsv = ids.joinToString(",")
             step = 1
         })
 
@@ -154,10 +193,48 @@ fun OnboardingScreen(container: AppContainer, onFinished: () -> Unit) {
     }
 }
 
+/**
+ * Shown when `cards.json` or `presets.json` could not be read.
+ *
+ * Onboarding is the only route to the camera, so a failure here has to leave a way
+ * out rather than an empty grid. The photo picking is skipped and a default style
+ * is written — stated plainly, because the app really will behave differently.
+ */
+@Composable
+private fun CatalogUnavailableStep(onSkip: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().background(Charcoal900),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 26.dp)) {
+            Text(
+                text = "취향 카드를\n불러오지 못했어요",
+                color = OnDarkHigh,
+                fontSize = 23.sp,
+                fontWeight = FontWeight.Bold,
+                lineHeight = 31.sp,
+            )
+            Text(
+                text = "기본 스타일로 시작할 수 있어요. 나중에 다시 설정할 수 있습니다.",
+                color = OnDarkMuted,
+                fontSize = 13.sp,
+                lineHeight = 21.sp,
+                modifier = Modifier.padding(top = 14.dp),
+            )
+        }
+        Column(modifier = Modifier.padding(horizontal = 26.dp).padding(top = 26.dp)) {
+            PrimaryPillButton(text = "기본 스타일로 시작하기", onClick = onSkip)
+        }
+    }
+}
+
 @Composable
 private fun PickStep(cards: List<OnboardingCard>, onNext: (Set<String>) -> Unit) {
-    val selected = remember { mutableStateOf(emptySet<String>()) }
-    val count = selected.value.size
+    // Saved for the same reason the parent's picks are: rotating the phone
+    // half-way through choosing photos used to clear every tick silently.
+    var selectedCsv by rememberSaveable { mutableStateOf("") }
+    val selected = remember(selectedCsv) { selectedCsv.split(',').filter { it.isNotBlank() }.toSet() }
+    val count = selected.size
 
     Column(
         modifier = Modifier
@@ -189,14 +266,14 @@ private fun PickStep(cards: List<OnboardingCard>, onNext: (Set<String>) -> Unit)
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             items(cards, key = { it.id }) { card ->
-                val isSelected = card.id in selected.value
+                val isSelected = card.id in selected
                 PickCard(
                     card = card,
                     selected = isSelected,
                     onToggle = {
-                        selected.value = selected.value.toMutableSet().apply {
-                            if (isSelected) remove(card.id) else add(card.id)
-                        }
+                        selectedCsv = selected.toMutableSet()
+                            .apply { if (isSelected) remove(card.id) else add(card.id) }
+                            .joinToString(",")
                     },
                 )
             }
@@ -206,7 +283,7 @@ private fun PickStep(cards: List<OnboardingCard>, onNext: (Set<String>) -> Unit)
             PrimaryPillButton(
                 text = if (count >= MIN_PICKS) "다음" else "${MIN_PICKS - count}장 더 골라 주세요",
                 enabled = count >= MIN_PICKS,
-                onClick = { onNext(selected.value) },
+                onClick = { onNext(selected) },
             )
         }
     }
