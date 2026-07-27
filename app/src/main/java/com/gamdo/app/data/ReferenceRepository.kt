@@ -6,6 +6,7 @@ import com.gamdo.app.core.ExifSanitizer
 import com.gamdo.app.data.local.CachedReferencesDao
 import com.gamdo.app.data.local.entity.CachedReferences
 import com.gamdo.app.data.network.ReferenceAnalysisResponse
+import com.gamdo.app.data.preset.ResolvedStyle
 import java.io.File
 import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
@@ -84,6 +85,30 @@ class ReferenceRepository(
     private val sanitizer: ReferenceImageSanitizer = ReferenceImageSanitizer(ExifSanitizer::sanitizeFile),
 ) {
 
+    suspend fun activate(
+        settings: SettingsRepository,
+        resolution: ReferenceResolution,
+        scope: ResolvedStyle.ReferenceScope = ResolvedStyle.ReferenceScope.BOTH,
+        strength: Double = ResolvedStyle.DEFAULT_STRENGTH,
+    ): ResolvedStyle {
+        settings.saveActiveReference(resolution.contentHash, scope.name.lowercase(), strength)
+        cleanupCache(resolution.contentHash)
+        return ResolvedStyle.fromReference(
+            hash = resolution.contentHash,
+            target = resolution.targetComposition,
+            colorTarget = resolution.colorTarget,
+            scope = scope,
+            strength = strength,
+        )
+    }
+
+    suspend fun cleanupCache(activeHash: String? = null) {
+        val active = activeHash.orEmpty()
+        val now = System.currentTimeMillis()
+        cachedReferencesDao.deleteExpiredInactive(now - CACHE_MAX_AGE_MS, active)
+        cachedReferencesDao.trimInactive(MAX_CACHE_ENTRIES, active)
+    }
+
     /**
      * §5-1 entry point: [uri] just came back from the system photo picker.
      * Reads the picked bytes through [context]'s resolver and delegates to
@@ -143,6 +168,8 @@ class ReferenceRepository(
     }
 
     companion object {
+        const val MAX_CACHE_ENTRIES = 20
+        const val CACHE_MAX_AGE_MS = 30L * 24L * 60L * 60L * 1000L
         /** SHA-256 of [bytes] as lowercase hex — the `cached_references` cache key. */
         fun sha256Hex(bytes: ByteArray): String {
             val digest = MessageDigest.getInstance("SHA-256").digest(bytes)

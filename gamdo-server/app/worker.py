@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import inspect
 from pathlib import Path
 from threading import Event
 
@@ -50,9 +51,11 @@ class JobWorker:
                 self.database.schedule_input_purge(job["id"])
                 self.purge_once()
                 return True
-            candidates = self.provider.remove_objects(
-                Path(input_row["storage_path"]), operations, job["result_count"]
-            )
+            operation_type = operations[0].get("type") if operations else ""
+            generate = getattr(self.provider, operation_type, None)
+            if not callable(generate):
+                raise ProviderNotReady(f"provider does not support {operation_type}")
+            candidates = generate(Path(input_row["storage_path"]), operations, job["result_count"])
         except (ProviderNotReady, OSError, TimeoutError, ValueError):
             self.database.transition_job(job["id"], "fallback", fail_reason="provider_not_ready")
             self.database.schedule_input_purge(job["id"])
@@ -62,7 +65,7 @@ class JobWorker:
         self.database.transition_job(job["id"], "validating", progress_stage="validating")
         passed_candidates = []
         for candidate in candidates[: job["result_count"]]:
-            validation = self.validator.validate(Path(input_row["storage_path"]), candidate)
+            validation = self._validate_candidate(Path(input_row["storage_path"]), candidate, operations)
             if not validation.passed:
                 # Rejected candidates are not DB-managed results. Remove them now,
                 # but never unlink the input if a faulty provider returned an alias.
@@ -103,6 +106,13 @@ class JobWorker:
         self.database.schedule_input_purge(job["id"])
         self.purge_once()
         return True
+
+    def _validate_candidate(self, original_path: Path, candidate, operations):
+        """Keep older injected validators source-compatible during rollout."""
+        parameters = inspect.signature(self.validator.validate).parameters
+        if len(parameters) >= 3:
+            return self.validator.validate(original_path, candidate, operations)
+        return self.validator.validate(original_path, candidate)
 
     def purge_once(self) -> int:
         purged = 0

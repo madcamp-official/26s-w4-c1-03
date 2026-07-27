@@ -169,6 +169,40 @@ def test_edit_job_rejects_out_of_bounds_or_tiny_mask() -> None:
     assert response.json()["code"] == "invalid_mask"
 
 
+def test_outpaint_requires_one_bounded_direction() -> None:
+    base = {
+        "jobId": "job_outpaint_invalid",
+        "captureRef": "cap_outpaint_invalid",
+        "operations": json.dumps([{"type": "outpaint", "direction": "top", "ratio": 0.2}]),
+    }
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/edit-jobs",
+            headers={"X-Device-Id": "outpaint-device"},
+            data=base,
+            files={"image": ("input.png", image_bytes(), "image/png")},
+        )
+    assert response.status_code == 422
+    assert response.json()["code"] == "invalid_outpaint_ratio"
+
+
+def test_outpaint_is_accepted_as_a_single_explicit_operation() -> None:
+    form = {
+        "jobId": "job_outpaint_valid",
+        "captureRef": "cap_outpaint_valid",
+        "operations": json.dumps([{"type": "outpaint", "direction": "right", "ratio": 0.15}]),
+    }
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/edit-jobs",
+            headers={"X-Device-Id": "outpaint-valid-device"},
+            data=form,
+            files={"image": ("input.png", image_bytes(), "image/png")},
+        )
+    assert response.status_code == 202
+    assert response.json()["status"] == "queued"
+
+
 def test_edit_job_rejects_non_image_payload_without_persisting_file() -> None:
     form = {
         "jobId": "job_bad_image",

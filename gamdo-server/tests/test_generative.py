@@ -101,3 +101,19 @@ def test_candidate_validator_rejects_changed_face_count(tmp_path: Path) -> None:
 
     assert result.passed is False
     assert result.reason == "face_count_changed"
+
+
+def test_candidate_validator_allows_bounded_outpaint_with_original_interior(tmp_path: Path) -> None:
+    original = tmp_path / "original.png"
+    candidate = tmp_path / "candidate.png"
+    Image.new("RGB", (20, 16), (120, 140, 120)).save(original)
+    output = Image.new("RGB", (23, 16), (120, 140, 120))
+    output.save(candidate)
+
+    result = CandidateValidator(SameIdentity()).validate(
+        original,
+        GeneratedCandidate(candidate, 4, operation="outpaint"),
+        [{"type": "outpaint", "direction": "right", "ratio": 0.15}],
+    )
+
+    assert result.passed is True
