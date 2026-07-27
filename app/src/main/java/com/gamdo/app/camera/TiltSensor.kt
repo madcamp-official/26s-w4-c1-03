@@ -35,27 +35,22 @@ import kotlin.math.hypot
  *
  * So the **only** unverified link left is the `TYPE_GRAVITY` sign above.
  *
- * ## The two consumers need OPPOSITE signs — and today they do not have them
+ * ## The two consumers need OPPOSITE signs — resolved, W3
  *
  * Let `A` be the angle of the true horizon as it appears in the frame, clockwise
  * positive. Whatever the gravity convention turns out to be:
  * - the indicator must lie **along** that line, so it draws at `rotate(A)`;
  * - levelling must **cancel** it, so it rotates by `rotate(-A)`.
  *
- * Those are negatives of each other by definition. But right now `CameraOverlay`
- * draws at `-rollDeg` and `GeometryPlan.levelingRotationDeg` returns `-tiltDeg`,
- * i.e. the *same* rotation. Two sites that must differ in sign currently agree,
- * so **exactly one of them is wrong — and that conclusion needs no device.**
+ * Those are negatives of each other by definition. Both sites used to return
+ * `-roll`, i.e. the *same* rotation, so exactly one had to be wrong — a conclusion
+ * that needed no device. The derivation above yields `roll = -θ` and a horizon that
+ * appears at `-θ`, so `A == rollDeg` and the **indicator** was the inverted one.
+ * Fixed in `ui/camera/HorizonGeometry.kt`; `levelingRotationDeg` was left alone.
  *
- * A wrong `TYPE_GRAVITY` premise does not flip both together; it only swaps which
- * one is broken:
- * - if `A == rollDeg` (the derivation above): the **indicator** is inverted, and
- *   `-tiltDeg` levelling is correct;
- * - if `A == -rollDeg`: the indicator is correct and **levelling** is inverted.
- *
- * The derivation above yields `roll = -θ` and a horizon that appears at `-θ`, so
- * `A == rollDeg` and the indicator is the inverted one. Do not "resynchronise"
- * these two call sites — making them match is what breaks the correct one.
+ * `HorizonGeometryTest` now pins the invariant across both verticals, so a future
+ * one-sided flip fails immediately. Do not "resynchronise" these two call sites —
+ * making them agree is what breaks the correct one.
  *
  * Consumers: `ui/camera/CameraOverlay` (horizon indicator) and the local edit
  * pipeline, which reads the shutter-time value out of `captures.conditions_json`.
@@ -72,17 +67,22 @@ import kotlin.math.hypot
  * `TYPE_ACCELEROMETER` never leaves the initial `(0f, 0f)`, so §3-3 needs a
  * "has this ever reported" signal off this class to tell the two apart.
  *
- * DONE-DEVICE — one observation decides which site is broken, not whether both are.
- * Point the camera at a real horizon (window frame, desk edge) and tilt the phone
- * clockwise:
- * - indicator stays **on** the true horizon (leans opposite to the device) ⇒ the
- *   indicator is right, so `-tiltDeg` levelling is the inverted one;
- * - indicator leans **with** the device, off the true horizon ⇒ the indicator is
- *   inverted (the expected outcome per the derivation above); fix
- *   `CameraOverlay`'s `rotate(degrees = -rollDeg)` to `rotate(degrees = rollDeg)`
- *   and leave levelling alone.
+ * DONE-DEVICE — the two sites are now consistent with each other, so one
+ * observation no longer picks a broken site: it confirms or refutes the
+ * `TYPE_GRAVITY` premise for **both at once**. Point the camera at a real horizon
+ * (window frame, desk edge) and tilt the phone clockwise ~10°:
+ * - indicator stays **on** the true horizon (on screen it leans opposite to the
+ *   device) ⇒ premise confirmed, both signs correct, nothing to change;
+ * - indicator leans **with** the device, off the true horizon ⇒ `TYPE_GRAVITY` is
+ *   the opposite of the derivation, `A == -rollDeg`, and **both** sites flip
+ *   together (plus the expectation in `HorizonGeometryTest`).
  *
- * Either way exactly one call site changes. Changing both is always wrong.
+ * Never flip one alone — the invariant test exists to stop that.
+ *
+ * ⚠️ Do **not** judge this by colour. The sage/red swap keys off `abs(rollDeg)`
+ * and is blind to sign, so an inverted indicator turns sage at exactly the same
+ * moments as a correct one. The §2-5 "실기기 확인" history almost certainly passed
+ * for that reason.
  */
 data class TiltReading(val rollDeg: Float, val pitchDeg: Float)
 

@@ -41,8 +41,6 @@
 
 ---
 
----
-
 ## 0.5 현재 상태 (2026-07-26, 병합 `dd01db8` 기준 코드 전수 재판정)
 
 > 이 절은 감사 결과 스냅샷이다. 체크박스와 충돌하면 **체크박스가 아니라 이 절이 최신**이다.
@@ -60,7 +58,9 @@
 
 ### 집계
 
-이 문서 기준: `[x]` 36건 · `[~]` 10건 · `[ ]` 48건 · 컷 4건.
+이 문서 기준(최상위 `- [ ]` 줄만 세고 하위 항목은 제외): `[x]` 39건 — **그중 `📱` 실기기 근거 8건** — · `[~]` 9건 · `[ ]` 46건 · `**컷**` 3건. (2026-07-27 기기검증 반영)
+
+⚠️ **`📱`는 만료된다.** 7/27 검증에서 `[x] 📱`로 서 있던 §1-5 촬영이 실제로는 완전히 죽어 있었다 — 근거가 붙은 뒤에 들어간 회귀였다. 실기기 근거는 그 커밋 시점의 사실이지 현재의 사실이 아니다.
 
 감사는 체크박스 외에 파생 관찰까지 112건을 판정했고, 그중 **`AGENTS.md §7-1`의 done 정의("실기기에서 흐름을 끝까지 수행 가능")를 실제로 만족하는 것은 18건이며 대부분 Day 1~2에 몰려 있다.** 이 문서의 `📱` 표시는 이번 갱신에서 손댄 줄에만 붙였으므로 18건 전부를 표시하지는 않는다 — 실기기 근거의 전수 목록은 감사 결과를 봐야 한다.
 
@@ -77,15 +77,26 @@
 - **§4-1/§4-2가 순감했다.** `main`의 `ResultScreen`을 채택하면서 4탭·전후 슬라이더·공유·다시 찍기·측정 기반 보정이 화면에서 떨어졌다. p1 파이프라인은 컴파일·테스트되지만 **미배선**이다.
 - `edit/LocalEditor.kt`에 **엔진이 둘** 공존한다 — `QuickFilterEditor`(배선됨, 기기 검증) / `class LocalEditor`(§4-1 전 단계, 미배선). §4-1 판정 기준은 **화면에 그려지는 `QuickFilterEditor`**로 고정한다.
 - `ImageMetricsExtractor`가 `detect`·`edit` 두 패키지에 있고 **화면이 틀린 쪽을 쓴다** — `detect` 판은 `tiltDeg`·마진을 0으로 하드코딩한다.
-- **탭 포커스 회귀** — 핀치 줌 `Box`가 `PreviewView` 위에 얹혀 탭이 도달하지 않는다.
+- ~~탭 포커스 회귀~~ → **해소**(2026-07-26, W1). 같은 `pointerInput` 노드 안에서 탭·핀치를 형제 코루틴으로 공존시키고 `CameraControl.startFocusAndMetering`을 직접 호출한다. 부수 확인: CameraX **내장** 탭 포커스는 도달 불가였을 뿐 아니라 이 앱에는 애초에 틀렸다 — 마스크를 몰라 검은 바에서 초점을 잡고 `NaN`을 그대로 넘긴다(테스트로 반증).
 - 마스크 좌표계가 서버와 어긋난다(letterbox 여백 포함 전송).
 - `capture_edit_stack` 기록이 DB 스키마 v2.0 §3.9의 `step_type` 어휘·PK 접두사를 벗어난다.
 
+### 기기 검증에서 나온 것 (2026-07-27, SM-G970N / Android 12)
+
+기기가 붙자마자 **JVM에서는 볼 수 없던 결함 4건**이 나왔고, 그중 하나는 앱의 중심 기능이 완전히 죽어 있던 것이다. 넷 다 그 자리에서 고쳤다.
+
+1. ~~**촬영이 전부 실패했다**~~ → **해소**. `IllegalStateException: Not in application's main thread` — 셔터가 `controller.capture()`를 `withContext(Dispatchers.Default)` 안에서 불렀는데 그 아래 CameraX `takePicture()`는 메인 스레드를 단언한다(`Threads.checkMainThread`). 셔터 3회 = 실패 3회, 저장 0건. 감싼 것 자체가 무의미했다 — `capture()`는 이미 콜백 실행기로 디코드/회전을 메인 밖으로 넘긴다. **마지막 정상 촬영 기록이 7/25 22:24이므로 그 이후 들어간 회귀다.** `[x] 📱`로 표시돼 있던 항목이 실제로는 죽어 있었다 — 실기기 근거는 **코드가 바뀌면 만료된다**.
+2. ~~**상단 바 겹침**~~ → **해소**. `Box(contentAlignment=Center)`가 중앙 칩 폭을 제약하지 않아 스타일 칩이 시작 구역을 덮었다. 조용한 오작동이 아니라 **입력 탈취**다 — 겹친 영역의 탭을 스타일 칩이 먹어 HUD 칩이 부분적으로 도달 불가였다. 악질적인 건 **버그의 존재가 프리셋 이름 길이에 달렸다**는 점이다: `부드러운 필름`(6자)은 겹치고 `밝은 리뷰`(4자)는 안 겹친다. 3구역 `Row`+`weight`로 교체해 겹침이 원리적으로 불가능하게 했고, 이름은 생략부호로 줄되 `변경`은 폭을 지킨다.
+3. ~~**스타일 픽커가 프리뷰를 새게 했다**~~ → **해소**. 픽커가 `Column`의 한 행이라 열릴 때 프리뷰 pane을 140px 줄였는데, `PreviewView`의 SurfaceView가 그 축소를 따라오지 않는다. 실측: pane은 561‥1922로 줄었는데 서피스는 491‥1992를 유지해 **위아래로 70px씩 새어나와** 비율 토글과 하단바를 라이브 카메라 영상으로 덮었다(중심 1241.5 일치, 차이 = 스트립 높이 140px). 스트립을 프리뷰 위로 띄워 pane이 아예 리사이즈되지 않게 했다 — 열림/닫힘 모두 프리뷰 밴드 498‥1847로 동일함을 재측정으로 확인.
+4. ~~**비율 전환 후 첫 탭 유실**~~ → **해소**. `pointerInput(controller, aspect)`의 `aspect` 키가 핸들러를 재시작시키고 재시작이 제스처 하나를 먹었다. 양방향 3/3 재현. `rememberUpdatedState`로 키를 없애 6회 전환 12/12 정상.
+
+**남은 결함 1건 — 기동 후 첫 프리뷰 제스처 유실.** 계측 결과 제스처 #1에서 노드가 `Release`만 받고 `Press`를 못 받는다(#2는 둘 다 받음). Compose가 `pointerInput` 코루틴을 첫 이벤트에서 지연 기동하므로 기동을 유발한 DOWN 자체가 관측되지 않는다. 15초 대기·칩 선탭·바 탭 어느 것으로도 회피되지 않는다. 비용은 **앱 실행당 탭 1회**이며, 고치려면 `PreviewView` 바인딩 방식을 `CameraController` → `surfaceProvider`로 바꿔야 해서 별건으로 둔다.
+
 ### 기기 없이도 확정된 결함
 
-- **수평선 부호** — `CameraOverlay`가 `-rollDeg`, `GeometryPlan`도 `-tiltDeg`로 부호가 같다. 지시선은 장면을 따라 그리고 보정은 상쇄하므로 반대여야 한다 → **정확히 하나가 틀렸다.** 관찰 1회로 어느 쪽인지 확정된다.
+- ~~수평선 부호 — 둘 중 하나가 틀렸다~~ → **해소**(2026-07-26, W3). 지시선을 `rotate(rollDeg)`로 고쳤고 `GeometryPlan`은 무접촉. `지시선 × 레벨링 ≤ 0` 불변식을 테스트로 고정했다. ⚠️ 남은 것은 `TYPE_GRAVITY` 전제 1건이며, 이제 **양쪽에 대해 한 번에** 확정/반증된다 — 반증되면 지시선·레벨링·테스트 기대값을 **셋 다 함께** 뒤집는다. 데드밴드 폭 차이(`MIN_LEVELING_DEG 0.35°` vs `LEVEL_BAND_DEG 1.5°`)는 표시 밴드와 비용 밴드로 목적이 달라 **의도된 것으로 유지**한다.
 - **§7-1 목표 초과** — `alignedEnterFrames=3` × 12fps ≈ 250ms로 "안내 갱신 200ms 이하"를 이미 넘는다.
-- **API 26~28 갤러리 내보내기 무음 실패** — `WRITE_EXTERNAL_STORAGE` 런타임 요청이 없고 `runCatching`이 예외를 삼킨다.
+- ~~API 26~28 갤러리 내보내기 무음 실패~~ → **해소**. minSdk 26→29 상향으로 실패 모드 자체가 사라졌다(2026-07-26).
 
 
 ## Day 1 — 프로젝트 기반 + 카메라가 실제로 찍힌다
@@ -94,7 +105,7 @@
 
 ### 1-1. 프로젝트 셋업
 
-- [x] Android Studio 프로젝트 생성 — 패키지 `com.gamdo.app`, minSdk 26, targetSdk 최신, Kotlin + Compose(Material 3) <!-- targetSdk 35(AGP 8.7.3 무경고 지원). 36 원하면 AGP 8.9+로 상향 -->
+- [x] Android Studio 프로젝트 생성 — 패키지 `com.gamdo.app`, **minSdk 29**(2026-07-26 26→29 상향, §1-5 갤러리 저장 무음 실패 소멸 목적, 오너 승인), targetSdk 최신, Kotlin + Compose(Material 3) <!-- targetSdk 35(AGP 8.7.3 무경고 지원). 36 원하면 AGP 8.9+로 상향 -->
 - [x] 의존성 추가(버전 카탈로그 `libs.versions.toml`로 관리):
   - [x] CameraX: `camera-core`, `camera-camera2`, `camera-lifecycle`, `camera-view` (Preview·ImageAnalysis·ImageCapture)
   - [x] ML Kit: `face-detection`, `pose-detection`(+`pose-detection-accurate`는 성능 보고 결정 — 정의만 해둠)
@@ -115,7 +126,7 @@
 - 완료 기준: 실기기에서 빈 Compose 화면 빌드·실행 성공 <!-- ✅ SM-G970N(Android 12)에서 빌드·설치·실행 성공 확인 -->
 
 ### 1-1. 진행 메모
-- 스택: Gradle 8.9 · AGP 8.7.3 · Kotlin 2.0.21 · KSP 2.0.21-1.0.28 · compileSdk/targetSdk 35 · minSdk 26 · Compose BOM 2024.10.01
+- 스택: Gradle 8.9 · AGP 8.7.3 · Kotlin 2.0.21 · KSP 2.0.21-1.0.28 · compileSdk/targetSdk 35 · **minSdk 29** · Compose BOM 2024.10.01
 - `./gradlew` 사용 시 `JAVA_HOME`을 Android Studio JBR(JDK 17)로 지정 (PATH 기본 java는 19). SDK: `C:\android-sdk`
 
 ### 1-2. 권한 처리
@@ -158,9 +169,9 @@
 
 ### 1-5. CameraX 프리뷰 + 촬영 + 저장
 
-- [~] `CameraController` 클래스: Preview + ImageCapture 바인딩, 전/후면 전환, 탭 포커스 <!-- 부분 — 탭 포커스 회귀. 병합으로 핀치 줌 Box(pointerInput)가 PreviewView 위에 얹혀 탭이 PreviewView.onTouchEvent에 도달하지 않는다. 바인딩·렌즈 전환은 정상 --> <!-- camera/CameraController(LifecycleCameraController 래퍼). 탭포커스·핀치줌은 PreviewView 기본 제공 -->
+- [x] 📱 `CameraController` 클래스: Preview + ImageCapture 바인딩, 전/후면 전환, 탭 포커스 <!-- W1(2026-07-26): 탭 포커스는 꺼진 게 아니라 **도달 불가**였다 — 프리뷰를 덮는 핀치 Box가 유일한 포인터 형제라 PreviewView.onTouchEvent가 한 번도 실행되지 않았다. 같은 pointerInput 노드 안에서 공존시키고 focusAt()를 직접 구현. 기기검증 2026-07-27 SM-G970N(Android 12): 마스크 경계가 정확하다 — pane 1080x1500 기준 4:5에서 local 72 거부 / 79 수락, 1420 수락 / 1428 거부(실제 경계 75·1425). 1:1도 197 거부 / 1277 수락 / 1307 거부. 판정은 `tapFocus ... -> REJECTED` 디버그 로그로 했다 — CameraX의 capture-request 로그는 AE/AWB로도 떠서 수락/거부를 가르지 못한다(하단 바에서 위양성 확인). ⚠️ 남은 것: 기동 후 첫 탭 1회 유실(§0.5), racking 실물 확인 -->
 - [x] 화면 비율 토글: 4:5 / 1:1 — 프리뷰 크롭 마스크 + 촬영 결과 크롭 저장 <!-- BoxWithConstraints 마스크 + centerCropToRatio. 실기기: 원본 3024×3780=정확히 4:5 -->
-- [~] 촬영: JPEG 저장 → 앱 전용 디렉토리(`filesDir/captures/`) + MediaStore로 갤러리 내보내기, EXIF 회전 정상 처리 <!-- 부분 — API 26~28에서 갤러리 내보내기가 무음 실패. WRITE_EXTERNAL_STORAGE 런타임 요청이 없고 runCatching이 SecurityException을 삼켜 로컬 사본만 남는다. 검증 기기(Android 12)는 scoped storage라 이 경로를 타지 않았다. minSdk 26 유지 시 권한 요청 추가 필요 --> <!-- 회전을 픽셀에 반영(orientation=NULL) → 방향 정상. MediaStore Pictures/감도 export -->
+- [x] 📱 촬영: JPEG 저장 → 앱 전용 디렉토리(`filesDir/captures/`) + MediaStore로 갤러리 내보내기, EXIF 회전 정상 처리 <!-- 기기검증 2026-07-27 SM-G970N(Android 12): **이 항목은 죽어 있었고 고쳤다** — 메인 스레드 위반으로 셔터가 3/3 실패했다(§0.5 참조). 수정 후 재검증: 4:5 = 2904x3630(비율 0.8000 정확), 1:1 = 2904x2904(정사각 — '1:1이 조용히 4:5로 재크롭되던' 결함 해소 확인), EXIF 세그먼트 자체가 없어 회전은 픽셀 반영·GPS 부재(D8 충족), Pictures/감도/ 실파일 + MediaStore 등록 확인, captures 3행 saved_to_gallery=1. API 26~28 무음 실패는 minSdk 29 상향으로 소멸(오너 승인). 남은 실패 모드(용량 부족·MediaProvider null) 사용자 통지는 §6-1 소관 --> <!-- 회전을 픽셀에 반영(orientation=NULL) → 방향 정상. MediaStore Pictures/감도 export -->
 - [x] `captures` 테이블에 기록(id `cap_`+ULID, file_path, source='camera_manual') <!-- core/Ulid, CaptureRepository. 앨범 DB 로드로 확인 -->
 - 완료 기준: **찍은 사진이 갤러리 앱에서 올바른 방향·비율로 보인다** <!-- ✅ 실기기: 촬영 원본 4:5·세로 정상, MediaStore(Pictures/감도) 내보내기 확인, 촬영 이미지에 그리드 오버레이 미포함 -->
 
@@ -224,12 +235,12 @@
 
 - [~] 기기대기 · 입력: 얼굴/포즈 결과 + 센서 + 프레임 메타 → 출력 `FrameFeatures`:
   `faceBox, personBox, personCenter, personAreaRatio, headroom, sideMargins, tiltDeg, shake, brightnessMean, backlightFlag, lowLightFlag, aspectRatio, poseConfidence`
-- [~] 기기대기 · 30ms 이내 계산 확인(스톱워치 로그) <!-- JVM 실측 mean 0.048ms / budget 30ms. 실기기 계측은 미실시 -->
+- [x] 📱 30ms 이내 계산 확인(스톱워치 로그) <!-- JVM 실측 mean 0.048ms. 기기검증 2026-07-27 SM-G970N(Android 12) 실측: `FrameFeatures n=540 last=0.06ms mean=0.11ms max=5.43ms budget=30ms over=0` — 540프레임 전부 예산 안, 최악값도 예산의 18%. 실기기가 JVM보다 2배 느리지만 여유가 압도적이라 결론이 바뀌지 않는다 -->
 - 완료 기준: B의 단위 테스트 통과 + 실기기에서 값이 상식적으로 움직임(다가가면 areaRatio 증가 등)
 
 ### 2-5. 오버레이 렌더링 v1
 
-- [x] Compose Canvas 레이어: 얼굴 박스(라운드 사각), 인물 중심점, 수평선 인디케이터(기울면 붉은 기울임 라인) <!-- ui/camera/CameraOverlay. 수평선=roll 회전(|roll|≤1.5° 세이지, 초과 붉은색) 실기기 확인 -->
+- [~] 기기대기 · Compose Canvas 레이어: 얼굴 박스(라운드 사각), 인물 중심점, 수평선 인디케이터(기울면 붉은 기울임 라인) <!-- W3(2026-07-26): 수평선 부호 반전을 수정했다. 이 항목의 기존 '✅ 실기기 확인' 이력이 버그를 통과시킨 이유는 **색 전환이 abs(rollDeg) 기반이라 부호에 무감각**하기 때문이다 — 틀린 상태에서도 똑같이 초록이 된다. 그 사실을 `색 전환은 부호에 무감각하다` 테스트로 코드에 박았다. 얼굴 박스·중심점은 DEBUG 이중 게이트 뒤(TEAM.md §8 승인) -->
 - [x] 정규화 좌표→화면 좌표 변환 유틸(프리뷰 스케일 타입 고려) — **오차 확인: 얼굴에 박스가 정확히 붙는가** <!-- mapNormalized(FILL_CENTER)+전면 미러. 프리뷰·분석 모두 4:3 FOV로 강제해 좌표 일치. 얼굴박스 정확도 육안 확인은 인물 프레임 필요 -->
 - [x] 디버그 HUD 토글(개발용): FrameFeatures 수치 표시 <!-- "내 감도 적용 중" 칩 탭 → HUD 3줄 표시/숨김 실기기 확인 -->
 - 완료 기준: 당일 데모 기준 충족. 저녁 통합 테스트에서 3회 연속 정상 <!-- ✅ 수평선 추종·색전환·HUD 토글 검증. ⏳ 얼굴박스 정확도·3회 연속 통합은 인물 프레임 필요(사용자 확인 대기) -->
@@ -255,10 +266,10 @@
 ### 3-2. 가이드 오버레이 UI (시각 전용 — 텍스트·화살표·게이지 없음)
 
 - [~] 기기대기 · **목표 프레임 오버레이**: 스타일이 요구하는 인물 목표 영역을 반투명 브래킷+실루엣(발 위치 마커 포함)으로 표시, 인물이 영역에 들어오면 색 전환(흰→민트) — 색 전환이 유일한 "맞았다" 피드백
-- [~] 부분 · **수평선 가이드**: 기기 기울기에 따라 기울어지는 수평선, 수평 도달 시 직선+색 전환 <!-- 그려지지만 부호 미확정 — §0.5 '기기 없이도 확정된 결함' 참조. 관찰 1회로 확정 -->
+- [~] 기기대기 · **수평선 가이드**: 기기 기울기에 따라 기울어지는 수평선, 수평 도달 시 직선+색 전환 <!-- W3에서 부호 수정 완료. 남은 것은 TYPE_GRAVITY 전제의 기기 확인 1건 — §0.5 참조. **색으로 판정하지 말 것** -->
 - [x] 오버레이 안정화: 좌표 이동평균, 신뢰도 미달 시 마지막 안정값 유지, 지속 불안정 시 오버레이 잠시 숨김(깜빡임 금지) <!-- OverlayStabilizer + 합성 1분 하네스로 깜빡임 39·64건 → 0건 실측. 실검출 지터는 미포함 -->
-- [ ] 오버레이 표시 on/off 토글(상단) <!-- 상단 바 미시공. 아래 항목과 같은 자리 -->
-- [ ] 상단: 스타일 이름 + 변경 버튼만 <!-- ⚠️ 이게 없어서 릴리스 빌드에 '세션 중 스타일을 바꾸는 수단'이 없다. 온보딩 1회 선택은 저장·반영되지만 Day 1·Day 3 데모 기준의 '스타일을 고르면'이 성립하지 않는다 --> (차콜 UI, 프리뷰가 주인공). **금지: 안내 문구 배너, 방향 화살표, 일치도 게이지·링, 자동 촬영 UI**
+- [~] 기기대기 · 오버레이 표시 on/off 토글(상단) <!-- W5(2026-07-26): 상단 바 start 구역의 '가이드' 칩. 렌더 분기 하나로만 구현해 분석 파이프라인은 계속 돈다(§3-3 KPI·§2-4 계측 유지). 범위는 CameraOverlay(브래킷·실루엣·수평선)뿐이고 3분할 격자는 남는다 -->
+- [x] 📱 상단: 스타일 이름 + 변경 버튼만 <!-- W5(2026-07-26): CameraStatusBar를 3구역으로 재작성. **이것이 없어서 Day 1·Day 3 데모 기준의 '스타일을 고르면'이 둘 다 성립하지 않던 문제가 해소된다.** 세션 상태는 인덱스가 아니라 id로 든다. 기기검증 2026-07-27 SM-G970N(Android 12): 스타일 전환이 가이드 파이프라인까지 실제로 전파된다 — `밝은 리뷰` 선택 시 matchScore 0.33→0.36 (사람이 없어도 StyleTarget이 바뀌므로 확인 가능한 신호). 세션 스코프도 확인: 재기동하니 `밝은 리뷰`가 `부드러운 필름`으로 복귀 = app_settings에 쓰이지 않는다. 겹침 결함 2건은 §0.5 참조. ⚠️ candid_feed↔night_street 쌍은 브래킷 기하가 동일해 확인용으로 쓰지 말 것 — soft_film→bright_review 사용 -->
 - 완료 기준: 1분 연속 관찰에서 오버레이 깜빡임·좌표 튐 없음
 
 ### 3-3. 촬영 시점 기록 (KPI용 — 화면 변화 없음)

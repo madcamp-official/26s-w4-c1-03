@@ -23,9 +23,6 @@ import kotlin.math.min
 
 private val HorizonRed = Color(0xFFE5534B)
 
-/** Degrees within which the horizon counts as reached — draws dead straight and sage. */
-private const val LEVEL_BAND_DEG = 1.5f
-
 /**
  * Overlay state for one frame — normalized (0~1, analysis-upright) boxes/points
  * plus the frame aspect used to map them onto the preview. (§2-5)
@@ -88,11 +85,10 @@ fun CameraOverlay(
         // a shooting posture; near-flat (|pitch| large) has no meaningful horizon,
         // and roll there is undefined (would spin).
         if (showHorizon) {
-            val level = abs(rollDeg) <= LEVEL_BAND_DEG
-            val horizonColor = if (level) Sage else HorizonRed
-            // Inside the level band the line snaps to true horizontal, so
-            // "reached" reads as a straight line and not as a 1.4° tilt.
-            rotate(degrees = if (level) 0f else -rollDeg, pivot = Offset(vw / 2f, vh / 2f)) {
+            val horizonColor = if (isHorizonLevel(rollDeg)) Sage else HorizonRed
+            // Angle decision lives in HorizonGeometry.kt so it is JVM-testable;
+            // this Canvas only draws what it is handed.
+            rotate(degrees = horizonIndicatorRotationDeg(rollDeg), pivot = Offset(vw / 2f, vh / 2f)) {
                 drawLine(
                     color = horizonColor,
                     start = Offset(vw * 0.14f, vh / 2f),
