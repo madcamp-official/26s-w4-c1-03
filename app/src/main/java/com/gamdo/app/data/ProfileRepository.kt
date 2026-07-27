@@ -16,7 +16,7 @@ class ProfileRepository(
     suspend fun saveInitialProfile(cardIds: Set<String>, profile: StyleProfileResult) {
         val now = System.currentTimeMillis()
         cardSelectionsDao.deleteRound(INITIAL_ROUND)
-        cardSelectionsDao.upsertAll(
+        cardSelectionsDao.insertAll(
             cardIds.sorted().map { cardId ->
                 CardSelections(
                     id = "round-$INITIAL_ROUND:$cardId",

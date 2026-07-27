@@ -2,12 +2,15 @@ package com.gamdo.app.camera
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.util.Log
 import android.util.Size
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
+import androidx.camera.core.MeteringPointFactory
 import androidx.camera.core.ZoomState
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
@@ -19,6 +22,7 @@ import androidx.lifecycle.LiveData
 import android.os.Handler
 import android.os.Looper
 import java.util.concurrent.Executor
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -31,10 +35,21 @@ import kotlin.math.roundToInt
 
 data class ZoomBounds(val min: Float = 1f, val max: Float = 1f)
 
+private const val TAG = "CameraController"
+
+/** Seconds a tap-driven focus lock holds before CameraX returns to continuous AF. */
+private const val AUTO_CANCEL_SECONDS = 3L
+
 /**
  * Thin wrapper over CameraX's [LifecycleCameraController] (§1-5). Provides
- * preview + image capture, front/back switching, and (via PreviewView) tap-to-focus
- * and pinch-to-zoom for free. ImageAnalysis is layered on in Day 2.
+ * preview + image capture, front/back switching, and analysis (Day 2).
+ *
+ * **Both built-in touch gestures are switched off below and the app drives them
+ * itself.** They are not a loss we absorbed: they were never reachable. `PreviewView`
+ * feeds them from `onTouchEvent`, and the Compose pinch surface stacked over the
+ * preview consumes every DOWN before the view sees it. Leaving them enabled meant
+ * one change in layer order would silently double-apply pinch and resurrect a
+ * tap-to-focus that focuses on the letterbox bars — see `ui/camera/TapFocusGeometry.kt`.
  */
 class CameraController(context: Context) {
 
@@ -59,6 +74,13 @@ class CameraController(context: Context) {
                 LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.IMAGE_ANALYSIS,
             )
             cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+            // Off explicitly, not by accident. Compose owns both gestures now.
+            // NOTE: these live on CameraController, not on PreviewView — the view
+            // only forwards touches here. isTapToFocusEnabled gates *this* class's
+            // internal onTapToFocus() and has no effect on [focusAt], which goes
+            // straight to cameraControl.startFocusAndMetering.
+            isPinchToZoomEnabled = false
+            isTapToFocusEnabled = false
             // Backpressure: analysis may lag, preview must not (§2-1).
             imageAnalysisBackpressureStrategy = ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
             // Downscale analysis frames to ~640px long side, forced 4:3.
@@ -118,6 +140,32 @@ class CameraController(context: Context) {
         val stepped = (ratio * 10f).roundToInt() / 10f
         camera.setZoomRatio(stepped.coerceIn(bounds.min, bounds.max))
         camera.cameraInfo?.zoomState?.value?.zoomRatio?.let { _zoomRatio.value = it }
+    }
+
+    /**
+     * Drives AF+AE to a point, replacing the disabled built-in tap-to-focus.
+     *
+     * [factory] must be `PreviewView.meteringPointFactory` — it is the only factory
+     * that knows the FILL_CENTER crop and the sensor orientation. [x] and [y] are
+     * view pixels; `ui/camera/TapFocusGeometry.kt` decides which taps get here.
+     *
+     * Silent by design in both failure modes. Before the first bind `cameraControl`
+     * is null, and a device can reject an unsupported metering point synchronously;
+     * neither is actionable by the user, and §3-2 allows no focus ring to report it
+     * to (feedback is the preview racking). The request auto-cancels back to
+     * continuous AF after [AUTO_CANCEL_SECONDS] so a stale tap cannot hold focus.
+     */
+    fun focusAt(factory: MeteringPointFactory, x: Float, y: Float) {
+        val control = camera.cameraControl ?: return
+        val action = FocusMeteringAction
+            .Builder(
+                factory.createPoint(x, y),
+                FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE,
+            )
+            .setAutoCancelDuration(AUTO_CANCEL_SECONDS, TimeUnit.SECONDS)
+            .build()
+        runCatching { control.startFocusAndMetering(action) }
+            .onFailure { Log.d(TAG, "focus request rejected", it) }
     }
 
     fun setAnalyzer(executor: Executor, analyzer: ImageAnalysis.Analyzer) {

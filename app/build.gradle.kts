@@ -20,7 +20,13 @@ android {
 
     defaultConfig {
         applicationId = "com.gamdo.app"
-        minSdk = 26
+        // 29, not 26: below Q the MediaStore gallery export needs a runtime
+        // WRITE_EXTERNAL_STORAGE grant that the permission flow never asked for, so
+        // §1-5's "찍은 사진이 갤러리에서 보인다" failed silently on API 26~28 —
+        // `runCatching` swallowed the SecurityException and only the local copy survived.
+        // Raising the floor to scoped storage deletes that failure mode instead of
+        // branching around it. Owner decision 2026-07-26 (reduced device coverage accepted).
+        minSdk = 29
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
