@@ -1,19 +1,17 @@
 package com.gamdo.app.ui.result
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.util.Log
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -38,32 +36,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.input.pointer.pointerInput
 import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.local.entity.Captures
-import androidx.compose.ui.platform.LocalContext
 import com.gamdo.app.data.SavedEdit
-import com.gamdo.app.edit.CaptureConditions
-import com.gamdo.app.edit.ImageMetricsExtractor
-import com.gamdo.app.detect.Problem
-import com.gamdo.app.detect.ProblemCode
-import com.gamdo.app.detect.ProblemDiagnoser
-import com.gamdo.app.detect.ProblemSeverity
 import com.gamdo.app.edit.EditSourceLoader
 import com.gamdo.app.edit.EditTool
 import com.gamdo.app.edit.FilterEngine
 import com.gamdo.app.edit.QuickFilterEditor
 import com.gamdo.app.edit.LocalFilter
 import com.gamdo.app.ui.components.PrimaryPillButton
-import com.gamdo.app.ui.theme.Charcoal600
 import com.gamdo.app.ui.theme.Charcoal700
 import com.gamdo.app.ui.theme.Charcoal900
 import com.gamdo.app.ui.theme.Charcoal950
@@ -71,62 +57,13 @@ import com.gamdo.app.ui.theme.OnDarkHigh
 import com.gamdo.app.ui.theme.OnDarkMedium
 import com.gamdo.app.ui.theme.OnDarkMuted
 import com.gamdo.app.ui.theme.OnSage
-import com.gamdo.app.ui.theme.OutlineDim
 import com.gamdo.app.ui.theme.Sage
 import java.io.File
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import com.gamdo.app.core.Ulid
-
-private data class NormalizedMask(
-    val left: Float,
-    val top: Float,
-    val right: Float,
-    val bottom: Float,
-) {
-    val width: Float get() = right - left
-    val height: Float get() = bottom - top
-    val area: Float get() = width * height
-}
 
 private const val TAG = "ResultScreen"
-
-private data class GpuCandidate(
-    val bitmap: Bitmap,
-    val seed: Int?,
-    val validation: String?,
-)
-
-/**
- * Drag rectangle → mask normalized against the **image**, not its container.
- *
- * [rect] is where `ContentScale.Fit` actually put the bitmap. Dividing by the
- * container size instead — which this did — inflates the mask by
- * container/image on each axis, so the server erases a region offset from the
- * one the user drew. It never showed on screen because the overlay Canvas
- * divided by the same wrong number and so disagreed consistently.
- */
-private fun maskFromOffsets(start: Offset, end: Offset, rect: FitRect?): NormalizedMask? {
-    if (rect == null || rect.width <= 0f || rect.height <= 0f) return null
-    val left = rect.normalizeX(minOf(start.x, end.x))
-    val top = rect.normalizeY(minOf(start.y, end.y))
-    val right = rect.normalizeX(maxOf(start.x, end.x))
-    val bottom = rect.normalizeY(maxOf(start.y, end.y))
-    return NormalizedMask(left, top, right, bottom)
-}
-
-private fun minimumMaskAt(point: Offset, rect: FitRect?): NormalizedMask? {
-    if (rect == null || rect.width <= 0f || rect.height <= 0f) return null
-    val half = 0.1f
-    val centerX = rect.normalizeX(point.x).coerceIn(half, 1f - half)
-    val centerY = rect.normalizeY(point.y).coerceIn(half, 1f - half)
-    return NormalizedMask(centerX - half, centerY - half, centerX + half, centerY + half)
-}
 
 @Composable
 fun ResultScreen(
@@ -185,17 +122,12 @@ fun ResultScreen(
         adjustments = seeded
     }
     var saved by remember { mutableStateOf<SavedEdit?>(null) }
-    val context = LocalContext.current
     // Saving re-renders the full-resolution file, which takes seconds. Without a
     // state for it the button looks inert and invites a second tap.
     var saving by remember { mutableStateOf(false) }
-    var generated by remember { mutableStateOf<Bitmap?>(null) }
-    var generatedCandidates by remember { mutableStateOf<List<GpuCandidate>>(emptyList()) }
-    var maskSelection by remember { mutableStateOf<NormalizedMask?>(null) }
-    var dragStart by remember { mutableStateOf<Offset?>(null) }
-    var dragCurrent by remember { mutableStateOf<Offset?>(null) }
-    var imageAreaSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
-    var gpuStatus by remember { mutableStateOf<String?>(null) }
+    // A save can fail — full disk, refused MediaStore insert — and the user has to
+    // hear about it. 2f has no status line, so this stays empty except on failure.
+    var saveError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val edited by produceState<Bitmap?>(source, source, selectedFilter, adjustments) {
         value = source?.let {
@@ -204,68 +136,47 @@ fun ResultScreen(
             }
         }
     }
-    // §4-3. Measured through `edit/ImageMetricsExtractor`, not `detect/`'s.
-    //
-    // The `detect` extractor returns tiltDeg = 0 and both margins = 0 as constants —
-    // it has no way to know them from pixels alone — so TILT and EXCESS_MARGIN could
-    // never clear their thresholds, and BACKLIGHT's ratio stayed null. Three of the
-    // six chips were unreachable by construction, and nothing failed to say so.
-    //
-    // The two facts they need come from the shutter, not the file: `tiltDeg` is a
-    // sensor reading and `subject` is where the person was. Both now arrive in
-    // `conditions_json` (§3-3), which is what makes this switch possible at all.
-    // A gallery import has no document and degrades to "no tilt claim, no subject",
-    // which is honest — we did not measure it.
-    val diagnosedProblems by produceState<List<Problem>>(emptyList(), source, capture) {
-        val bitmap = source
-        val conditions = CaptureConditions.parse(capture?.conditionsJson)
-        value = if (bitmap == null) {
-            emptyList()
-        } else {
-            withContext(Dispatchers.Default) {
-                ProblemDiagnoser().diagnose(
-                    ImageMetricsExtractor.extract(
-                        bitmap = bitmap,
-                        tiltDeg = conditions.tiltDegOrZero,
-                        subject = conditions.subject,
-                    ),
-                )
-            }
-        }
-    }
 
     Column(modifier = Modifier.fillMaxSize().background(Charcoal900)) {
+        // 2f header: `‹` (18sp, OnDarkMedium) · `보정` (15sp bold) · `완료`
+        // (13.5sp bold, Sage), space-between at 20dp / 14dp top.
+        //
+        // The one thing added to the drawing is that both ends are real 44dp touch
+        // targets, reached with padding so the glyphs still land where the design
+        // puts them. `완료` in particular was Sage + Bold with no click at all — the
+        // design draws it as the way out of the screen, so it has to be one.
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text("‹", color = OnDarkMedium, fontSize = 18.sp, modifier = Modifier.clickable(onClick = onBack))
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onBack),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("‹", color = OnDarkMedium, fontSize = 18.sp)
+            }
             Text("보정", color = OnDarkHigh, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-            Text(
-                text = if (saved == null) "완료" else "저장됨",
-                color = Sage,
-                fontSize = 13.5.sp,
-                fontWeight = FontWeight.Bold,
-            )
+            Box(
+                modifier = Modifier
+                    .heightIn(min = 44.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .clickable(onClick = onBack)
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("완료", color = Sage, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+            }
         }
 
         Box(
             modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth().weight(1f)
                 .clip(RoundedCornerShape(16.dp)).background(Charcoal950),
         ) {
-            val displayBitmap = generated ?: edited ?: source
-            // Where Fit actually put those pixels. Every mask coordinate below is
-            // relative to this and never to `imageAreaSize`, which includes the
-            // letterbox bars.
-            val fitRect = displayBitmap?.let {
-                fitImageRect(
-                    containerW = imageAreaSize.width.toFloat(),
-                    containerH = imageAreaSize.height.toFloat(),
-                    imageW = it.width,
-                    imageH = it.height,
-                )
-            }
+            val displayBitmap = edited ?: source
             // Show the untouched source immediately while the full-resolution
             // local edit is still being computed. Waiting for `edited` here
             // made a valid gallery photo look like a placeholder on device.
@@ -276,126 +187,17 @@ fun ResultScreen(
                     contentScale = ContentScale.Fit,
                     modifier = Modifier
                         .fillMaxSize()
-                        .onSizeChanged { imageAreaSize = it }
-                        .pointerInput(source, generated) {
-                            detectDragGestures(
-                                onDragStart = { offset ->
-                                    // A drag that starts on a letterbox bar is not
-                                    // on the photo, so there is nothing to erase.
-                                    if (fitRect?.contains(offset.x, offset.y) != true) {
-                                        return@detectDragGestures
-                                    }
-                                    dragStart = offset
-                                    dragCurrent = offset
-                                    maskSelection = null
-                                    gpuStatus = "지울 영역을 드래그하세요"
-                                },
-                                onDrag = { change, dragAmount ->
-                                    val start = dragStart ?: return@detectDragGestures
-                                    val current = (dragCurrent ?: start) + dragAmount
-                                    dragCurrent = current
-                                    maskSelection = maskFromOffsets(start, current, fitRect)
-                                },
-                                onDragEnd = {
-                                    val start = dragStart
-                                    val end = dragCurrent
-                                    maskSelection = if (start != null && end != null) {
-                                        maskFromOffsets(start, end, fitRect)
-                                            ?.takeIf { it.width >= 0.02f && it.height >= 0.02f }
-                                            ?: minimumMaskAt(end, fitRect)
-                                    } else {
-                                        null
-                                    }
-                                    dragStart = null
-                                    dragCurrent = null
-                                    if (maskSelection != null) gpuStatus = "선택한 영역을 지울 수 있어요"
-                                },
-                                onDragCancel = {
-                                    dragStart = null
-                                    dragCurrent = null
-                                    maskSelection = null
-                                },
-                            )
-                        },
                 )
-                maskSelection?.let { mask ->
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        // Drawn through the same rect the mask was normalized
-                        // against. Using `size` here would put the overlay back on
-                        // the container and hide the very mismatch this fixes —
-                        // the old code was wrong in both places and so looked right.
-                        val r = fitRect ?: return@Canvas
-                        val topLeft = Offset(r.toContainerX(mask.left), r.toContainerY(mask.top))
-                        val rectSize = androidx.compose.ui.geometry.Size(
-                            mask.width * r.width,
-                            mask.height * r.height,
-                        )
-                        drawRect(
-                            color = Sage.copy(alpha = 0.22f),
-                            topLeft = topLeft,
-                            size = rectSize,
-                        )
-                        drawRect(
-                            color = Sage,
-                            topLeft = topLeft,
-                            size = rectSize,
-                            style = Stroke(width = 4f),
-                        )
-                    }
-                }
             }
             if (displayBitmap == null) {
                 Text("사진을 불러오는 중이에요", color = OnDarkMuted, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center))
             }
+
             Box(
                 modifier = Modifier.padding(12.dp).clip(RoundedCornerShape(5.dp))
                     .background(Sage).padding(horizontal = 8.dp, vertical = 3.dp),
             ) {
                 Text(selectedFilter.label, color = OnSage, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
-            }
-        }
-
-        if (diagnosedProblems.isNotEmpty()) {
-            Row(
-                modifier = Modifier.padding(start = 20.dp, top = 10.dp)
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                diagnosedProblems.forEach { problem ->
-                    DiagnosticChip(problem)
-                }
-            }
-        }
-
-        if (generatedCandidates.size > 1) {
-            Text(
-                "생성 결과를 골라보세요",
-                color = OnDarkMedium,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(start = 20.dp, top = 10.dp),
-            )
-            Row(
-                modifier = Modifier.padding(start = 20.dp, top = 6.dp).horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                generatedCandidates.forEachIndexed { index, candidate ->
-                    Image(
-                        bitmap = candidate.bitmap.asImageBitmap(),
-                        contentDescription = "AI 결과 ${index + 1}",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(72.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .then(
-                                if (generated == candidate.bitmap) Modifier.border(2.dp, Sage, RoundedCornerShape(10.dp))
-                                else Modifier.border(1.dp, OutlineDim, RoundedCornerShape(10.dp)),
-                            )
-                            .clickable {
-                                generated = candidate.bitmap
-                                gpuStatus = "AI 결과 ${index + 1}을 선택했어요"
-                            },
-                    )
-                }
             }
         }
 
@@ -424,111 +226,17 @@ fun ResultScreen(
         )
 
         Column(modifier = Modifier.padding(horizontal = 20.dp).padding(top = 8.dp, bottom = 18.dp)) {
-            if (maskSelection != null) {
-                PrimaryPillButton(
-                    text = gpuStatus ?: "사진 살리기",
-                    onClick = {
-                        val selected = capture
-                        if (selected == null) return@PrimaryPillButton
-                        val mask = maskSelection ?: return@PrimaryPillButton
-                        scope.launch {
-                            gpuStatus = "방해 요소를 지우는 중…"
-                            val jobId = "job_" + Ulid.generate()
-                            val operations = buildJsonArray {
-                                add(buildJsonObject {
-                                    put("type", "remove_objects")
-                                    put("maskAreaRatio", mask.area)
-                                    put("masks", buildJsonArray {
-                                        add(buildJsonObject {
-                                            put("rect", buildJsonObject {
-                                                put("x", mask.left)
-                                                put("y", mask.top)
-                                                put("width", mask.width)
-                                                put("height", mask.height)
-                                            })
-                                        })
-                                    })
-                                })
-                            }
-                            runCatching {
-                                container.apiClient.createEditJob(
-                                    jobId = jobId,
-                                    captureRef = selected.id,
-                                    operations = operations,
-                                    image = File(selected.filePath),
-                                )
-                                var final = container.apiClient.getEditJob(jobId)
-                                for (attempt in 0 until 180) {
-                                    if (final.status in setOf("done", "fallback", "failed")) break
-                                    delay(1_000)
-                                    final = container.apiClient.getEditJob(jobId)
-                                }
-                                if (final.status == "done" && final.results.isNotEmpty()) {
-                                    val databasePath = container.database.openHelper.writableDatabase.path
-                                        ?: error("app database path is unavailable")
-                                    val downloaded = final.results.mapIndexed { index, result ->
-                                        val output = File(databasePath.substringBeforeLast('/'), "gamdo-edit-$jobId-$index.png")
-                                        container.apiClient.downloadResult(result.url, output)
-                                        container.captureRepository.recordDownloadedEditResult(
-                                            captureId = selected.id,
-                                            jobId = jobId,
-                                            filePath = output.absolutePath,
-                                            rank = index,
-                                            seed = result.seed,
-                                            validationJson = "{\"status\":\"${result.validation}\"}",
-                                            operationsJson = operations.toString(),
-                                        )
-                                        GpuCandidate(
-                                            bitmap = BitmapFactory.decodeFile(output.absolutePath)
-                                                ?: error("AI result $index is not decodable"),
-                                            seed = result.seed,
-                                            validation = result.validation,
-                                        )
-                                    }
-                                    generatedCandidates = downloaded
-                                    generated = downloaded.firstOrNull()?.bitmap
-                                    gpuStatus = "AI 보정 결과를 적용했어요"
-                                } else {
-                                    gpuStatus = "자연스러운 보정만 적용했어요"
-                                }
-                            }.onFailure {
-                                gpuStatus = "자연스러운 보정만 적용했어요"
-                            }
-                        }
-                    },
+            saveError?.let { status ->
+                Text(
+                    text = status,
+                    color = OnDarkMedium,
+                    fontSize = 12.5.sp,
+                    modifier = Modifier.padding(bottom = 8.dp),
                 )
             }
-            // §4-2 하단: [저장] [공유] [다시 찍기]. 공유 and 다시 찍기 sit beside the
-            // save rather than under it — the design gives this row one line, and a
-            // secondary action that pushes the primary one off-screen is worse than
-            // a narrower primary.
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                SecondaryPill(
-                    text = "공유",
-                    // Sharing an unsaved edit would hand out the *original* file,
-                    // which is not what is on screen. Enabled only once there is a
-                    // saved result to share.
-                    enabled = saved != null,
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        val path = saved?.filePath ?: return@SecondaryPill
-                        if (!shareImage(context, File(path))) {
-                            gpuStatus = "공유할 수 있는 앱이 없어요"
-                        }
-                    },
-                )
-                SecondaryPill(
-                    text = "다시 찍기",
-                    enabled = true,
-                    modifier = Modifier.weight(1f),
-                    onClick = onBack,
-                )
-            }
-
+            // 2f's bottom is one button and nothing else. `[저장] [공유] [다시 찍기]`
+            // comes from the plan's §4-2 checklist, which predates this design — the
+            // owner never drew 공유 or 다시 찍기, so they are not built.
             PrimaryPillButton(
                 text = when {
                     // Three states, not two. A save whose MediaStore insert was
@@ -549,9 +257,8 @@ fun ResultScreen(
                             // Re-render at full resolution rather than saving the
                             // preview: `edited` is a downsampled bitmap now, and
                             // writing it out would quietly ship a low-resolution
-                            // photo to the gallery. An AI result is used as-is
-                            // because it did not come from this pipeline.
-                            val result = generated ?: withContext(Dispatchers.Default) {
+                            // photo to the gallery.
+                            val result = withContext(Dispatchers.Default) {
                                 EditSourceLoader.decode(File(captureValue.filePath), SAVE_MAX_SIDE)
                                     ?.let { QuickFilterEditor.apply(it, selectedFilter, adjustments) }
                             } ?: edited ?: source ?: return@launch
@@ -566,7 +273,7 @@ fun ResultScreen(
                             )
                             saved = written
                             if (!written.savedToGallery) {
-                                gpuStatus = "갤러리에 못 넣었어요. 앱에는 저장했습니다"
+                                saveError = "갤러리에 못 넣었어요. 앱에는 저장했습니다"
                             }
                         } catch (t: Throwable) {
                             // Without this the exception left `scope`'s Job and took
@@ -578,7 +285,7 @@ fun ResultScreen(
                             // either — the button snapping back from "저장 중…" with
                             // nothing saved and nothing said is what the user saw.
                             Log.e(TAG, "save failed", t)
-                            gpuStatus = "저장하지 못했어요. 저장 공간을 확인해 주세요"
+                            saveError = "저장하지 못했어요. 저장 공간을 확인해 주세요"
                         } finally {
                             saving = false
                         }
@@ -586,53 +293,6 @@ fun ResultScreen(
                 },
             )
         }
-    }
-}
-
-/** Outlined counterpart to [PrimaryPillButton] for the secondary row (§4-2). */
-@Composable
-private fun SecondaryPill(
-    text: String,
-    enabled: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(22.dp))
-            .background(Charcoal700)
-            // `clickable(enabled = false)` also stops the ripple, so a disabled pill
-            // cannot look pressed — the greyed label and the dead tap agree.
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 12.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = text,
-            color = if (enabled) OnDarkHigh else OnDarkMuted,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold,
-        )
-    }
-}
-
-@Composable
-private fun DiagnosticChip(problem: Problem) {
-    val label = when (problem.code) {
-        ProblemCode.UNDEREXPOSED -> "조금 어두워요"
-        ProblemCode.OVEREXPOSED -> "빛이 강해요"
-        ProblemCode.BLUR_SUSPECT -> "선명도를 확인해보세요"
-        ProblemCode.TILT -> "기울기를 확인해보세요"
-        ProblemCode.EXCESS_MARGIN -> "여백이 넓어요"
-        ProblemCode.BACKLIGHT -> "뒤에서 빛이 들어와요"
-    }
-    val color = if (problem.severity == ProblemSeverity.HIGH) OnDarkHigh else OnDarkMedium
-    Box(
-        modifier = Modifier.clip(RoundedCornerShape(8.dp))
-            .background(Charcoal700)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-    ) {
-        Text(label, color = color, fontSize = 11.sp)
     }
 }
 
