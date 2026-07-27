@@ -141,6 +141,10 @@ data class CachedReferences(
     @PrimaryKey @ColumnInfo(name = "content_hash") val contentHash: String,
     @ColumnInfo(name = "analysis_json") val analysisJson: String,
     @ColumnInfo(name = "target_json") val targetJson: String,
+    // Name is narrower than the contents: this holds the whole colorTarget
+    // (palette + colorTemperature + exposureBias) from POST /references/analyze,
+    // not just the palette. The column name is frozen (불변규칙 2 — additive only),
+    // so it is documented rather than renamed.
     @ColumnInfo(name = "palette_json") val paletteJson: String = "{}",
     @ColumnInfo(name = "analysis_v") val analysisV: Int = 1,
     @ColumnInfo(name = "created_at") val createdAt: Long,

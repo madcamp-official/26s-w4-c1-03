@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider path config for OS-share-sheet sharing (§6-3: "공유는 OS 공유 시트만").
+  CaptureRepository.capturesDir() (data/CaptureRepository.kt, owned by local-edit-agent)
+  writes photos to context.filesDir/captures/ — internal storage, not directly
+  accessible to other apps, hence the need for a content:// URI via FileProvider.
+
+  This file alone does nothing: a <provider> entry referencing
+  "@xml/file_paths" still needs to be added to AndroidManifest.xml. That file
+  is unowned in the current path split (not on anyone's edit-allowed or
+  edit-forbidden list) — flagged to lead rather than added here unilaterally.
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <files-path name="captures" path="captures/" />
+</paths>

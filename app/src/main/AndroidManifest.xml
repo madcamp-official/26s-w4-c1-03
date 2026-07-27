@@ -55,5 +55,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- OS share sheet (§6-3: "공유는 OS 공유 시트만"). Photos live in
+             filesDir/captures/ (internal storage), so sharing them out needs a
+             content:// URI. exported=false + grantUriPermissions: the receiving
+             app gets read access only for the URI we hand it, per Intent. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

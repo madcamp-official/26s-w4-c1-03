@@ -92,7 +92,7 @@
 
 ### 1-3. 진행 메모
 - `core/DeviceIdStore`(DataStore) · `data/local/`(GamdoDatabase + 14 entity + Daos) · `data/preset/StylePreset`(직렬화) · `data/PresetRepository`(assets 시딩) · `data/AppContainer`(수동 DI)
-- ⚠️ `assets/presets.json`은 **B 산출물 대기 중 임시 폴백** — B 확정본 도착 시 교체(스키마 동일하므로 값만 바뀜)
+- ✅ `assets/presets.json`은 **확정본**(2026-07-25 검증) — `gamdo-server/presets.json`과 개행(LF↔CRLF)만 다르고 6종 전 필드·순서·값이 100% 동일함을 실호출로 확인. 기존의 "임시 폴백" 서술은 폐기. 이후 B와 파라미터를 튜닝하면 양쪽을 함께 갱신할 것
 - 미완: `X-Device-Id` 헤더 전송(네트워크 연동 시), style_profile 등 정의-only 10테이블 DAO(사용일에 추가)
 
 ### 1-4. 화면 골격 (내비게이션만, 디자인 없이)

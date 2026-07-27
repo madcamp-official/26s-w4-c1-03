@@ -49,7 +49,11 @@ import com.gamdo.app.ui.theme.OnSage
 import com.gamdo.app.ui.theme.Sage
 import com.gamdo.app.data.AppContainer
 
-private const val MIN_PICKS = 3
+// 5, not 3: P1_Plan_1.md §6-2 says "5장 이상", and ProfileEngine derives per-dimension
+// confidence from the variance of the picks — three samples cannot make §6-2's criterion
+// ("두 카드 세트가 스타일 스트립 상위 순서를 다르게 만듦") hold reliably. Lead ruling,
+// .claude/TEAM.md §8. Every UI string interpolates this constant, so nothing says "3장".
+private const val MIN_PICKS = 5
 private val CardJson = Json { ignoreUnknownKeys = true }
 
 @Serializable

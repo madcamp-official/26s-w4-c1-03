@@ -19,6 +19,7 @@ local.properties
 .cxx/
 captures/
 .externalNativeBuild/
+.kotlin/
 
 # Node / React Native / Expo output
 node_modules/

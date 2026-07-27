@@ -54,7 +54,7 @@ import com.gamdo.app.detect.ProblemCode
 import com.gamdo.app.detect.ProblemDiagnoser
 import com.gamdo.app.detect.ProblemSeverity
 import com.gamdo.app.edit.LocalEditParams
-import com.gamdo.app.edit.LocalEditor
+import com.gamdo.app.edit.QuickFilterEditor
 import com.gamdo.app.edit.LocalFilter
 import com.gamdo.app.ui.components.PrimaryPillButton
 import com.gamdo.app.ui.theme.Charcoal600
@@ -154,7 +154,7 @@ fun ResultScreen(
     val edited by produceState<Bitmap?>(source, source, selectedFilter, brightness, warmth, contrast) {
         value = source?.let {
             withContext(Dispatchers.Default) {
-                LocalEditor.apply(
+                QuickFilterEditor.apply(
                     it,
                     selectedFilter,
                     LocalEditParams(brightness, warmth, contrast),

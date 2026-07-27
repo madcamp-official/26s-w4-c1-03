@@ -58,23 +58,9 @@ interface CapturesDao {
     suspend fun getRecent(limit: Int = 60): List<Captures>
 }
 
-@Dao
-interface CaptureEditStackDao {
-    @Insert(onConflict = OnConflictStrategy.ABORT)
-    suspend fun insert(step: CaptureEditStack)
-
-    @Query("SELECT COALESCE(MAX(step_order), 0) + 1 FROM capture_edit_stack WHERE capture_id = :captureId")
-    suspend fun nextStepOrder(captureId: String): Int
-
-    @Query("SELECT * FROM capture_edit_stack WHERE capture_id = :captureId AND active = 1 ORDER BY step_order")
-    suspend fun getActive(captureId: String): List<CaptureEditStack>
-}
-
-@Dao
-interface EditResultsLocalDao {
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insert(result: EditResultsLocal)
-
-    @Query("SELECT * FROM edit_results_local WHERE capture_id = :captureId ORDER BY rank")
-    suspend fun getForCapture(captureId: String): List<EditResultsLocal>
-}
+// CaptureEditStackDao / EditResultsLocalDao used to live here as well. Both branches
+// of the main<-p1 merge declared them — main in this file, p1 in EditDaos.kt — which
+// is a same-package redeclaration that git merged without a conflict marker. They are
+// now unified in EditDaos.kt, whose versions are supersets apart from `nextStepOrder`,
+// which was carried over from here. Nothing was dropped that had a caller: `getActive`
+// and `getForCapture` had none (EditDaos' `activeStack` / `forCapture` cover them).
