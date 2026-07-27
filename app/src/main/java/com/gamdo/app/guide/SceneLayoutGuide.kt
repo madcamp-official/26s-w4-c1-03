@@ -35,6 +35,8 @@ data class SceneLayoutGuide(
     val prompt: LayoutGuidePrompt? = null,
     val subjectKind: SubjectKind = SubjectKind.UNKNOWN,
     val stabilized: Boolean = false,
+    /** Fixed slots are rendered by the camera owner; they never follow detections. */
+    val fixedLayout: FixedLayoutGuide? = null,
 )
 
 /**

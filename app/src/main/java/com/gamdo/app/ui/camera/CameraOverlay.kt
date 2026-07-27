@@ -23,6 +23,7 @@ import com.gamdo.app.guide.OverlayProjection
 import com.gamdo.app.guide.RectN
 import com.gamdo.app.guide.LayoutGuideLevel
 import com.gamdo.app.guide.SceneLayoutGuide
+import com.gamdo.app.guide.SlotMatchStatus
 import com.gamdo.app.ui.theme.Sage
 import kotlin.math.abs
 import kotlin.math.max
@@ -111,7 +112,35 @@ fun CameraOverlay(
 
         val data = overlay ?: return@Canvas
 
-        data.guide?.takeIf { it.visible }?.let { guide ->
+        // Fixed-layout mode is intentionally independent from detections: the
+        // slots stay on screen while the user moves the camera or the objects.
+        data.layoutGuide?.fixedLayout?.let { fixed ->
+            fixed.template.slots.forEach { slot ->
+                val match = fixed.matches.firstOrNull { it.slotId == slot.id }
+                val slotRect = mapRect(slot.bounds, data, vw, vh)
+                val color = when (match?.status) {
+                    SlotMatchStatus.FILLED -> Sage
+                    SlotMatchStatus.DETECTING -> Color.White.copy(alpha = 0.72f)
+                    SlotMatchStatus.EMPTY, null -> Color.White.copy(alpha = 0.9f)
+                }
+                drawRoundRect(
+                    color = color.copy(alpha = fixed.template.opacity),
+                    topLeft = Offset(slotRect.left, slotRect.top),
+                    size = Size(slotRect.width, slotRect.height),
+                )
+                drawRoundRect(
+                    color = color,
+                    topLeft = Offset(slotRect.left, slotRect.top),
+                    size = Size(slotRect.width, slotRect.height),
+                    cornerRadius = CornerRadius(22.dp.toPx(), 22.dp.toPx()),
+                    style = Stroke(width = 2.dp.toPx()),
+                )
+            }
+        }
+
+        data.guide
+            ?.takeIf { it.visible && data.layoutGuide?.fixedLayout == null }
+            ?.let { guide ->
             val frame = mapRect(guide.targetFrame, data, vw, vh)
             // D2-3: the colour swap is the entire success feedback.
             val guideColor = if (guide.aligned) Sage else Color.White.copy(alpha = 0.9f)
@@ -128,7 +157,7 @@ fun CameraOverlay(
                 drawFootMarker(ghost, guideColor)
             }
 
-            data.layoutGuide?.takeIf { it.level != LayoutGuideLevel.STATIC }?.let { layout ->
+            data.layoutGuide?.takeIf { it.level != LayoutGuideLevel.STATIC && it.fixedLayout == null }?.let { layout ->
                 if (layout.outline.size >= 3) {
                     val points = layout.outline.map { point ->
                         mapNormalized(point.x, point.y, data, vw, vh)
@@ -151,7 +180,9 @@ fun CameraOverlay(
                 }
             }
 
-            drawTargetBracket(frame, guideColor)
+            if (data.layoutGuide?.fixedLayout == null) {
+                drawTargetBracket(frame, guideColor)
+            }
         }
 
         if (!showDetections) return@Canvas

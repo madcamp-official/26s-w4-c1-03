@@ -15,6 +15,7 @@ import com.gamdo.app.guide.StyleTarget
 import com.gamdo.app.guide.SceneFrameSignals
 import com.gamdo.app.guide.SceneGuideCoordinator
 import com.gamdo.app.guide.SceneLayoutGuide
+import com.gamdo.app.guide.FixedLayoutGuide
 import com.gamdo.app.guide.toProjection
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -52,6 +53,7 @@ data class ShutterFrame(
     val target: StyleTarget,
     val aligned: Boolean,
     val visible: Boolean,
+    val fixedLayout: FixedLayoutGuide? = null,
 )
 
 /**
@@ -152,6 +154,7 @@ class CameraViewModel(
         _styleTarget.value = target
         alignmentEngine.reset()
         stabilizer.reset()
+        sceneGuideCoordinator.reset()
     }
 
     /** Called from the analysis executor once per second. */
@@ -201,6 +204,9 @@ class CameraViewModel(
             observedSubjectBox = sceneGuide.proposal.subjectBox,
         )
         val projection = stabilizer.stabilize(engineState.toProjection())
+        val fixedLayout = sceneGuide.fixedLayout
+        val effectiveAligned = fixedLayout?.allRequiredFilled ?: projection.aligned
+        val effectiveVisible = fixedLayout != null || projection.visible
 
         _detectionLabel.value = detectionLabelOf(detection) +
             " · layout=${sceneGuide.layoutGuide.level.name.lowercase()}"
@@ -209,8 +215,9 @@ class CameraViewModel(
         _lastFrame.value = ShutterFrame(
             features = features,
             target = target,
-            aligned = projection.aligned,
-            visible = projection.visible,
+            aligned = effectiveAligned,
+            visible = effectiveVisible,
+            fixedLayout = fixedLayout,
         )
 
         if (collectDebugSignals) {

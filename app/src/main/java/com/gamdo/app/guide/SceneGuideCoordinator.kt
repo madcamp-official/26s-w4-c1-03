@@ -6,12 +6,16 @@ import com.gamdo.app.detect.DetectionResult
 data class SceneFrameSignals(
     val rowLuminance: List<Float> = emptyList(),
     val sideEdgeDensity: List<Float> = emptyList(),
+    /** Optional fixed multi-slot template supplied by the camera owner. */
+    val layoutTemplate: LayoutTemplate? = null,
+    val layoutTemplateId: String? = null,
 )
 
 data class SceneGuideState(
     val observation: SceneObservation,
     val proposal: CompositionProposal,
     val layoutGuide: SceneLayoutGuide,
+    val fixedLayout: FixedLayoutGuide? = null,
 )
 
 /**
@@ -22,6 +26,8 @@ class SceneGuideCoordinator(
     private val structureAnalyzer: SceneStructureAnalyzer = SceneStructureAnalyzer(),
     private val proposalEngine: SceneProposalEngine = SceneProposalEngine(),
     private val layoutGuideEngine: SceneLayoutGuideEngine = SceneLayoutGuideEngine(),
+    private val fixedLayoutMatcher: FixedLayoutSlotMatcher = FixedLayoutSlotMatcher(),
+    private val autoLayoutResolver: AutoLayoutTemplateResolver = AutoLayoutTemplateResolver(),
 ) {
     fun update(
         detection: DetectionResult,
@@ -46,17 +52,30 @@ class SceneGuideCoordinator(
             subjectConfidence = detected.subjectConfidence,
             subjectOutline = detected.subjectOutline,
             subjectLabels = detected.subjectLabels,
+            slotDetections = detected.slotDetections,
         )
         val proposal = proposalEngine.propose(observation, styleTarget)
+        val template = signals.layoutTemplate ?:
+            signals.layoutTemplateId?.let(LayoutTemplateCatalog::resolve) ?:
+            autoLayoutResolver.resolve(observation.slotDetections, styleTarget.layoutTemplateId)
+        val fixedLayout = template?.let {
+            fixedLayoutMatcher.match(it, observation.slotDetections)
+        }
+        val layoutGuide = layoutGuideEngine.build(observation, proposal).copy(
+            fixedLayout = fixedLayout,
+        )
         return SceneGuideState(
             observation = observation,
             proposal = proposal,
-            layoutGuide = layoutGuideEngine.build(observation, proposal),
+            layoutGuide = layoutGuide,
+            fixedLayout = fixedLayout,
         )
     }
 
     fun reset() {
         proposalEngine.reset()
         layoutGuideEngine.reset()
+        fixedLayoutMatcher.reset()
+        autoLayoutResolver.reset()
     }
 }

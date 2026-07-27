@@ -11,6 +11,7 @@ import com.gamdo.app.detect.PoseObservation
 import com.gamdo.app.guide.FeaturesConfigJson
 import com.gamdo.app.guide.GuideConfigBundle
 import com.gamdo.app.guide.StyleTarget
+import com.gamdo.app.guide.LayoutTemplateCatalog
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -37,7 +38,7 @@ class CameraViewModelTest {
         viewModel.setStyleTarget(StyleTarget())
 
         assertNull("첫 프레임 전에는 상태 없음", viewModel.overlay.value)
-        feed(viewModel, personBox(0.32f, 0.085f, 0.68f, 0.535f), confidence = 0.9f)
+        feed(viewModel, personBox(0.32f, 0.25f, 0.68f, 0.85f), confidence = 0.9f)
 
         val overlay = viewModel.overlay.value
         assertNotNull(overlay)
@@ -64,6 +65,32 @@ class CameraViewModelTest {
         assertNull(viewModel.overlay.value)
         assertNull(viewModel.guideDebug.value)
         assertEquals("", viewModel.detectionLabel.value)
+    }
+
+    @Test
+    fun `shutter snapshot keeps fixed layout state`() {
+        val viewModel = CameraViewModel(config = bundle, collectDebugSignals = false)
+        viewModel.setStyleTarget(StyleTarget(layoutTemplateId = LayoutTemplateCatalog.PORTRAIT_PERSON))
+        feed(viewModel, personBox(0.32f, 0.085f, 0.68f, 0.535f), confidence = 0.9f)
+
+        assertEquals(
+            LayoutTemplateCatalog.PORTRAIT_PERSON,
+            viewModel.lastFrame.value?.fixedLayout?.template?.id,
+        )
+    }
+
+    @Test
+    fun `fixed layout alignment becomes true only after required slot is filled`() {
+        val viewModel = CameraViewModel(config = bundle, collectDebugSignals = false)
+        viewModel.setStyleTarget(StyleTarget(layoutTemplateId = LayoutTemplateCatalog.PORTRAIT_PERSON))
+
+        feed(viewModel, personBox(0.32f, 0.25f, 0.68f, 0.85f), confidence = 0.9f)
+        assertFalse(viewModel.lastFrame.value!!.aligned)
+        repeat(2) {
+            feed(viewModel, personBox(0.32f, 0.25f, 0.68f, 0.85f), confidence = 0.9f)
+        }
+
+        assertTrue(viewModel.lastFrame.value!!.aligned)
     }
 
     @Test

@@ -28,6 +28,7 @@ data class SceneObservation(
     val subjectOutline: List<LayoutGuidePoint> = emptyList(),
     val subjectLabels: List<String> = emptyList(),
     val hasReliableOutline: Boolean = false,
+    val slotDetections: List<SlotDetection> = emptyList(),
 ) {
     fun normalized(): SceneObservation = copy(
         subjectBox = subjectBox?.clamped(),
@@ -43,6 +44,7 @@ data class SceneObservation(
         },
         subjectLabels = subjectLabels.filter { it.isNotBlank() },
         hasReliableOutline = hasReliableOutline || subjectOutline.size >= 3,
+        slotDetections = slotDetections.map { it.normalized() },
     )
 }
 
@@ -116,6 +118,30 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
             segmented?.outline?.size ?: 0 >= 3 -> true
             personBox != null -> (pose?.landmarks?.count { it.inFrameLikelihood >= 0.3f } ?: 0) >= 3
             else -> objectCandidate?.isGuideEligible == true && objectCandidate.mask != null
+        },
+        slotDetections = buildList {
+            if (personBox != null) {
+                add(
+                    SlotDetection(
+                        id = "person",
+                        category = com.gamdo.app.detect.GuideObjectCategory.PERSON,
+                        bounds = personBox,
+                        confidence = detectorConfidence,
+                        isReliable = (pose?.landmarks?.count { it.inFrameLikelihood >= 0.3f } ?: 0) >= 3,
+                    ),
+                )
+            }
+            objects.forEachIndexed { index, detectedObject ->
+                add(
+                    SlotDetection(
+                        id = detectedObject.trackingId?.toString() ?: "object-$index",
+                        category = detectedObject.category,
+                        bounds = detectedObject.mask?.bounds ?: detectedObject.box,
+                        confidence = detectedObject.confidence,
+                        isReliable = detectedObject.isGuideEligible && detectedObject.mask != null,
+                    ),
+                )
+            }
         },
     )
 }

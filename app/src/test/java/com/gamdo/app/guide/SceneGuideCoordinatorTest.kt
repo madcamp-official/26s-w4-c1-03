@@ -3,6 +3,9 @@ package com.gamdo.app.guide
 import com.gamdo.app.detect.DetectionResult
 import com.gamdo.app.detect.NormalizedBox
 import com.gamdo.app.detect.ObjectObservation
+import com.gamdo.app.detect.GuideObjectCategory
+import com.gamdo.app.detect.SegmentationObservation
+import com.gamdo.app.detect.SegmentationPoint
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
@@ -32,5 +35,45 @@ class SceneGuideCoordinatorTest {
         assertEquals(LeadingDirection.RIGHT, state.observation.leadingDirection)
         assertFalse(state.proposal.fallback)
         assertEquals(1f / 3f, state.proposal.target.subjectAnchorX, 0.001f)
+    }
+
+    @Test
+    fun `fixed layout is exposed without moving its slots`() {
+        val template = LayoutTemplate(
+            id = "single-cup",
+            slots = listOf(
+                LayoutSlot("cup", GuideObjectCategory.DRINKWARE, RectN(0.2f, 0.3f, 0.6f, 0.7f)),
+            ),
+        )
+        val detection = DetectionResult(
+            faces = emptyList(),
+            pose = null,
+            objects = listOf(
+                ObjectObservation(
+                    box = NormalizedBox(0.25f, 0.35f, 0.55f, 0.65f),
+                    confidence = 0.9f,
+                    category = GuideObjectCategory.DRINKWARE,
+                    mask = SegmentationObservation(
+                        outline = listOf(
+                            SegmentationPoint(0.25f, 0.35f),
+                            SegmentationPoint(0.55f, 0.35f),
+                            SegmentationPoint(0.55f, 0.65f),
+                        ),
+                        bounds = NormalizedBox(0.25f, 0.35f, 0.55f, 0.65f),
+                        confidence = 0.9f,
+                        areaRatio = 0.09f,
+                    ),
+                    isGuideEligible = true,
+                ),
+            ),
+        )
+        val coordinator = SceneGuideCoordinator()
+        repeat(3) {
+            coordinator.update(detection, StyleTarget(), SceneFrameSignals(layoutTemplate = template))
+        }
+        val state = coordinator.update(detection, StyleTarget(), SceneFrameSignals(layoutTemplate = template))
+
+        assertEquals(SlotMatchStatus.FILLED, state.fixedLayout!!.matches.single().status)
+        assertEquals(template.slots.single().bounds, state.layoutGuide.fixedLayout!!.template.slots.single().bounds)
     }
 }

@@ -55,6 +55,7 @@ data class ObjectObservation(
 
 /** The intentionally small vocabulary for reliable GAMDO composition guides. */
 enum class GuideObjectCategory {
+    PERSON,
     DRINKWARE,
     BAG,
     PLANT,
