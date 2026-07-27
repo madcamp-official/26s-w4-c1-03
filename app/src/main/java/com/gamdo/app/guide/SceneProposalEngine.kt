@@ -25,6 +25,8 @@ data class SceneObservation(
     val openSpaceTop: Float = 0f,
     val openSpaceBottom: Float = 0f,
     val dominantLineConfidence: Float = 0f,
+    val subjectOutline: List<LayoutGuidePoint> = emptyList(),
+    val subjectLabels: List<String> = emptyList(),
 ) {
     fun normalized(): SceneObservation = copy(
         subjectBox = subjectBox?.clamped(),
@@ -35,6 +37,10 @@ data class SceneObservation(
         openSpaceTop = openSpaceTop.coerceIn(0f, 1f),
         openSpaceBottom = openSpaceBottom.coerceIn(0f, 1f),
         dominantLineConfidence = dominantLineConfidence.coerceIn(0f, 1f),
+        subjectOutline = subjectOutline.map {
+            LayoutGuidePoint(it.x.coerceIn(0f, 1f), it.y.coerceIn(0f, 1f))
+        },
+        subjectLabels = subjectLabels.filter { it.isNotBlank() },
     )
 }
 
@@ -94,6 +100,11 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
         subjectBox = subjectBox,
         subjectKind = kind,
         subjectConfidence = confidence,
+        subjectOutline = pose?.landmarks
+            ?.filter { it.inFrameLikelihood >= 0.3f }
+            ?.map { LayoutGuidePoint(it.x, it.y) }
+            .orEmpty(),
+        subjectLabels = objectCandidate?.labels.orEmpty(),
     )
 }
 

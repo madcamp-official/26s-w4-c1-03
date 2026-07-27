@@ -11,6 +11,7 @@ data class SceneFrameSignals(
 data class SceneGuideState(
     val observation: SceneObservation,
     val proposal: CompositionProposal,
+    val layoutGuide: SceneLayoutGuide,
 )
 
 /**
@@ -20,6 +21,7 @@ data class SceneGuideState(
 class SceneGuideCoordinator(
     private val structureAnalyzer: SceneStructureAnalyzer = SceneStructureAnalyzer(),
     private val proposalEngine: SceneProposalEngine = SceneProposalEngine(),
+    private val layoutGuideEngine: SceneLayoutGuideEngine = SceneLayoutGuideEngine(),
 ) {
     fun update(
         detection: DetectionResult,
@@ -42,14 +44,19 @@ class SceneGuideCoordinator(
             subjectBox = detected.subjectBox,
             subjectKind = detected.subjectKind,
             subjectConfidence = detected.subjectConfidence,
+            subjectOutline = detected.subjectOutline,
+            subjectLabels = detected.subjectLabels,
         )
+        val proposal = proposalEngine.propose(observation, styleTarget)
         return SceneGuideState(
             observation = observation,
-            proposal = proposalEngine.propose(observation, styleTarget),
+            proposal = proposal,
+            layoutGuide = layoutGuideEngine.build(observation, proposal),
         )
     }
 
     fun reset() {
         proposalEngine.reset()
+        layoutGuideEngine.reset()
     }
 }

@@ -14,6 +14,7 @@ import com.gamdo.app.guide.OverlayStabilizer
 import com.gamdo.app.guide.StyleTarget
 import com.gamdo.app.guide.SceneFrameSignals
 import com.gamdo.app.guide.SceneGuideCoordinator
+import com.gamdo.app.guide.SceneLayoutGuide
 import com.gamdo.app.guide.toProjection
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -166,7 +167,8 @@ class CameraViewModel(
         )
         val projection = stabilizer.stabilize(engineState.toProjection())
 
-        _detectionLabel.value = detectionLabelOf(detection)
+        _detectionLabel.value = detectionLabelOf(detection) +
+            " · layout=${sceneGuide.layoutGuide.level.name.lowercase()}"
 
         if (collectDebugSignals) {
             _guideDebug.value = GuideDebug(
@@ -192,6 +194,7 @@ class CameraViewModel(
             frameHeight = frameHeight,
             mirror = mirror,
             guide = projection,
+            layoutGuide = sceneGuide.layoutGuide,
         )
     }
 
