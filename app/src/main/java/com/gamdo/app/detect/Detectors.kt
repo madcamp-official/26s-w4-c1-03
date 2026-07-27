@@ -93,19 +93,53 @@ class SceneDetector(
     private val poseDetector: PoseDetector,
     private val objectDetector: ObjectSceneDetector? = null,
     private val subjectSegmenter: SubjectSceneSegmenter? = null,
+    private val customObjectDetector: CustomSceneDetector? = null,
 ) {
+    private val guideCandidateStabilizer = GuideCandidateStabilizer()
+
     fun detect(frame: AnalysisFrame): DetectionResult =
         DetectionResult(
             faces = faceDetector.detect(frame),
             pose = poseDetector.detect(frame),
-            objects = objectDetector?.detect(frame).orEmpty(),
+            objects = customObjectDetector?.detect(frame).orEmpty()
+                .ifEmpty { objectDetector?.detect(frame).orEmpty() },
             segmentation = subjectSegmenter?.detect(frame),
-        )
+        ).let { result ->
+            val segmentation = result.segmentation
+            val candidate = result.objects
+                .maxByOrNull { it.box.width * it.box.height * it.confidence }
+                ?.let { candidateObject ->
+                    val eligible = SceneRecognitionPolicy.isGuideEligible(
+                        category = candidateObject.category,
+                        detectionConfidence = candidateObject.confidence,
+                        mask = candidateObject.mask ?: segmentation,
+                    )
+                    guideCandidateStabilizer.accept(
+                        candidateObject.copy(
+                            mask = candidateObject.mask ?: segmentation,
+                            isGuideEligible = eligible,
+                        ),
+                    )
+                }
+            val stabilizedObjects: List<ObjectObservation> = if (candidate != null) {
+                result.objects.map { sceneObject: ObjectObservation ->
+                    if (sceneObject.trackingId == candidate.trackingId &&
+                        sceneObject.box == candidate.box
+                    ) candidate else sceneObject
+                }
+            } else {
+                result.objects
+            }
+            result.copy(objects = stabilizedObjects)
+        }
 
     fun close() {
         faceDetector.close()
         poseDetector.close()
         objectDetector?.close()
         subjectSegmenter?.close()
+        customObjectDetector?.close()
     }
+
+    fun reset() = guideCandidateStabilizer.reset()
 }
