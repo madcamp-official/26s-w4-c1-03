@@ -2,6 +2,7 @@ package com.gamdo.app.edit
 
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.floor
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -68,6 +69,23 @@ const val MIN_LEVELING_DEG = 0.35f
 /**
  * Rotation that cancels a measured [tiltDeg]. Returns 0 inside the dead band and
  * clamps at ±[maxDeg].
+ *
+ * ## Sign
+ *
+ * `camera/TiltSensor.kt`'s `TiltReading` KDoc is the single source of truth and
+ * derives `rollDeg < 0` = clockwise device tilt, so cancelling it is `-tiltDeg` =
+ * clockwise correction. That matches this module: [toAffineMatrixValues] lays out
+ * `[cos, -sin; sin, cos]`, byte-identical to what `android.graphics.Matrix.setRotate`
+ * builds, so positive degrees rotate clockwise here exactly as `postRotate` does.
+ * `RenderMatrixTest` pins it — a point right of centre must rise under a negative
+ * rotation.
+ *
+ * **Derived, not observed.** The convention was reasoned out from the gravity-vector
+ * contract with no device attached, and guide-capture-agent has flagged that
+ * `CameraOverlay`'s horizon line may carry the opposite sign. Both signs come from
+ * this one derivation, so they stand or fall together: if the device check shows the
+ * overlay is right, this `-tiltDeg` inverts with it. DONE-DEVICE, and harmless until
+ * §3-3 starts populating `conditions_json` in wave 3.
  */
 fun levelingRotationDeg(tiltDeg: Float, maxDeg: Float = MAX_LEVELING_DEG): Float {
     if (!tiltDeg.isFinite()) return 0f
@@ -155,8 +173,10 @@ fun planGeometry(
         cropW = cropH * aspect.ratioWtoH
     }
 
-    val cropWi = cropW.roundToInt().coerceIn(1, rotW)
-    val cropHi = cropH.roundToInt().coerceIn(1, rotH)
+    // floor, not round: rounding up by a sub-pixel would push the crop one column
+    // past the rotation-safe area and leave a 1px transparent sliver on one edge.
+    val cropWi = floor(cropW).toInt().coerceIn(1, rotW)
+    val cropHi = floor(cropH).toInt().coerceIn(1, rotH)
 
     // Centre on the subject, then clamp so the window stays on the safe area.
     val safeLeft = ((rotW - safeW) / 2f).coerceAtLeast(0f)
@@ -195,6 +215,44 @@ const val MIN_AREA_KEPT = 0.45f
  */
 const val FULL_MAX_SIDE = 4000
 const val PREVIEW_MAX_SIDE = 2000
+
+/**
+ * The whole geometry stage as one affine transform, source pixels → output pixels.
+ *
+ * Nine floats in `android.graphics.Matrix.setValues` order
+ * (`[a b tx  c d ty  0 0 1]`, so `x' = a*x + b*y + tx`). The renderer feeds this
+ * straight into a single `Canvas.drawBitmap(bitmap, matrix, paint)`, which is why
+ * levelling and cropping cost one resample instead of two: a `createBitmap`
+ * rotation followed by a `createBitmap` crop would allocate an intermediate the size
+ * of the rotated bounding box and interpolate the pixels twice.
+ *
+ * The same nine numbers are a `cv::warpAffine` matrix and an AGSL transform uniform,
+ * so this does not commit the pipeline to Canvas.
+ *
+ * Composition: centre the source, rotate by [rotationDeg], re-centre on the rotated
+ * canvas, then shift the crop origin to (0, 0).
+ */
+fun GeometryPlan.toAffineMatrixValues(): FloatArray {
+    val rad = Math.toRadians(rotationDeg.toDouble())
+    val cosT = cos(rad).toFloat()
+    val sinT = sin(rad).toFloat()
+    val halfSrcW = sourceWidth / 2f
+    val halfSrcH = sourceHeight / 2f
+    val tx = rotatedWidth / 2f - crop.x - (cosT * halfSrcW - sinT * halfSrcH)
+    val ty = rotatedHeight / 2f - crop.y - (sinT * halfSrcW + cosT * halfSrcH)
+    return floatArrayOf(
+        cosT, -sinT, tx,
+        sinT, cosT, ty,
+        0f, 0f, 1f,
+    )
+}
+
+/** Maps a source point through [values] (the array from [toAffineMatrixValues]). */
+fun mapAffinePoint(values: FloatArray, x: Float, y: Float): Pair<Float, Float> {
+    require(values.size == 9) { "affine matrix must have 9 entries" }
+    return (values[0] * x + values[1] * y + values[2]) to
+        (values[3] * x + values[4] * y + values[5])
+}
 
 /** Scales a plan produced at [fromWidth] onto a different working resolution. */
 fun GeometryPlan.scaledTo(fromWidth: Int, toWidth: Int): GeometryPlan {

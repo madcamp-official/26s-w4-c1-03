@@ -62,10 +62,11 @@ import com.gamdo.app.detect.MlKitFaceDetector
 import com.gamdo.app.detect.MlKitPoseDetector
 import com.gamdo.app.detect.SceneDetector
 import com.gamdo.app.detect.toAnalysisFrame
-import com.gamdo.app.guide.GuideConfig
-import com.gamdo.app.guide.parseGuideConfig
+import com.gamdo.app.guide.GuideConfigBundle
+import com.gamdo.app.guide.parseGuideConfigBundle
 import com.gamdo.app.guide.toStyleTarget
 import com.gamdo.app.ui.components.moodBrush
+import com.gamdo.app.ui.theme.Charcoal600
 import com.gamdo.app.ui.theme.Charcoal950
 import com.gamdo.app.ui.theme.OnDarkHigh
 import com.gamdo.app.ui.theme.OnDarkMedium
@@ -77,7 +78,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private val GuideLime = Color(0xFFCDD69A)
+// Sage is the single accent (D11-5); no opaque chromatic constant is defined here.
+// GridLine is white at 28% alpha — a translucent neutral, not a hue.
 private val GridLine = Color(0x47FFFFFF)
 private const val TAG = "CameraScreen"
 
@@ -124,11 +126,15 @@ fun CameraScreen(
     val guideConfig = remember {
         runCatching {
             context.assets.open("guide_config.json").bufferedReader().use { reader ->
-                parseGuideConfig(reader.readText())
+                parseGuideConfigBundle(reader.readText())
             }
-        }.getOrDefault(GuideConfig())
+        }.getOrDefault(GuideConfigBundle())
     }
-    val viewModel = remember { CameraViewModel(guideConfig = guideConfig) }
+    val viewModel = remember {
+        // The §2-4 stopwatch writes through this sink; the ViewModel itself stays
+        // free of android.util.Log so the stability harness can drive it on the JVM.
+        CameraViewModel(config = guideConfig, logSink = { line -> Log.d(TAG, line) })
+    }
 
     // The guide target comes from preset data (assets/presets.json = GET /presets),
     // never from values copied into this file.
@@ -236,6 +242,9 @@ fun CameraScreen(
             overlay = overlay,
             rollDeg = tilt.rollDeg,
             pitchDeg = tilt.pitchDeg,
+            // §3-2: the product overlay is bracket + silhouette + horizon only.
+            // Raw face boxes / centre dot ride the same toggle as the HUD.
+            showDetections = hudAvailable && showHud,
             selectedZoom = selectedZoom,
             onSelectZoom = { zoom ->
                 selectedZoom = zoom
@@ -387,6 +396,7 @@ private fun CameraPreviewPane(
     overlay: OverlayData?,
     rollDeg: Float,
     pitchDeg: Float,
+    showDetections: Boolean,
     selectedZoom: Float,
     onSelectZoom: (Float) -> Unit,
     referenceLayer: @Composable BoxScope.() -> Unit,
@@ -415,6 +425,7 @@ private fun CameraPreviewPane(
             rollDeg = rollDeg,
             pitchDeg = pitchDeg,
             modifier = Modifier.fillMaxSize(),
+            showDetections = showDetections,
         )
 
         Column(modifier = Modifier.fillMaxSize()) {
@@ -513,7 +524,7 @@ private fun CameraBottomBar(
             modifier = Modifier
                 .size(44.dp)
                 .clip(CircleShape)
-                .background(Color(0xFF242822))
+                .background(Charcoal600)
                 .clickable(onClick = onFlipLens),
             contentAlignment = Alignment.Center,
         ) {
@@ -600,7 +611,7 @@ private fun DebugHud(stats: AnalysisStats, modifier: Modifier = Modifier) {
     ) {
         Text(
             text = "%.1fms · %dfps · drop %d%%".format(stats.processMs, stats.fps, stats.dropRatePercent),
-            color = GuideLime,
+            color = Sage,
             fontSize = 10.sp,
             fontWeight = FontWeight.Medium,
         )
@@ -644,7 +655,7 @@ private fun GuideDebugBadge(debug: GuideDebug) {
                 text = "aligned=%s visible=%s · IoU %.2f · match %.2f".format(
                     debug.aligned, debug.visible, debug.iou, debug.matchScore,
                 ),
-                color = if (debug.aligned) Sage else GuideLime,
+                color = if (debug.aligned) Sage else OnDarkHigh,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Medium,
             )
@@ -675,7 +686,7 @@ private fun PresetBadge(label: String, onClick: () -> Unit) {
             .clickable(onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 4.dp),
     ) {
-        Text(text = "preset: $label ▸", color = GuideLime, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+        Text(text = "preset: $label ▸", color = Sage, fontSize = 10.sp, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -698,13 +709,13 @@ private fun ZoomChip(label: String, active: Boolean, onClick: () -> Unit) {
             .size(if (active) 34.dp else 30.dp)
             .clip(CircleShape)
             .background(Color(0x99141614))
-            .then(if (active) Modifier.border(1.8.dp, GuideLime, CircleShape) else Modifier)
+            .then(if (active) Modifier.border(1.8.dp, Sage, CircleShape) else Modifier)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
-            color = if (active) GuideLime else Color(0xBFFFFFFF),
+            color = if (active) Sage else Color(0xBFFFFFFF),
             fontSize = if (active) 11.sp else 10.5.sp,
             fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
         )

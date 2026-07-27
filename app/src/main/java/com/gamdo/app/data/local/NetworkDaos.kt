@@ -16,6 +16,17 @@ import com.gamdo.app.data.local.entity.PendingRequests
  * inside these interfaces — `GamdoDatabase.kt` is frozen and needs no re-edit.
  */
 
+/**
+ * Note on [com.gamdo.app.data.local.entity.CachedReferences.paletteJson]: the
+ * column name is frozen (R2-1) but the payload it actually stores is the
+ * **full `colorTarget` response** from `POST /references/analyze`
+ * (palette + colorTemperature + exposureBias, M7-04 기능명세서 §10.2) — not just
+ * a palette array. See [ReferenceRepository] (`data/ReferenceRepository.kt`),
+ * which is the only writer. This KDoc belongs on the entity property itself,
+ * but the `data/local/entity` package (all of it) is outside reference-net-agent's
+ * edit scope (편집 금지); it lives here, next to the DAO, until the lead applies
+ * it there.
+ */
 @Dao
 interface CachedReferencesDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)

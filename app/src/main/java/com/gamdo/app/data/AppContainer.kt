@@ -6,6 +6,7 @@ import com.gamdo.app.BuildConfig
 import com.gamdo.app.core.DeviceIdStore
 import com.gamdo.app.data.local.GamdoDatabase
 import com.gamdo.app.data.network.GamdoApiClient
+import java.io.File
 import kotlinx.serialization.json.Json
 
 /**
@@ -50,6 +51,15 @@ class AppContainer(context: Context) {
         context = appContext,
         presetsDao = database.presetsDao(),
         json = json,
+    )
+
+    // §5-1: content-hash cache + /references/analyze upload. Every upload this
+    // client makes goes through ExifSanitizer inside ReferenceRepository (D8-5).
+    val referenceRepository: ReferenceRepository = ReferenceRepository(
+        cachedReferencesDao = database.cachedReferencesDao(),
+        analysisClient = ReferenceAnalysisClient { file -> apiClient.analyzeReference(file) },
+        json = json,
+        cacheDir = File(appContext.cacheDir, "reference_uploads"),
     )
 
     val settingsRepository: SettingsRepository = SettingsRepository(database.appSettingsDao())

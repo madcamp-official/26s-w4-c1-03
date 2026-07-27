@@ -1,6 +1,7 @@
 package com.gamdo.app.edit
 
 import com.gamdo.app.detect.ImageMetrics
+import kotlinx.serialization.Serializable
 import kotlin.math.sqrt
 
 /**
@@ -22,7 +23,19 @@ const val SHADOW_CLIP_LEVEL = 8
 /** At/above this 8-bit level a pixel counts as blown highlight. */
 const val HIGHLIGHT_CLIP_LEVEL = 247
 
-/** Normalized subject box (0..1 of image width/height), origin top-left. */
+/**
+ * Normalized subject box (0..1 of image width/height), origin top-left.
+ *
+ * Serializable because it crosses an agent boundary: guide-capture-agent writes it
+ * into `captures.conditions_json` at the shutter and this vertical reads it back.
+ * Both sides go through `CaptureConditions`, so neither types a JSON key.
+ *
+ * **The coordinates are the stored file's**, not the analysis frame's. The camera
+ * forces analysis and preview to 4:3 and then centre-crops the capture to 4:5 or
+ * 1:1 before saving, so a box in analysis space would be wrong by the crop.
+ * guide-capture-agent owns that conversion.
+ */
+@Serializable
 data class SubjectBox(
     val left: Float,
     val top: Float,

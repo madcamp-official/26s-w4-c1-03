@@ -1,8 +1,33 @@
 {
-  "version": 1,
-  "smoothingWindow": 5,
-  "alignedIouThreshold": 0.7,
-  "recomputeMovementThreshold": 0.08,
-  "minPoseConfidence": 0.3,
-  "maxUnstableFrames": 5
+  "version": 2,
+  "alignment": {
+    "smoothingWindow": 5,
+    "alignedIouThreshold": 0.7,
+    "recomputeMovementThreshold": 0.08,
+    "minPoseConfidence": 0.3,
+    "maxUnstableFrames": 5,
+    "overlayStabilizer": {
+      "alignedEnterFrames": 3,
+      "alignedExitFrames": 5,
+      "silhouetteHoldFrames": 6,
+      "visibleHoldFrames": 6,
+      "maxStepPerFrameNorm": 0.01
+    }
+  },
+  "features": {
+    "minLandmarkLikelihood": 0.3,
+    "lowLightThreshold": 0.18,
+    "backlightRatioThreshold": 1.8,
+    "analysisBudgetMs": 30.0,
+    "budgetLogEveryFrames": 60
+  },
+  "diagnoser": {},
+  "scoring": {},
+  "stability": {
+    "sequenceFps": 12,
+    "sequenceSeconds": 60,
+    "minStableFrames": 6,
+    "maxFrameDeltaNorm": 0.01,
+    "minVisibleRatio": 0.95
+  }
 }

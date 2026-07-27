@@ -97,6 +97,22 @@ class EditPlan(
     /** Single matrix for backends that can only afford one colour pass. */
     fun combinedMatrix(): FloatArray = concatColorMatrix(styleMatrix, opticalMatrix)
 
+    /**
+     * The same plan at a different working resolution. Only [processingMaxSide]
+     * moves — the colour maths is resolution-independent and the geometry is scaled
+     * by the renderer once it knows the actual working bitmap size, so re-planning
+     * would be both wasteful and a chance for preview and save to disagree.
+     *
+     * Used by the §4-1 fallback (2000px preview, full resolution on save) and by the
+     * `OutOfMemoryError` retry in `LocalEditor`.
+     */
+    fun withProcessingMaxSide(maxSide: Int): EditPlan =
+        if (maxSide == processingMaxSide) {
+            this
+        } else {
+            EditPlan(geometry, optical, style, opticalMatrix, styleMatrix, toneLut, maxSide)
+        }
+
     /** True when the colour stages would leave the pixels untouched. */
     fun isColorNoOp(): Boolean =
         isIdentityColorMatrix(combinedMatrix()) && isIdentityLut(toneLut)

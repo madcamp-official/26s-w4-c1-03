@@ -1,7 +1,9 @@
 package com.gamdo.app.ui.result
 
+import android.content.Context
+import android.content.Intent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -16,6 +18,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -26,24 +30,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
+import androidx.core.content.FileProvider
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.local.entity.Captures
 import com.gamdo.app.data.preset.StylePreset
+import com.gamdo.app.edit.ResultEditController
+import com.gamdo.app.edit.rememberResultEditController
 import com.gamdo.app.ui.components.PrimaryPillButton
 import com.gamdo.app.ui.components.SecondaryPillButton
-import com.gamdo.app.ui.components.moodBrush
 import com.gamdo.app.ui.theme.Charcoal700
 import com.gamdo.app.ui.theme.Charcoal900
 import com.gamdo.app.ui.theme.OnDarkHigh
 import com.gamdo.app.ui.theme.OnDarkMedium
 import com.gamdo.app.ui.theme.OnDarkMuted
 import com.gamdo.app.ui.theme.OnSage
-import com.gamdo.app.ui.theme.OutlineDim
 import com.gamdo.app.ui.theme.Sage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -53,25 +58,24 @@ import java.io.File
 /**
  * §4-2 result screen — **host only**.
  *
- * Owns the tab structure, the photo area, the save/share/retake bar, and the two
- * slots other agents fill:
+ * Owns the tab structure, the comparison area, the save/share/retake bar, and the
+ * two slots other agents fill:
  *
  *  - [generativeSlot] — reference-net-agent's `ui/result/GenerativeRestorePanel.kt`,
- *    rendered as the body of the 생성 복구 tab. Coordinate through [generativeState]:
- *    the tab is hidden entirely until `enabled` is set (R6), and the host — not the
- *    panel — renders the fallback line when `reportFallbackToBasic()` is called (R5).
- *  - [feedbackSlot] — onboarding-polish-agent's `ui/result/FeedbackSheet.kt`,
- *    rendered over the screen once [feedbackState] is shown, which the host does
- *    after a successful save (§6-3).
+ *    the body of the 생성 복구 tab. Coordinate through [generativeState]: the tab is
+ *    not rendered at all until `enabled` is set (R6), and the **host**, not the
+ *    panel, shows the fallback line when `reportFallbackToBasic()` is called (R5).
+ *  - [feedbackSlot] — onboarding-polish-agent's `ui/result/FeedbackSheet.kt`, shown
+ *    over the screen once [feedbackState] is visible, which the host does after a
+ *    successful save (§6-3).
  *
  * Neither slot file may be created or edited from this vertical.
  *
- * Wave 0 scope: seams only. The local edit pipeline (`edit/LocalEditor.kt`) is not
- * wired yet, so the 기본/스타일 tabs show the untouched photo with an explicit
- * "not corrected yet" line. AGENTS.md §7-6 forbids passing an unprocessed image off
- * as a corrected one, so this stays until the pipeline lands.
+ * The pixels come from `edit/ResultEditController.kt`, which owns the pipeline, the
+ * bitmap lifetimes and the resolution budget. This file decides what is on screen and
+ * nothing else.
  *
- * Cut, do not reinstate: the style-strength slider (부록 A cut-line 2).
+ * Cut, do not reinstate: the style-strength slider (부록 A cut-line 2, lead decision).
  */
 @Composable
 fun ResultScreen(
@@ -79,13 +83,14 @@ fun ResultScreen(
     captureId: String,
     onBack: () -> Unit,
     onRetake: () -> Unit = onBack,
-    onShare: (() -> Unit)? = null,
     generativeState: GenerativeTabState = rememberGenerativeTabState(),
     feedbackState: FeedbackSheetState = rememberFeedbackSheetState(),
     generativeSlot: @Composable () -> Unit = {},
     feedbackSlot: @Composable () -> Unit = {},
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val controller = rememberResultEditController()
 
     val capture by produceState<Captures?>(initialValue = null, captureId, container) {
         value = container.database.capturesDao().get(captureId)
@@ -96,10 +101,16 @@ fun ResultScreen(
         }
     }
 
+    LaunchedEffect(capture?.id) {
+        val row = capture ?: return@LaunchedEffect
+        controller.load(File(row.filePath), row.conditionsJson)
+    }
+    DisposableEffect(Unit) { onDispose { controller.release() } }
+
     var selectedTab by remember { mutableStateOf(ResultTab.BASIC) }
-    var selectedPresetId by remember { mutableStateOf<String?>(null) }
-    var saving by remember { mutableStateOf(false) }
-    var saved by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var savedPath by remember { mutableStateOf<String?>(null) }
+    var notice by remember { mutableStateOf<String?>(null) }
 
     val tabs = remember(generativeState.enabled) {
         ResultTab.entries.filter { it != ResultTab.GENERATIVE || generativeState.enabled }
@@ -108,6 +119,24 @@ fun ResultScreen(
     // leaving the user on a tab that no longer exists. Derived, not assigned, so the
     // composition stays side-effect free.
     val activeTab = if (selectedTab in tabs) selectedTab else ResultTab.BASIC
+    val styleSelected = activeTab == ResultTab.STYLE && controller.styled != null
+    val ready = controller.phase == ResultEditController.Phase.READY
+
+    /**
+     * Renders at full resolution and writes a new file (D8-6), unless the current
+     * selection has already been saved. Returns the saved path, or null on failure —
+     * the caller must not claim a save that did not happen (AGENTS.md §7-6).
+     */
+    val ensureSaved: suspend () -> String? = ensure@{
+        savedPath?.let { return@ensure it }
+        val result = controller.save(
+            repository = container.captureRepository,
+            captureId = captureId,
+            applyStyle = styleSelected,
+        )
+        savedPath = result?.filePath
+        result?.filePath
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(Charcoal900)) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -135,7 +164,13 @@ fun ResultScreen(
             ResultTabRow(
                 tabs = tabs,
                 selected = activeTab,
-                onSelect = { selectedTab = it },
+                onSelect = {
+                    selectedTab = it
+                    // A different tab is a different picture; the file already written
+                    // is no longer what [공유] should hand out.
+                    savedPath = null
+                    notice = null
+                },
                 modifier = Modifier.padding(horizontal = 20.dp),
             )
 
@@ -144,42 +179,37 @@ fun ResultScreen(
                     .padding(horizontal = 20.dp)
                     .padding(top = 12.dp)
                     .fillMaxWidth()
-                    .weight(1f)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(moodBrush(0)),
+                    .weight(1f),
             ) {
-                // R5: on fallback the host reclaims the photo area and shows the
-                // basic-correction result itself. The generative panel is never asked
-                // to render someone else's result, and the slot is simply not called.
-                if (activeTab == ResultTab.GENERATIVE && !generativeState.fallbackToBasic) {
-                    generativeSlot()
-                } else {
-                    CapturePhoto(capture)
-                }
+                ComparisonArea(
+                    controller = controller,
+                    activeTab = activeTab,
+                    generativeState = generativeState,
+                    generativeSlot = generativeSlot,
+                )
             }
 
             // R5: the only thing the user is ever told about a generation failure.
             if (generativeState.fallbackToBasic) {
-                Text(
-                    text = "자연스러운 보정만 적용했어요",
-                    color = OnDarkMedium,
-                    fontSize = 12.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
-                )
+                StatusLine("자연스러운 보정만 적용했어요")
             }
+            notice?.let { StatusLine(it) }
 
-            when (activeTab) {
-                ResultTab.BASIC -> PendingPipelineNote()
-                ResultTab.STYLE -> {
-                    StyleStrip(
-                        presets = presets,
-                        selectedPresetId = selectedPresetId,
-                        onSelect = { selectedPresetId = it },
-                    )
-                    PendingPipelineNote()
-                }
-                else -> Unit
+            if (activeTab == ResultTab.STYLE) {
+                StyleStrip(
+                    presets = presets,
+                    selectedPresetId = controller.selectedPresetId,
+                    enabled = ready && !controller.styling,
+                    onSelect = { preset ->
+                        savedPath = null
+                        notice = null
+                        scope.launch {
+                            controller.applyPreset(
+                                preset.takeIf { it.id != controller.selectedPresetId },
+                            )
+                        }
+                    },
+                )
             }
 
             Column(
@@ -189,31 +219,44 @@ fun ResultScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 PrimaryPillButton(
-                    text = if (saved) "저장됨" else "저장",
-                    enabled = capture != null && !saving && !saved,
+                    text = if (savedPath != null) "저장됨" else "저장",
+                    enabled = ready && !busy && savedPath == null,
                     onClick = {
                         scope.launch {
-                            saving = true
-                            // §4-2: saving records saved_to_gallery = 1. Once the
-                            // pipeline lands this becomes saveEditedResult(), which
-                            // writes a new file and the capture_edit_stack rows.
-                            runCatching { container.captureRepository.markSavedToGallery(captureId) }
-                            saving = false
-                            saved = true
-                            feedbackState.show(captureId)
+                            busy = true
+                            notice = null
+                            val path = ensureSaved()
+                            busy = false
+                            if (path != null) {
+                                feedbackState.show(captureId)
+                            } else {
+                                notice = "저장하지 못했어요. 다시 시도해 주세요"
+                            }
                         }
                     },
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Box(modifier = Modifier.weight(1f)) {
-                        if (onShare != null) {
-                            SecondaryPillButton(text = "공유", onClick = onShare)
-                        } else {
-                            // No FileProvider is declared yet, so a share intent would
-                            // throw FileUriExposedException. Shown inert rather than
-                            // wired to something that crashes.
-                            DisabledPill(text = "공유")
-                        }
+                        SecondaryPillButton(
+                            text = "공유",
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    notice = null
+                                    // Share the corrected photo, which means it has to
+                                    // exist as a file first.
+                                    val path = ensureSaved()
+                                    busy = false
+                                    notice = if (path == null) {
+                                        "공유할 사진을 준비하지 못했어요"
+                                    } else if (!sharePhoto(context, File(path))) {
+                                        "공유할 수 있는 앱이 없어요"
+                                    } else {
+                                        null
+                                    }
+                                }
+                            },
+                        )
                     }
                     Box(modifier = Modifier.weight(1f)) {
                         SecondaryPillButton(text = "다시 찍기", onClick = onRetake)
@@ -228,54 +271,81 @@ fun ResultScreen(
     }
 }
 
+/**
+ * The photo area. 원본 shows one image; 기본 보정 and 스타일 보정 compare against the
+ * original with the curtain; 생성 복구 hands the area to the slot unless R5 fallback
+ * has reclaimed it.
+ */
 @Composable
-private fun CapturePhoto(capture: Captures?) {
-    if (capture == null) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("사진을 불러오는 중이에요", color = OnDarkMuted, fontSize = 12.sp)
-        }
+private fun ComparisonArea(
+    controller: ResultEditController,
+    activeTab: ResultTab,
+    generativeState: GenerativeTabState,
+    generativeSlot: @Composable () -> Unit,
+) {
+    val original = controller.original
+
+    if (activeTab == ResultTab.GENERATIVE && !generativeState.fallbackToBasic) {
+        Box(modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp))) { generativeSlot() }
         return
     }
-    Box(modifier = Modifier.fillMaxSize()) {
-        AsyncImage(
-            model = File(capture.filePath),
-            contentDescription = "선택한 사진",
+
+    when {
+        controller.phase == ResultEditController.Phase.FAILED ->
+            CenteredNote("사진을 불러오지 못했어요")
+
+        original == null -> CenteredNote("사진을 준비하고 있어요")
+
+        activeTab == ResultTab.ORIGINAL -> Image(
+            bitmap = original,
+            contentDescription = "원본 사진",
             contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)),
         )
-        Box(
-            modifier = Modifier
-                .padding(12.dp)
-                .clip(RoundedCornerShape(5.dp))
-                .background(Sage)
-                .padding(horizontal = 8.dp, vertical = 3.dp),
-        ) {
-            Text("내 감도", color = OnSage, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+
+        else -> {
+            // 스타일 보정 falls back to the basic result until a preset is chosen, so
+            // the tab is never empty and never shows an unedited photo as "corrected".
+            val after = if (activeTab == ResultTab.STYLE) {
+                controller.styled ?: controller.basic
+            } else {
+                controller.basic
+            }
+            BeforeAfterSlider(
+                before = original,
+                after = after,
+                modifier = Modifier.fillMaxSize(),
+            )
         }
     }
 }
 
-/**
- * Honest placeholder while the edit pipeline is unwired. Everyday language, no
- * numbers, no jargon (R7-1).
- */
 @Composable
-private fun PendingPipelineNote() {
+private fun CenteredNote(text: String) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(text, color = OnDarkMuted, fontSize = 12.sp)
+    }
+}
+
+/** One-line status. Everyday language, no numbers, no jargon (R7-1). */
+@Composable
+private fun StatusLine(text: String) {
     Text(
-        text = "아직 보정 전이에요",
-        color = OnDarkMuted,
-        fontSize = 11.5.sp,
+        text = text,
+        color = OnDarkMedium,
+        fontSize = 12.sp,
         textAlign = TextAlign.Center,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
     )
 }
 
-/** Real preset names from the bundle; the chosen id is what the pipeline will consume. */
+/** Real preset names from the bundle; tapping the selected one clears it. */
 @Composable
 private fun StyleStrip(
     presets: List<StylePreset>,
     selectedPresetId: String?,
-    onSelect: (String) -> Unit,
+    enabled: Boolean,
+    onSelect: (StylePreset) -> Unit,
 ) {
     if (presets.isEmpty()) return
     Row(
@@ -290,12 +360,16 @@ private fun StyleStrip(
                 modifier = Modifier
                     .clip(RoundedCornerShape(14.dp))
                     .background(if (isSelected) Sage else Charcoal700)
-                    .clickable { onSelect(preset.id) }
+                    .clickable(enabled = enabled) { onSelect(preset) }
                     .padding(horizontal = 12.dp, vertical = 7.dp),
             ) {
                 Text(
                     text = preset.displayName,
-                    color = if (isSelected) OnSage else OnDarkMedium,
+                    color = when {
+                        isSelected -> OnSage
+                        enabled -> OnDarkMedium
+                        else -> OnDarkMuted
+                    },
                     fontSize = 11.5.sp,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                 )
@@ -305,17 +379,23 @@ private fun StyleStrip(
     }
 }
 
-/** Outlined pill that reads as unavailable — same tokens as [SecondaryPillButton]. */
-@Composable
-private fun DisabledPill(text: String) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(27.dp))
-            .border(1.5.dp, OutlineDim, RoundedCornerShape(27.dp))
-            .padding(vertical = 16.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(text = text, color = OnDarkMuted, fontSize = 14.5.sp, fontWeight = FontWeight.SemiBold)
+/**
+ * Hands [file] to the OS share sheet (§6-3: "공유: OS 공유 시트").
+ *
+ * The `content://` URI comes from the FileProvider the lead registered in the
+ * manifest — captures live in internal storage, so a `file://` URI would throw
+ * `FileUriExposedException`. `context.packageName` is the applicationId at runtime,
+ * which is what `${applicationId}.fileprovider` expands to.
+ *
+ * @return false when nothing on the device can receive the image.
+ */
+private fun sharePhoto(context: Context, file: File): Boolean = runCatching {
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    val send = Intent(Intent.ACTION_SEND).apply {
+        type = "image/jpeg"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-}
+    context.startActivity(Intent.createChooser(send, "사진 공유"))
+    true
+}.getOrDefault(false)

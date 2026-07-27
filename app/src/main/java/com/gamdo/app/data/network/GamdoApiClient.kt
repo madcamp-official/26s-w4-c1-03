@@ -4,6 +4,7 @@ import com.gamdo.app.core.DeviceIdStore
 import com.gamdo.app.data.preset.StylePreset
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -13,6 +14,7 @@ import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.http.GET
 import retrofit2.http.Header
@@ -92,6 +94,34 @@ data class ReferenceAnalysisResponse(
     val colorTarget: JsonObject,
 )
 
+/**
+ * The error shape every endpoint shares (기능명세서 §10 "공통": `{code, message,
+ * retryable}`). Gap A from the wave-0 audit — approved without a B signature
+ * because the shape is already fixed by the spec, not invented here.
+ */
+@Serializable
+data class ApiErrorEnvelope(
+    val code: String,
+    val message: String,
+    val retryable: Boolean,
+)
+
+/**
+ * Thrown in place of Retrofit's [HttpException] for any non-2xx response, with
+ * the response body parsed into the shared [envelope] contract. If the body
+ * doesn't parse as `{code, message, retryable}` (a proxy error page, for
+ * instance), [envelope] is a synthesized fallback derived from the HTTP status
+ * alone — `retryable` defaults to true only for 408/429/5xx.
+ *
+ * §6-1's `pending_requests` retry queue (a later wave) is the intended consumer
+ * of [envelope].retryable; this wave only introduces the parsed shape.
+ */
+class GamdoApiException(
+    val envelope: ApiErrorEnvelope,
+    val httpCode: Int,
+    cause: Throwable,
+) : Exception("HTTP $httpCode ${envelope.code}: ${envelope.message}", cause)
+
 /** Public app-facing client; API details stay out of Compose screens. */
 class GamdoApiClient(
     baseUrl: String,
@@ -111,11 +141,13 @@ class GamdoApiClient(
         .build()
         .create(GamdoApiService::class.java)
 
-    suspend fun getPresets(): List<StylePreset> =
+    suspend fun getPresets(): List<StylePreset> = callApi {
         service.getPresets(deviceIdStore.getOrCreate())
+    }
 
-    suspend fun analyzeReference(image: File): ReferenceAnalysisResponse =
+    suspend fun analyzeReference(image: File): ReferenceAnalysisResponse = callApi {
         service.analyzeReference(deviceIdStore.getOrCreate(), imagePart(image))
+    }
 
     suspend fun createEditJob(
         jobId: String,
@@ -124,9 +156,9 @@ class GamdoApiClient(
         styleParams: JsonObject = JsonObject(emptyMap()),
         resultCount: Int = 2,
         image: File,
-    ): EditJobAccepted {
+    ): EditJobAccepted = callApi {
         val text = "text/plain".toMediaType()
-        return service.createEditJob(
+        service.createEditJob(
             deviceId = deviceIdStore.getOrCreate(),
             jobId = jobId.toRequestBody(text),
             captureRef = captureRef.toRequestBody(text),
@@ -137,12 +169,33 @@ class GamdoApiClient(
         )
     }
 
-    suspend fun getEditJob(jobId: String): EditJobStatus =
+    suspend fun getEditJob(jobId: String): EditJobStatus = callApi {
         service.getEditJob(deviceIdStore.getOrCreate(), jobId)
+    }
 
     private fun imagePart(image: File): MultipartBody.Part {
         val body = image.asRequestBody("application/octet-stream".toMediaType())
         return MultipartBody.Part.createFormData("image", image.name, body)
+    }
+
+    /** Runs [block], converting a raw [HttpException] into a parsed [GamdoApiException]. */
+    private suspend fun <T> callApi(block: suspend () -> T): T =
+        try {
+            block()
+        } catch (e: HttpException) {
+            throw toApiException(e)
+        }
+
+    private fun toApiException(e: HttpException): GamdoApiException {
+        val body = runCatching { e.response()?.errorBody()?.string() }.getOrNull()
+        val envelope = body?.let { raw ->
+            runCatching { json.decodeFromString<ApiErrorEnvelope>(raw) }.getOrNull()
+        } ?: ApiErrorEnvelope(
+            code = "http_${e.code()}",
+            message = e.message() ?: "HTTP ${e.code()}",
+            retryable = e.code() >= 500 || e.code() == 408 || e.code() == 429,
+        )
+        return GamdoApiException(envelope, e.code(), e)
     }
 
     companion object {

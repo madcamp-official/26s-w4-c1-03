@@ -53,6 +53,14 @@ data class SavedEdit(
  *
  * All three fields are JSON documents, defaulted to empty so a caller with nothing
  * to record does not have to invent values.
+ *
+ * **Build [conditionsJson] with `edit/CaptureConditions.encodeToString()`, not by
+ * hand.** The reader accepts no alternative key spellings, so a typo in the writer
+ * would not fail — it would silently read "no tilt, no subject" and disable both
+ * levelling and subject-aware cropping, with no device available to notice. Going
+ * through the one type on both sides makes that a compile error instead. Extra KPI
+ * keys can ride along in the same document; the reader ignores what it does not
+ * consume.
  */
 data class CaptureSnapshot(
     val sessionId: String? = null,
