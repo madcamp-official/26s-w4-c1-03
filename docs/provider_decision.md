@@ -57,3 +57,10 @@
 - CAMP-2 worker와 동일하게 `/etc/gamdo/gamdo.env`의 `LD_LIBRARY_PATH`를 적용해 InsightFace `buffalo_l`을 초기화했다.
 - detection·landmark 2종·genderage·recognition 모델 전부에서 `CUDAExecutionProvider`가 활성 provider로 확인됐다. 환경 파일을 적용하지 않은 단독 점검에서는 `libcublasLt.so.12`를 찾지 못해 CPU로 fallback했으나, 운영 worker 환경에서는 재현되지 않았다.
 - InsightFace 패키지의 비개인 다인 테스트 이미지 `t1.jpg`로 명시적 마스크를 얼굴에서 떨어진 위치에 지정해 FastAPI E2E를 재실행했다. `queued → processing → validating → done`, 후보 2개, 두 후보 모두 `validation=passed`를 확인했다. 이 이미지는 threshold 캘리브레이션 라벨 쌍에는 사용하지 않는다.
+
+## 2026-07-27 — LaMa 입력·후보 품질 게이트 보강
+
+- `remove_objects` 요청의 마스크를 서버에서 다시 계산한다. 정규화 좌표 밖의 사각형·다각형, 너무 작은 영역, 과도한 마스크 개수, 실제 면적 30% 초과는 ComfyUI 호출 전에 `422`로 거부한다. 클라이언트가 보낸 `maskAreaRatio`는 편의 필드일 뿐이며 저장되는 작업에는 서버 측 측정값을 사용한다.
+- ComfyUI로 보내는 임시 마스크는 해상도에 비례해 소폭 팽창시켜 드래그 경계의 잔여 halo를 줄인다. 임시 업로드와 마스크 파일은 기존과 같이 요청 처리 후 삭제한다.
+- InsightFace·무결성 검증을 통과한 후보는 히스토그램 변화량이 작은 순서로 결과 rank를 부여한다. 이는 미적 품질 점수가 아니라 원본 장면 보존을 위한 전달 순서 신호이며, 검증 실패 후보를 통과시키지는 않는다.
+- 필수 서버 테스트 `31 passed`를 확인했다. 실제 인물 사진의 육안 품질 평가는 사용자 제공 사진 확보 후 별도로 진행한다.

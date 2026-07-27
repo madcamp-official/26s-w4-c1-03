@@ -5,6 +5,7 @@ import io
 import os
 import re
 import time
+import math
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,8 @@ MAX_IMAGE_DIMENSION = int(os.getenv("GAMDO_MAX_IMAGE_DIMENSION", "4096"))
 MAX_EDIT_AREA_RATIO = float(os.getenv("GAMDO_MAX_EDIT_AREA_RATIO", "0.30"))
 MAX_JOBS_PER_HOUR = int(os.getenv("GAMDO_MAX_JOBS_PER_HOUR", "10"))
 MAX_ACTIVE_JOBS = int(os.getenv("GAMDO_MAX_ACTIVE_JOBS", "1"))
+MAX_MASK_COUNT = int(os.getenv("GAMDO_MAX_MASK_COUNT", "8"))
+MIN_MASK_DIMENSION_RATIO = float(os.getenv("GAMDO_MIN_MASK_DIMENSION_RATIO", "0.01"))
 
 
 def parse_json_object(raw: str, field: str) -> dict[str, Any]:
@@ -90,7 +93,119 @@ def parse_operations(raw: str) -> list[dict[str, Any]]:
                     "message": "remove_objects requires at least one explicit mask",
                     "retryable": False,
                 })
+            if len(masks) > MAX_MASK_COUNT:
+                raise HTTPException(status_code=422, detail={
+                    "code": "mask_count_exceeded",
+                    "message": f"remove_objects supports at most {MAX_MASK_COUNT} masks",
+                    "retryable": False,
+                })
+            measured_area = 0.0
+            for mask in masks:
+                measured_area += _validate_mask(mask)
+            if measured_area > MAX_EDIT_AREA_RATIO:
+                raise HTTPException(status_code=422, detail={
+                    "code": "edit_area_limit_exceeded",
+                    "message": f"mask area must be at most {MAX_EDIT_AREA_RATIO}",
+                    "retryable": False,
+                })
+            # Keep the server-side measurement authoritative even when a client
+            # omits or misreports the convenience field.
+            operation["maskAreaRatio"] = round(measured_area, 6)
     return value
+
+
+def _validate_mask(mask: Any) -> float:
+    if not isinstance(mask, dict):
+        raise HTTPException(status_code=422, detail={
+            "code": "invalid_mask",
+            "message": "each mask must be an object",
+            "retryable": False,
+        })
+    points = mask.get("points")
+    if points is not None:
+        if not isinstance(points, list) or len(points) < 3:
+            raise HTTPException(status_code=422, detail={
+                "code": "invalid_mask",
+                "message": "mask points must contain at least three points",
+                "retryable": False,
+            })
+        normalized: list[tuple[float, float]] = []
+        for point in points:
+            if not isinstance(point, (list, tuple)) or len(point) != 2:
+                raise HTTPException(status_code=422, detail={
+                    "code": "invalid_mask",
+                    "message": "mask points must be [x, y] pairs",
+                    "retryable": False,
+                })
+            x, y = _finite_normalized_pair(point)
+            normalized.append((x, y))
+        area = abs(sum(
+            normalized[index][0] * normalized[(index + 1) % len(normalized)][1]
+            - normalized[(index + 1) % len(normalized)][0] * normalized[index][1]
+            for index in range(len(normalized))
+        )) / 2.0
+        if area <= 0.0:
+            raise HTTPException(status_code=422, detail={
+                "code": "invalid_mask",
+                "message": "mask area must be greater than zero",
+                "retryable": False,
+            })
+        return area
+
+    rect = mask.get("rect", mask)
+    if not isinstance(rect, dict):
+        raise HTTPException(status_code=422, detail={
+            "code": "invalid_mask",
+            "message": "mask rect must be an object",
+            "retryable": False,
+        })
+    try:
+        x = float(rect["x"])
+        y = float(rect["y"])
+        width = float(rect["width"])
+        height = float(rect["height"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail={
+            "code": "invalid_mask",
+            "message": "mask rect requires x, y, width, and height",
+            "retryable": False,
+        }) from exc
+    if not all(math.isfinite(value) for value in (x, y, width, height)):
+        valid = False
+    else:
+        valid = (
+            0.0 <= x < 1.0
+            and 0.0 <= y < 1.0
+            and MIN_MASK_DIMENSION_RATIO <= width <= 1.0
+            and MIN_MASK_DIMENSION_RATIO <= height <= 1.0
+            and x + width <= 1.0
+            and y + height <= 1.0
+        )
+    if not valid:
+        raise HTTPException(status_code=422, detail={
+            "code": "invalid_mask",
+            "message": "mask rect must be normalized, in bounds, and large enough to edit",
+            "retryable": False,
+        })
+    return width * height
+
+
+def _finite_normalized_pair(point: list[Any] | tuple[Any, Any]) -> tuple[float, float]:
+    try:
+        x, y = float(point[0]), float(point[1])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail={
+            "code": "invalid_mask",
+            "message": "mask points must be numeric",
+            "retryable": False,
+        }) from exc
+    if not all(math.isfinite(value) for value in (x, y)) or not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+        raise HTTPException(status_code=422, detail={
+            "code": "invalid_mask",
+            "message": "mask points must be normalized and in bounds",
+            "retryable": False,
+        })
+    return x, y
 
 
 @router.post("/edit-jobs", status_code=202)

@@ -60,7 +60,7 @@ class JobWorker:
             return True
 
         self.database.transition_job(job["id"], "validating", progress_stage="validating")
-        passed = 0
+        passed_candidates = []
         for candidate in candidates[: job["result_count"]]:
             validation = self.validator.validate(Path(input_row["storage_path"]), candidate)
             if not validation.passed:
@@ -72,6 +72,21 @@ class JobWorker:
                 except OSError:
                     pass
                 continue
+            # Lower histogram distance means the edit preserved the original
+            # scene/color distribution more closely. Use it only as a stable
+            # delivery ordering signal; identity and integrity remain hard gates.
+            validation.validation.setdefault(
+                "qualityScore", round(1.0 - float(validation.validation.get("histogramDistance", 1.0)), 6)
+            )
+            passed_candidates.append((candidate, validation))
+        passed_candidates.sort(
+            key=lambda item: (
+                float(item[1].validation.get("histogramDistance", 1.0)),
+                item[0].seed,
+            )
+        )
+        passed = 0
+        for candidate, validation in passed_candidates:
             self.database.insert_result(
                 file_id=candidate_id(job["id"], candidate),
                 job_id=job["id"],
