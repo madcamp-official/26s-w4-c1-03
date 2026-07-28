@@ -3,6 +3,7 @@ package com.gamdo.app.ui.camera
 import android.util.Log
 import android.widget.Toast
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -49,8 +50,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -389,6 +392,7 @@ fun CameraScreen(
             zoomRatio = actualZoom,
             zoomBounds = zoomBounds,
             onSelectZoom = { controller.setZoom(it) },
+            onRescan = { viewModel.rescanLayout() },
             onPaneRatio = { paneRatioWtoH = it },
             referenceLayer = referenceLayer,
             hud = {
@@ -748,6 +752,7 @@ private fun CameraPreviewPane(
     zoomRatio: Float,
     zoomBounds: ZoomBounds,
     onSelectZoom: (Float) -> Unit,
+    onRescan: () -> Unit,
     onPaneRatio: (Float) -> Unit,
     referenceLayer: @Composable BoxScope.() -> Unit,
     hud: @Composable BoxScope.() -> Unit,
@@ -927,6 +932,12 @@ private fun CameraPreviewPane(
                     zoomRatio = zoomRatio,
                     bounds = zoomBounds,
                     onSelect = onSelectZoom,
+                )
+                RescanButton(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(bottom = 12.dp, end = 18.dp),
+                    onClick = onRescan,
                 )
             }
             Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
@@ -1202,6 +1213,52 @@ private fun ZoomStops(
 /** `.5` / `1x` / `2x` — the design's labels, not a formatted ratio. */
 private fun formatZoomStop(stop: Float): String =
     if (stop < 1f) ".5" else "${stop.toInt()}x"
+
+/**
+ * 재탐색 — asks the guide to look at the scene again (owner decision, 2026-07-28).
+ *
+ * Not in the 2c design. It is here because the auto layout resolver latches a
+ * template within a few frames and never un-latches inside a session: on device
+ * that shows up as the same `auto_2_row` slots hanging over every scene until the
+ * user changes style. remain_plan O-3 had ruled a layout control out; the owner
+ * reversed that after seeing the symptom.
+ *
+ * Placed on the zoom row at the preview's trailing edge, per the owner. The zoom
+ * stops stay centred, so this reads as a sibling affordance rather than a fourth
+ * stop — sharing a row with them but never sitting between them.
+ *
+ * The glyph is a miniature of the app's own target bracket, drawn rather than
+ * typed. A refresh arrow would be the conventional choice, but D2 bans direction
+ * arrows from this screen and the four corner marks say "composition" in the same
+ * vocabulary the overlay already uses. Drawing it also means it cannot fail to
+ * render on a device whose font lacks the codepoint.
+ */
+@Composable
+private fun RescanButton(modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier = modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(Color(0x99141614))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.size(15.dp)) {
+            val stroke = 1.6.dp.toPx()
+            val arm = size.minDimension * 0.34f
+            for (right in listOf(false, true)) {
+                for (bottom in listOf(false, true)) {
+                    val x = if (right) size.width else 0f
+                    val y = if (bottom) size.height else 0f
+                    val dx = if (right) -arm else arm
+                    val dy = if (bottom) -arm else arm
+                    drawLine(OnDarkMedium, Offset(x, y), Offset(x + dx, y), stroke, StrokeCap.Round)
+                    drawLine(OnDarkMedium, Offset(x, y), Offset(x, y + dy), stroke, StrokeCap.Round)
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun DetectionBadge(text: String) {

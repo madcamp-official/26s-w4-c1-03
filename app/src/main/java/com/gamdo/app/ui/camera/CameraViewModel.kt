@@ -166,6 +166,25 @@ class CameraViewModel(
         sceneGuideCoordinator.reset()
     }
 
+    /**
+     * 재탐색 — drops the latched layout template so the next frames search again.
+     *
+     * The auto resolver confirms a template within a few frames and then short-
+     * circuits for the rest of the session; that stickiness is deliberate (a guide
+     * that re-picks every second is worse than one that commits). What was missing
+     * was any way out of it. Until now the only path was [setStyleTarget], so a
+     * user who pointed the camera somewhere new had to change their style to make
+     * the guide look again — on device that reads as the app having stopped paying
+     * attention.
+     *
+     * Deliberately narrower than [setStyleTarget]: the alignment engine, the
+     * stabilizer and the style target are all left alone. "Look at the scene
+     * again" is not "forget which preset I picked".
+     */
+    fun rescanLayout() {
+        sceneGuideCoordinator.rescan()
+    }
+
     /** Called from the analysis executor once per second. */
     fun onStats(stats: AnalysisStats) {
         _stats.value = stats
