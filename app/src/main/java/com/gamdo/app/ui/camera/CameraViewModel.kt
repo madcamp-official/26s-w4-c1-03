@@ -120,6 +120,7 @@ class CameraViewModel(
     private val sceneGuideSessionController = SceneGuideSessionController(
         coordinator = SceneGuideCoordinator(
             templateSafetyMargin = config.objectGuide.templateSafetyMargin,
+            detectedSlotShapeConfig = config.objectGuide.toDetectedSlotShapeConfig(),
         ),
         tracker = StableSceneTracker(config.toObjectTrackerConfig()),
     )

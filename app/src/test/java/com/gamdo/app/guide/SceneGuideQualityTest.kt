@@ -79,6 +79,66 @@ class SceneGuideQualityTest {
     }
 
     @Test
+    fun `automatic layouts snapshot each detected object shape instead of using equal squares`() {
+        val template = GenericLayoutSynthesizer.generic(2, Arrangement.ROW)
+        val tallCup = SlotDetection(
+            "cup",
+            GuideObjectCategory.UNKNOWN,
+            NormalizedBox(0.16f, 0.24f, 0.28f, 0.72f),
+            0.8f,
+            isReliable = true,
+        )
+        val wideCake = SlotDetection(
+            "cake",
+            GuideObjectCategory.UNKNOWN,
+            NormalizedBox(0.58f, 0.45f, 0.92f, 0.66f),
+            0.8f,
+            isReliable = true,
+        )
+
+        val shaped = GenericLayoutSynthesizer.snapshotObjectShapes(template, listOf(tallCup, wideCake))
+        val left = shaped.slots[0]
+        val right = shaped.slots[1]
+
+        assertTrue(left.preferredAspectRatio < 0.6f)
+        assertTrue(right.preferredAspectRatio > 1.5f)
+        assertTrue(left.bounds.height > left.bounds.width)
+        assertTrue(right.bounds.width > right.bounds.height)
+        assertTrue(left.bounds.width != right.bounds.width)
+        assertTrue(shaped.slots.all { it.bounds.left >= 0.05f && it.bounds.right <= 0.95f })
+    }
+
+    @Test
+    fun `automatic shape snapshot remains fixed after later object size changes`() {
+        val controller = SceneGuideSessionController()
+        val initial = DetectionResult(
+            faces = emptyList(),
+            pose = null,
+            objects = listOf(
+                ObjectObservation(NormalizedBox(0.12f, 0.30f, 0.25f, 0.70f), trackingId = 1),
+                ObjectObservation(NormalizedBox(0.62f, 0.40f, 0.92f, 0.66f), trackingId = 2),
+            ),
+            objectsFresh = true,
+        )
+        repeat(2) { index -> controller.updateScene(initial.copy(objectSequenceId = (index + 1).toLong()), StyleTarget()) }
+        val fixed = controller.updateScene(initial.copy(objectSequenceId = 3), StyleTarget())
+        val before = (fixed.layoutState as GuideLayoutState.Fixed).template.slots.map { it.bounds }
+
+        val later = controller.updateScene(
+            initial.copy(
+                objectSequenceId = 4,
+                objects = listOf(
+                    ObjectObservation(NormalizedBox(0.08f, 0.10f, 0.42f, 0.90f), trackingId = 1),
+                    ObjectObservation(NormalizedBox(0.70f, 0.45f, 0.82f, 0.55f), trackingId = 2),
+                ),
+            ),
+            StyleTarget(),
+        )
+
+        assertEquals(before, (later.layoutState as GuideLayoutState.Fixed).template.slots.map { it.bounds })
+    }
+
+    @Test
     fun `manual layout replaces automatic layout and rescan clears it`() {
         val controller = SceneGuideSessionController()
         assertTrue(controller.selectManualLayout(LayoutTemplateCatalog.GENERIC_PAIR))

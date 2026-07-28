@@ -4,6 +4,7 @@ import com.gamdo.app.detect.GuideObjectCategory
 import com.gamdo.app.detect.NormalizedBox
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.sqrt
 
 enum class SlotRole { PERSON, OBJECT }
 
@@ -289,6 +290,29 @@ data class SceneSignature(
     val viewportAspect: GuideViewportAspect = GuideViewportAspect.FOUR_TO_FIVE,
 )
 
+/**
+ * Bounds for the one-time shape snapshot taken when an automatic layout locks.
+ *
+ * These values deliberately constrain the detector's noisy box measurements:
+ * they preserve the meaningful difference between a tall cup and a wide plate,
+ * without turning the composition guide into a live object-tracking overlay.
+ */
+data class DetectedSlotShapeConfig(
+    val aspectRatioMin: Float = 0.55f,
+    val aspectRatioMax: Float = 1.80f,
+    val scaleMin: Float = 0.70f,
+    val scaleMax: Float = 1.16f,
+    val referenceAreaRatio: Float = 0.08f,
+) {
+    init {
+        require(aspectRatioMin > 0f)
+        require(aspectRatioMax >= aspectRatioMin)
+        require(scaleMin > 0f)
+        require(scaleMax >= scaleMin)
+        require(referenceAreaRatio in 0.001f..1f)
+    }
+}
+
 object GenericLayoutSynthesizer {
     fun chooseArrangement(detections: List<SlotDetection>): Arrangement {
         if (detections.size <= 1) return Arrangement.SINGLE
@@ -329,6 +353,60 @@ object GenericLayoutSynthesizer {
         )
     }
 
+    /**
+     * Applies the *first stable scene's* object proportions to a template.
+     *
+     * Detection positions continue to choose a layout family only. This function
+     * changes each object slot's aspect ratio and relative visual weight once,
+     * before [transform] applies the selected GAMDO style. Later live detections
+     * never call it again, so the resulting brackets remain fixed for the session.
+     */
+    fun snapshotObjectShapes(
+        template: LayoutTemplate,
+        detections: List<SlotDetection>,
+        config: DetectedSlotShapeConfig = DetectedSlotShapeConfig(),
+        safetyMargin: Float = 0.05f,
+    ): LayoutTemplate {
+        val objectSlots = template.slots.withIndex().filter { (_, slot) -> slot.role == SlotRole.OBJECT }
+        val objects = detections.filter { it.isReliable && it.role == SlotRole.OBJECT }
+        if (objectSlots.isEmpty() || objects.isEmpty()) return template
+
+        val matches = matchObjectSlots(objectSlots, objects)
+        if (matches.isEmpty()) return template
+        val medianArea = matches.map { (_, detection) -> detection.bounds.width * detection.bounds.height }
+            .sorted()
+            .let { areas ->
+                if (areas.size % 2 == 0) (areas[areas.size / 2 - 1] + areas[areas.size / 2]) / 2f
+                else areas[areas.size / 2]
+            }
+            .coerceAtLeast(0.0001f)
+        val shaped = template.slots.toMutableList()
+        matches.forEach { (slotIndex, detection) ->
+            val slot = shaped[slotIndex]
+            val detectedArea = (detection.bounds.width * detection.bounds.height).coerceAtLeast(0.0001f)
+            val aspect = (detection.bounds.width / detection.bounds.height.coerceAtLeast(0.0001f))
+                .coerceIn(config.aspectRatioMin, config.aspectRatioMax)
+            // Blend scene scale with within-scene scale. The blend keeps a single
+            // small object compact while still making a cake visibly larger than
+            // a neighbouring cup when both were stable at lock time.
+            val sceneScale = sqrt(detectedArea / config.referenceAreaRatio)
+            val relativeScale = sqrt(detectedArea / medianArea)
+            val scale = (sceneScale * 0.60f + relativeScale * 0.40f)
+                .coerceIn(config.scaleMin, config.scaleMax)
+            val baseAspect = (slot.bounds.width / slot.bounds.height.coerceAtLeast(0.0001f))
+            val width = slot.bounds.width * scale * sqrt(aspect / baseAspect)
+            val height = slot.bounds.height * scale * sqrt(baseAspect / aspect)
+            val bounds = RectN(
+                slot.bounds.centerX - width / 2f,
+                slot.bounds.centerY - height / 2f,
+                slot.bounds.centerX + width / 2f,
+                slot.bounds.centerY + height / 2f,
+            ).withinSafetyMargin(safetyMargin)
+            shaped[slotIndex] = slot.copy(bounds = bounds, preferredAspectRatio = aspect)
+        }
+        return template.copy(slots = shaped)
+    }
+
     fun transform(
         template: LayoutTemplate,
         style: StyleTarget,
@@ -361,6 +439,49 @@ object GenericLayoutSynthesizer {
         return RectN(center - size / 2f, vertical - size / 2f, center + size / 2f, vertical + size / 2f)
     }
 
+    /** Matches source objects to fixed template positions without retaining coordinates. */
+    private fun matchObjectSlots(
+        slots: List<IndexedValue<LayoutSlot>>,
+        detections: List<SlotDetection>,
+    ): List<Pair<Int, SlotDetection>> {
+        val selectedDetections = detections.take(slots.size)
+        val slotCenters = slots.map { it.value.bounds.centerX to it.value.bounds.centerY }
+        val objectCenters = selectedDetections.map { it.bounds.centerX to it.bounds.centerY }
+        val slotXSpan = slotCenters.maxOf { it.first } - slotCenters.minOf { it.first }
+        val slotYSpan = slotCenters.maxOf { it.second } - slotCenters.minOf { it.second }
+        val objectXSpan = objectCenters.maxOf { it.first } - objectCenters.minOf { it.first }
+        val objectYSpan = objectCenters.maxOf { it.second } - objectCenters.minOf { it.second }
+        val useX = slotXSpan >= 0.04f && objectXSpan >= 0.04f
+        val useY = slotYSpan >= 0.04f && objectYSpan >= 0.04f
+        val slotMinX = slotCenters.minOf { it.first }
+        val slotMinY = slotCenters.minOf { it.second }
+        val objectMinX = objectCenters.minOf { it.first }
+        val objectMinY = objectCenters.minOf { it.second }
+
+        fun normalizedX(value: Float, min: Float, span: Float): Float = if (span < 0.04f) 0.5f else (value - min) / span
+        fun normalizedY(value: Float, min: Float, span: Float): Float = if (span < 0.04f) 0.5f else (value - min) / span
+
+        val pairs = slots.flatMap { slot ->
+            selectedDetections.map { detection ->
+                val target = slot.value.bounds
+                val dx = if (useX) normalizedX(target.centerX, slotMinX, slotXSpan) - normalizedX(detection.bounds.centerX, objectMinX, objectXSpan) else 0f
+                val dy = if (useY) normalizedY(target.centerY, slotMinY, slotYSpan) - normalizedY(detection.bounds.centerY, objectMinY, objectYSpan) else 0f
+                Triple(dx * dx + dy * dy, slot, detection)
+            }
+        }.sortedBy { it.first }
+        val usedSlots = mutableSetOf<Int>()
+        val usedDetections = mutableSetOf<String>()
+        return buildList {
+            pairs.forEach { (_, slot, detection) ->
+                if (slot.index !in usedSlots && detection.id !in usedDetections) {
+                    add(slot.index to detection)
+                    usedSlots += slot.index
+                    usedDetections += detection.id
+                }
+            }
+        }
+    }
+
     private fun RectN.withinSafetyMargin(margin: Float = 0.05f): RectN {
         val width = width.coerceAtMost(1f - margin * 2f)
         val height = height.coerceAtMost(1f - margin * 2f)
@@ -368,6 +489,9 @@ object GenericLayoutSynthesizer {
         val centerY = ((top + bottom) / 2f).coerceIn(margin + height / 2f, 1f - margin - height / 2f)
         return RectN(centerX - width / 2f, centerY - height / 2f, centerX + width / 2f, centerY + height / 2f)
     }
+
+    private val RectN.centerX: Float get() = (left + right) / 2f
+    private val RectN.centerY: Float get() = (top + bottom) / 2f
 }
 
 class AutoLayoutTemplateResolver {

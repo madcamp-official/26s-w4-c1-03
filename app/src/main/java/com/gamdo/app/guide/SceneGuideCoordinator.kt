@@ -31,6 +31,7 @@ class SceneGuideCoordinator(
     private val layoutGuideEngine: SceneLayoutGuideEngine = SceneLayoutGuideEngine(),
     private val autoLayoutResolver: AutoLayoutTemplateResolver = AutoLayoutTemplateResolver(),
     private val templateSafetyMargin: Float = 0.05f,
+    private val detectedSlotShapeConfig: DetectedSlotShapeConfig = DetectedSlotShapeConfig(),
 ) {
     private var layoutState: GuideLayoutState = GuideLayoutState.Searching
     private var manualTemplateId: String? = null
@@ -83,9 +84,22 @@ class SceneGuideCoordinator(
                 objectsFresh = observation.objectsFresh,
                 styleTarget = styleTarget,
                 viewportAspect = signals.viewportAspect,
-            )?.also {
-                fixedBaseTemplate = it
-                layoutState = GuideLayoutState.Fixed(GenericLayoutSynthesizer.transform(it, styleTarget), LayoutSource.AUTO)
+            )?.let { selected ->
+                // Capture only the confirmed scene's relative object shapes.
+                // Subsequent frames use fixedBaseTemplate and cannot move or resize
+                // the brackets until the user explicitly rescans.
+                GenericLayoutSynthesizer.snapshotObjectShapes(
+                    template = selected,
+                    detections = observation.slotDetections,
+                    config = detectedSlotShapeConfig,
+                    safetyMargin = templateSafetyMargin,
+                ).also { snapshot ->
+                    fixedBaseTemplate = snapshot
+                    layoutState = GuideLayoutState.Fixed(
+                        GenericLayoutSynthesizer.transform(snapshot, styleTarget, templateSafetyMargin),
+                        LayoutSource.AUTO,
+                    )
+                }
             }
         }
         val template = baseTemplate?.let { GenericLayoutSynthesizer.transform(it, styleTarget, templateSafetyMargin) }

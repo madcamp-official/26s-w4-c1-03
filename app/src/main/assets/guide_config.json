@@ -44,6 +44,11 @@
     "semanticMinConfidence": 0.80,
     "semanticConfirmationsRequired": 3,
     "templateSafetyMargin": 0.05,
+    "detectedSlotAspectMin": 0.55,
+    "detectedSlotAspectMax": 1.80,
+    "detectedSlotScaleMin": 0.70,
+    "detectedSlotScaleMax": 1.16,
+    "detectedSlotReferenceArea": 0.08,
     "performanceTargetFps": 8
   }
 }

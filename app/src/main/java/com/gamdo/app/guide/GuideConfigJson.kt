@@ -65,12 +65,20 @@ data class ObjectGuideConfigJson(
     val semanticMinConfidence: Float = 0.80f,
     val semanticConfirmationsRequired: Int = 3,
     val templateSafetyMargin: Float = 0.05f,
+    val detectedSlotAspectMin: Float = 0.55f,
+    val detectedSlotAspectMax: Float = 1.80f,
+    val detectedSlotScaleMin: Float = 0.70f,
+    val detectedSlotScaleMax: Float = 1.16f,
+    val detectedSlotReferenceArea: Float = 0.08f,
     val performanceTargetFps: Int = 8,
 ) {
     init {
         require(objectRefreshEveryFrames >= 1)
         require(segmentationRefreshEveryFrames >= 1)
         require(templateSafetyMargin in 0f..0.20f)
+        require(detectedSlotAspectMin > 0f && detectedSlotAspectMax >= detectedSlotAspectMin)
+        require(detectedSlotScaleMin > 0f && detectedSlotScaleMax >= detectedSlotScaleMin)
+        require(detectedSlotReferenceArea in 0.001f..1f)
         require(performanceTargetFps >= 1)
     }
 
@@ -85,6 +93,14 @@ data class ObjectGuideConfigJson(
         duplicateIou = duplicateIou,
         semanticMinConfidence = semanticMinConfidence,
         semanticConfirmationsRequired = semanticConfirmationsRequired,
+    )
+
+    fun toDetectedSlotShapeConfig(): DetectedSlotShapeConfig = DetectedSlotShapeConfig(
+        aspectRatioMin = detectedSlotAspectMin,
+        aspectRatioMax = detectedSlotAspectMax,
+        scaleMin = detectedSlotScaleMin,
+        scaleMax = detectedSlotScaleMax,
+        referenceAreaRatio = detectedSlotReferenceArea,
     )
 }
 
