@@ -64,7 +64,14 @@ data class GuideDebug(
 data class ShutterFrame(
     val features: FrameFeatures,
     val target: StyleTarget,
-    val aligned: Boolean,
+    /**
+     * Whether the subject was inside the preset bracket, or **null when a fixed
+     * layout was latched** — the bracket is not drawn then, so there is nothing
+     * the user was aiming at. "NULL=측정불가" is the schema's own vocabulary
+     * (DB 스키마 v2.0 §session_guides.resolved); this field follows it.
+     */
+    val aligned: Boolean?,
+    /** Raw overlay visibility. The show/hide KPI measures exactly this. */
     val visible: Boolean,
     val fixedLayout: FixedLayoutGuide? = null,
 )
@@ -247,10 +254,29 @@ class CameraViewModel(
         )
         val projection = stabilizer.stabilize(engineState.toProjection())
         val fixedLayout = sceneGuide.fixedLayout
-        // A fixed layout is a user-facing composition target, not a checklist.
-        // The shutter must never wait for every slot to be filled.
-        val effectiveAligned = fixedLayout != null || projection.aligned
-        val effectiveVisible = fixedLayout != null || projection.visible
+
+        // Both of these used to be `fixedLayout != null || projection.<x>`, so a
+        // latched layout pinned them true for the rest of the session. The stated
+        // reason was "the shutter must never wait for every slot to be filled" —
+        // but **neither field gates the shutter.** Capture is unconditional (D2),
+        // and each of these has exactly one consumer, both of them KPIs:
+        //
+        //   visible → the session_guides show/hide collector (CameraScreen)
+        //   aligned → analysis_json on the capture row (ShutterSnapshot)
+        //
+        // So the OR term defended against a gate that does not exist while making
+        // two measurements incapable of reporting anything but success. The
+        // show/hide KPI logged one row per session and never a hidden one; every
+        // capture recorded aligned=true.
+        //
+        // `visible` is now the raw overlay state, which is what that KPI measures.
+        //
+        // `aligned` is **null while a layout is latched** (owner decision,
+        // 2026-07-28). With the fixed-layout gate in CameraOverlay the preset
+        // bracket is not on screen, so `projection.aligned` would score the user
+        // against a target they cannot see. Null is the schema's own vocabulary
+        // for this — DB 스키마 v2.0 §session_guides: "NULL=측정불가".
+        val alignedForKpi: Boolean? = if (fixedLayout != null) null else projection.aligned
 
         _detectionLabel.value = detectionLabelOf(detection) +
             " · layout=${sceneGuide.layoutGuide.level.name.lowercase()}"
@@ -259,8 +285,8 @@ class CameraViewModel(
         _lastFrame.value = ShutterFrame(
             features = features,
             target = target,
-            aligned = effectiveAligned,
-            visible = effectiveVisible,
+            aligned = alignedForKpi,
+            visible = projection.visible,
             fixedLayout = fixedLayout,
         )
 
