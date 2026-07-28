@@ -1,12 +1,12 @@
 package com.gamdo.app.detect
 
 import kotlin.math.hypot
-import kotlin.math.max
 
 /** All object-guide quality thresholds live in guide_config.json. */
 data class ObjectTrackerConfig(
     val windowSize: Int = 5,
     val confirmationsRequired: Int = 3,
+    val companionConfirmationsRequired: Int = 2,
     val maxObjects: Int = 4,
     val minimumIoU: Float = 0.30f,
     val maxCenterDistance: Float = 0.16f,
@@ -15,30 +15,24 @@ data class ObjectTrackerConfig(
     val duplicateIou: Float = 0.75f,
     val semanticMinConfidence: Float = 0.80f,
     val semanticConfirmationsRequired: Int = 3,
-    /**
-     * Non-person candidate selection is deliberately centred on the
-     * viewfinder. The user normally composes the intended subject around the
-     * focus point, while edge detections are usually background clutter that
-     * should not create a layout on their own. Faces keep the D12 person-path:
-     * portrait framing naturally places a face above the viewfinder centre.
-     */
     val focusRegionWidth: Float = 0.70f,
     val focusRegionHeight: Float = 0.68f,
-    /** Maximum distance from the central main subject for its companion objects. */
+    // The anchor neighborhood is slightly wider than the tap ROI so a
+    // composed three-item tabletop scene can span the central viewfinder.
     val subjectClusterRadius: Float = 0.38f,
-    /** Reject tiny unknown clutter relative to the central main subject. */
-    val subjectClusterMinimumRelativeArea: Float = 0.16f,
-    /** Maximum distance from the viewport centre for an object-cluster anchor. */
+    val subjectClusterMinimumRelativeArea: Float = 0.10f,
     val sceneAnchorMaxDistance: Float = 0.36f,
-    /** Cables and long edges are not promoted as unknown composition subjects. */
     val maximumUnknownAspectRatio: Float = 3.50f,
-    /** Nested boxes with nearly the same centre are detector duplicates, not two subjects. */
     val nestedDuplicateCenterDistance: Float = 0.08f,
     val nestedDuplicateContainment: Float = 0.78f,
+    val interestRegion: SceneInterestRegion = SceneInterestRegion.Default,
+    val tapInterestRadiusX: Float = 0.32f,
+    val tapInterestRadiusY: Float = 0.28f,
 ) {
     init {
         require(windowSize >= 1)
         require(confirmationsRequired in 1..windowSize)
+        require(companionConfirmationsRequired in 1..windowSize)
         require(maxObjects >= 1)
         require(minimumAreaRatio in 0f..1f)
         require(maximumAreaRatio in minimumAreaRatio..1f)
@@ -52,291 +46,177 @@ data class ObjectTrackerConfig(
         require(maximumUnknownAspectRatio >= 1f)
         require(nestedDuplicateCenterDistance in 0f..1f)
         require(nestedDuplicateContainment in 0f..1f)
+        require(tapInterestRadiusX in 0.10f..0.50f)
+        require(tapInterestRadiusY in 0.10f..0.50f)
     }
 }
 
 /**
- * Multi-object confirmation for the camera guide. Only fresh detector batches
- * advance confirmation history; cached detector output cannot manufacture a
- * 3-of-5 confirmation.
+ * Scene-level confirmation. It deliberately does not freeze on the first
+ * object that happens to be detected: one anchor needs 3/5 sightings and
+ * nearby companions need 2/5 sightings before they enter the fixed layout.
  */
 class StableSceneTracker(
     private val config: ObjectTrackerConfig = ObjectTrackerConfig(),
 ) {
-    private data class SceneKey(val hasPerson: Boolean, val objectCount: Int)
-
-    private data class SceneSample(
-        val key: SceneKey,
+    private data class Sample(
         val objects: List<ObjectObservation>,
         val people: List<ObjectObservation>,
         val sequenceId: Long,
-    ) {
-        val anchor: ObjectObservation?
-            get() = objects.maxByOrNull { it.box.width * it.box.height }
-    }
-
-    private data class SceneCluster(
-        val key: SceneKey,
-        val samples: MutableList<SceneSample> = mutableListOf(),
     )
 
-    private val sceneWindow = ArrayDeque<SceneSample>()
-    private var lastStable: List<ObjectObservation> = emptyList()
+    private val window = ArrayDeque<Sample>()
+    private var region = config.interestRegion
+    private var lastStable = emptyList<ObjectObservation>()
 
     fun accept(batch: ObjectDetectionBatch): List<ObjectObservation> {
         if (!batch.isFresh) return lastStable
-
         val candidates = sanitize(batch.objects)
         val people = candidates.filter { it.category == GuideObjectCategory.PERSON }
         val objects = candidates.filter { it.category != GuideObjectCategory.PERSON }
-        sceneWindow.addLast(
-            SceneSample(
-                key = SceneKey(people.isNotEmpty(), objects.size),
-                objects = objects,
-                people = people,
-                sequenceId = batch.sequenceId,
-            ),
-        )
-        while (sceneWindow.size > config.windowSize) sceneWindow.removeFirst()
+        window += Sample(objects, people, batch.sequenceId)
+        while (window.size > config.windowSize) window.removeFirst()
 
-        // Scene confirmation owns the first fixed layout. An individual can or
-        // bottle is not allowed to lock a one-slot layout before its neighbours
-        // have had a chance to appear in the same five fresh detections.
-        if (sceneWindow.size < config.windowSize) {
+        val anchor = chooseAnchor(window.lastOrNull()?.objects.orEmpty())
+        val anchorSightings = anchor?.let { selected ->
+            window.count { sample -> sample.objects.any { sameSubject(it, selected) } }
+        } ?: window.count { it.people.isNotEmpty() }
+        if (window.size < config.windowSize || anchorSightings < config.confirmationsRequired) {
             lastStable = emptyList()
             return lastStable
         }
 
-        val clusters = buildSceneClusters()
-        val winning = clusters
-            .filter { it.samples.size >= config.confirmationsRequired }
-            .filter { cluster -> cluster.samples.any { it.sequenceId == batch.sequenceId } }
-            .maxWithOrNull(
-                compareBy<SceneCluster> { it.key.objectCount }
-                    .thenBy { it.samples.size }
-                    .thenBy { it.samples.maxOf { sample -> sample.sequenceId } },
-            )
+        val companions = if (anchor == null) emptyList() else window.asReversed()
+            .flatMap { it.objects }
+            .filter { !sameSubject(it, anchor) }
+            .filter { candidate -> distance(anchor, candidate) <= config.subjectClusterRadius }
+            .filter { candidate ->
+                window.count { sample -> sample.objects.any { sameSubject(it, candidate) } } >=
+                    config.companionConfirmationsRequired
+            }
+            .distinctBy { candidate -> stableKey(candidate) }
+            .sortedByDescending(::rankingScore)
 
-        if (winning == null || hasUnconfirmedLargerScene(winning)) {
-            lastStable = emptyList()
-            return lastStable
-        }
-
-        val representative = winning.samples.lastOrNull { it.sequenceId == batch.sequenceId }
-            ?: winning.samples.last()
+        val representative = listOfNotNull(anchor) + companions
+        val person = window.mapNotNull { it.people.maxByOrNull(::rankingScore) }
+            .maxByOrNull(::rankingScore)
         lastStable = limitWithPersonPriority(
-            (representative.people + representative.objects).map { observation ->
-                observation.copy(
-                    semanticConfirmed = semanticConfirmedInCluster(winning, observation),
-                )
-            },
-        )
+            listOfNotNull(person) + representative,
+        ).map { it.copy(semanticConfirmed = semanticConfirmed(it)) }
         return lastStable
     }
 
-    fun reset() {
-        sceneWindow.clear()
+    /** Starts automatic search around the supplied normalized preview point. */
+    fun rescanAt(anchorX: Float, anchorY: Float) {
+        region = SceneInterestRegion(
+            anchorX.coerceIn(0.16f, 0.84f),
+            anchorY.coerceIn(0.18f, 0.82f),
+            config.tapInterestRadiusX,
+            config.tapInterestRadiusY,
+            SceneInterestRegion.Source.TAP,
+        )
+        window.clear()
         lastStable = emptyList()
     }
 
-    private fun buildSceneClusters(): List<SceneCluster> {
-        val clusters = mutableListOf<SceneCluster>()
-        sceneWindow.forEach { sample ->
-            val cluster = clusters.firstOrNull { sameScene(it.samples.lastOrNull(), sample) }
-            if (cluster == null) {
-                clusters += SceneCluster(sample.key, mutableListOf(sample))
-            } else {
-                cluster.samples += sample
-            }
-        }
-        return clusters
+    fun reset() {
+        window.clear()
+        lastStable = emptyList()
+        region = config.interestRegion
     }
 
-    private fun hasUnconfirmedLargerScene(winning: SceneCluster): Boolean =
-        buildSceneClusters().any { cluster ->
-            cluster.key.objectCount > winning.key.objectCount &&
-                cluster.samples.size >= 2 &&
-                cluster.samples.any { sample -> sample.sequenceId >= winning.samples.first().sequenceId }
-        }
-
-    private fun sameScene(previous: SceneSample?, current: SceneSample): Boolean {
-        if (previous == null || previous.key != current.key) return false
-        val previousAnchor = previous.anchor
-        val currentAnchor = current.anchor
-        if (previousAnchor == null || currentAnchor == null) return true
-        if (distance(previousAnchor, currentAnchor) > config.sceneAnchorMaxDistance &&
-            intersectionOverUnion(previousAnchor.box, currentAnchor.box) < config.minimumIoU
-        ) return false
-
-        val matches = current.objects.count { candidate ->
-            previous.objects.any { prior -> sameSubject(prior, candidate) }
-        }
-        return matches >= max(1, current.objects.size - 1)
-    }
-
-    private fun semanticConfirmedInCluster(cluster: SceneCluster, observation: ObjectObservation): Boolean {
-        val votes = cluster.samples.count { sample ->
-            sample.objects.any { candidate ->
-                sameSubject(candidate, observation) && candidate.confirmedSemanticCandidate() != null
-            }
-        }
-        return votes >= config.semanticConfirmationsRequired
-    }
-
-    private fun rankingScore(objectObservation: ObjectObservation): Float {
-        val area = (objectObservation.box.width * objectObservation.box.height).coerceIn(0f, 1f)
-        val centerDistance = hypot(
-            objectObservation.box.centerX - 0.5f,
-            objectObservation.box.centerY - 0.5f,
-        ).coerceIn(0f, 0.7072f) / 0.7072f
-        return area * 0.7f + (1f - centerDistance) * 0.3f
-    }
-
-    /**
-     * Keeps one central, visually coherent group of major subjects. The object
-     * detector can still report cables, a laptop edge, or nested duplicate
-     * boxes; those are useful detector diagnostics but must not become extra
-     * composition slots.
-     */
     private fun sanitize(objects: List<ObjectObservation>): List<ObjectObservation> {
         val selected = mutableListOf<ObjectObservation>()
         objects
+            .asSequence()
             .filter { SceneRecognitionPolicy.isValidBox(it.box) }
-            .filter { candidate ->
-                val area = candidate.box.width * candidate.box.height
-                area in config.minimumAreaRatio..config.maximumAreaRatio
-            }
-            .filter { candidate ->
-                candidate.category == GuideObjectCategory.PERSON || !isLikelyClippedBackground(candidate)
-            }
-            .filter { candidate ->
-                val area = candidate.box.width * candidate.box.height
-                val fullWidthBackground = candidate.box.width >= 0.92f && area >= 0.45f
-                val fullHeightBackground = candidate.box.height >= 0.92f && area >= 0.45f
-                candidate.mask != null || (!fullWidthBackground && !fullHeightBackground)
-            }
-            .filter { candidate ->
-                candidate.category == GuideObjectCategory.PERSON || isInsideFocusRegion(candidate)
-            }
+            .filter { area(it.box) in config.minimumAreaRatio..config.maximumAreaRatio }
+            .filter { it.category == GuideObjectCategory.PERSON || !isClippedBackground(it) }
+            .filter { it.category == GuideObjectCategory.PERSON || region.contains(it.box) }
+            .filter { it.category == GuideObjectCategory.PERSON || isPlausibleSubject(it) }
             .sortedByDescending(::rankingScore)
             .forEach { candidate ->
-                val duplicate = selected.any { existing ->
-                    isDuplicate(existing, candidate)
-                }
-                if (!duplicate) selected += candidate
+                if (selected.none { isDuplicate(it, candidate) }) selected += candidate
             }
+
         val people = selected.filter { it.category == GuideObjectCategory.PERSON }
-        val objectCluster = selectMainObjectCluster(selected.filter { it.category != GuideObjectCategory.PERSON })
-        return people + objectCluster
+        val objectsInRegion = selected.filter { it.category != GuideObjectCategory.PERSON }
+        val anchor = chooseAnchor(objectsInRegion)
+        val group = if (anchor == null) emptyList() else objectsInRegion
+            .filter { distance(anchor, it) <= config.subjectClusterRadius }
+            .filter { it === anchor || area(it.box) >= area(anchor.box) * config.subjectClusterMinimumRelativeArea }
+            .take(config.maxObjects)
+        return people + group
     }
 
-    /**
-     * The central/high-importance object is the anchor. Nearby objects of a
-     * meaningful size form its scene cluster; isolated or thin unknown boxes
-     * are discarded. This keeps labels optional while preserving a genuine
-     * 1~4 object scene such as a drink, pouch, and snack on one table.
-     */
-    private fun selectMainObjectCluster(objects: List<ObjectObservation>): List<ObjectObservation> {
-        if (objects.size <= 1) return objects
-        val plausible = objects.filter(::isPlausibleSubject).ifEmpty { objects }
-        val anchor = plausible.maxByOrNull(::rankingScore) ?: return emptyList()
-        val anchorArea = area(anchor.box).coerceAtLeast(config.minimumAreaRatio)
-        return plausible.filter { candidate ->
-            candidate === anchor || (
-                distance(anchor, candidate) <= config.subjectClusterRadius &&
-                    (candidate.category != GuideObjectCategory.UNKNOWN ||
-                        area(candidate.box) >= anchorArea * config.subjectClusterMinimumRelativeArea)
-                )
-            }
-            .sortedByDescending(::rankingScore)
+    private fun chooseAnchor(objects: List<ObjectObservation>): ObjectObservation? =
+        objects.maxByOrNull(::rankingScore)
+
+    private fun semanticConfirmed(observation: ObjectObservation): Boolean =
+        observation.category != GuideObjectCategory.UNKNOWN &&
+            (observation.classificationConfidence ?: 0f) >= config.semanticMinConfidence &&
+            window.count { sample -> sample.objects.any { sameSubject(it, observation) } } >=
+            config.semanticConfirmationsRequired
+
+    private fun stableKey(objectObservation: ObjectObservation): String =
+        objectObservation.trackingId?.toString() ?: "%.2f:%.2f".format(
+            objectObservation.box.centerX, objectObservation.box.centerY,
+        )
+
+    private fun rankingScore(objectObservation: ObjectObservation): Float {
+        val centrality = 1f - (hypot(
+            objectObservation.box.centerX - region.centerX,
+            objectObservation.box.centerY - region.centerY,
+        ) / 0.7072f).coerceIn(0f, 1f)
+        return area(objectObservation.box).coerceIn(0f, 1f) * 0.55f + centrality * 0.45f
     }
 
     private fun isPlausibleSubject(candidate: ObjectObservation): Boolean {
-        if (candidate.category != GuideObjectCategory.UNKNOWN) return true
         val width = candidate.box.width.coerceAtLeast(0.0001f)
         val height = candidate.box.height.coerceAtLeast(0.0001f)
-        val aspect = maxOf(width / height, height / width)
-        return aspect <= config.maximumUnknownAspectRatio
+        return maxOf(width / height, height / width) <= config.maximumUnknownAspectRatio
     }
 
-    private fun isDuplicate(existing: ObjectObservation, candidate: ObjectObservation): Boolean {
-        if (intersectionOverUnion(existing.box, candidate.box) >= config.duplicateIou) return true
-        val intersection = intersectionArea(existing.box, candidate.box)
-        val smallerArea = minOf(area(existing.box), area(candidate.box))
-        val contained = smallerArea > 0f && intersection / smallerArea >= config.nestedDuplicateContainment
-        return contained && distance(existing, candidate) <= config.nestedDuplicateCenterDistance
+    private fun isClippedBackground(candidate: ObjectObservation): Boolean {
+        val b = candidate.box
+        val touched = listOf(b.left <= 0.02f, b.top <= 0.02f, b.right >= 0.98f, b.bottom >= 0.98f).count { it }
+        return touched >= 2 && area(b) >= 0.08f
     }
 
-    /**
-     * A box belongs to the composition candidate set only when its centre is
-     * inside the central focus region. Using the centre instead of any overlap
-     * avoids promoting a large edge/background box that merely touches the
-     * viewfinder's middle.
-     */
-    private fun isInsideFocusRegion(candidate: ObjectObservation): Boolean {
-        val dx = candidate.box.centerX - 0.5f
-        val dy = candidate.box.centerY - 0.5f
-        val radiusX = config.focusRegionWidth / 2f
-        val radiusY = config.focusRegionHeight / 2f
-        return (dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY) <= 1f &&
-            hypot(dx, dy) <= config.sceneAnchorMaxDistance
-    }
-
-    private fun isLikelyClippedBackground(candidate: ObjectObservation): Boolean {
-        val box = candidate.box
-        val touchedEdges = listOf(
-            box.left <= 0.02f,
-            box.top <= 0.02f,
-            box.right >= 0.98f,
-            box.bottom >= 0.98f,
-        ).count { it }
-        return touchedEdges >= 2 && area(box) >= 0.08f
+    private fun isDuplicate(a: ObjectObservation, b: ObjectObservation): Boolean {
+        if (intersectionOverUnion(a.box, b.box) >= config.duplicateIou) return true
+        val intersection = intersectionArea(a.box, b.box)
+        val smaller = minOf(area(a.box), area(b.box))
+        return smaller > 0f && intersection / smaller >= config.nestedDuplicateContainment &&
+            distance(a, b) <= config.nestedDuplicateCenterDistance
     }
 
     private fun sameSubject(a: ObjectObservation, b: ObjectObservation): Boolean =
-        if (a.trackingId != null && b.trackingId != null) {
-            a.trackingId == b.trackingId
-        } else {
-            intersectionOverUnion(a.box, b.box) >= config.minimumIoU ||
-                distance(a, b) <= config.maxCenterDistance
-        }
+        if (a.trackingId != null && b.trackingId != null) a.trackingId == b.trackingId
+        else intersectionOverUnion(a.box, b.box) >= config.minimumIoU || distance(a, b) <= config.maxCenterDistance
 
-    /** Keep one confirmed person and then the most visually important objects. */
-    private fun limitWithPersonPriority(stable: List<ObjectObservation>): List<ObjectObservation> {
-        val ranked = stable.sortedByDescending(::rankingScore)
-        val person = ranked.firstOrNull { it.category == GuideObjectCategory.PERSON }
-        val objects = ranked.filter { it.category != GuideObjectCategory.PERSON }
-        return if (person == null) {
-            objects.take(config.maxObjects)
-        } else {
-            listOf(person) + objects.take((config.maxObjects - 1).coerceAtLeast(0))
-        }
+    private fun limitWithPersonPriority(items: List<ObjectObservation>): List<ObjectObservation> {
+        val person = items.firstOrNull { it.category == GuideObjectCategory.PERSON }
+        val objects = items.filter { it.category != GuideObjectCategory.PERSON }
+            .distinctBy(::stableKey)
+            .sortedByDescending(::rankingScore)
+        return if (person == null) objects.take(config.maxObjects)
+        else listOf(person) + objects.take((config.maxObjects - 1).coerceAtLeast(0))
     }
 
-    private fun ObjectObservation.confirmedSemanticCandidate(): GuideObjectCategory? =
-        category.takeIf {
-            it != GuideObjectCategory.UNKNOWN &&
-                (classificationConfidence ?: 0f) >= config.semanticMinConfidence
-        }
-
     private fun distance(a: ObjectObservation, b: ObjectObservation): Float = hypot(
-        a.box.centerX - b.box.centerX,
-        a.box.centerY - b.box.centerY,
+        a.box.centerX - b.box.centerX, a.box.centerY - b.box.centerY,
     )
+
+    private fun area(b: NormalizedBox): Float = b.width * b.height
 
     private fun intersectionOverUnion(a: NormalizedBox, b: NormalizedBox): Float {
         val intersection = intersectionArea(a, b)
-        val union = a.width * a.height + b.width * b.height - intersection
+        val union = area(a) + area(b) - intersection
         return if (union <= 0f) 0f else intersection / union
     }
 
-    private fun intersectionArea(a: NormalizedBox, b: NormalizedBox): Float {
-        val left = maxOf(a.left, b.left)
-        val top = maxOf(a.top, b.top)
-        val right = minOf(a.right, b.right)
-        val bottom = minOf(a.bottom, b.bottom)
-        return (right - left).coerceAtLeast(0f) * (bottom - top).coerceAtLeast(0f)
-    }
-
-    private fun area(box: NormalizedBox): Float = box.width * box.height
+    private fun intersectionArea(a: NormalizedBox, b: NormalizedBox): Float =
+        (minOf(a.right, b.right) - maxOf(a.left, b.left)).coerceAtLeast(0f) *
+            (minOf(a.bottom, b.bottom) - maxOf(a.top, b.top)).coerceAtLeast(0f)
 }

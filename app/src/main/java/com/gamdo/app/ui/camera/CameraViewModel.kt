@@ -312,6 +312,17 @@ class CameraViewModel(
         _sceneGuideMetrics.value = SceneGuideMetrics()
     }
 
+    /** P1 calls this after CameraX focus succeeds; coordinates are normalized. */
+    fun rescanLayoutAt(anchorX: Float, anchorY: Float) {
+        alignmentEngine.reset()
+        stabilizer.reset()
+        sceneGuideSessionController.rescanAt(anchorX, anchorY)
+        firstFixedNs = null
+        sceneStartedNs = System.nanoTime()
+        freshObjectFrames = 0L
+        _sceneGuideMetrics.value = SceneGuideMetrics()
+    }
+
     private fun updateSceneMetrics(sceneGuide: com.gamdo.app.guide.SceneGuideState) {
         val now = System.nanoTime()
         val started = sceneStartedNs.takeIf { it > 0L } ?: now

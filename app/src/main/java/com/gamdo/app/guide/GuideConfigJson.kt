@@ -66,6 +66,7 @@ data class ObjectGuideConfigJson(
     val segmentationRefreshEveryFrames: Int = 12,
     val confirmationWindow: Int = 5,
     val confirmationsRequired: Int = 3,
+    val companionConfirmationsRequired: Int = 2,
     val maxObjects: Int = 4,
     val minimumIou: Float = 0.30f,
     val maxCenterDistance: Float = 0.16f,
@@ -82,6 +83,12 @@ data class ObjectGuideConfigJson(
     val maximumUnknownAspectRatio: Float = 3.50f,
     val nestedDuplicateCenterDistance: Float = 0.08f,
     val nestedDuplicateContainment: Float = 0.78f,
+    val interestCenterX: Float = 0.50f,
+    val interestCenterY: Float = 0.58f,
+    val interestRadiusX: Float = 0.34f,
+    val interestRadiusY: Float = 0.30f,
+    val tapInterestRadiusX: Float = 0.32f,
+    val tapInterestRadiusY: Float = 0.28f,
     val templateSafetyMargin: Float = 0.05f,
     val detectedSlotAspectMin: Float = 0.55f,
     val detectedSlotAspectMax: Float = 1.80f,
@@ -119,12 +126,17 @@ data class ObjectGuideConfigJson(
         require(maximumUnknownAspectRatio >= 1f)
         require(nestedDuplicateCenterDistance in 0f..1f)
         require(nestedDuplicateContainment in 0f..1f)
+        require(companionConfirmationsRequired in 1..confirmationWindow)
+        require(interestCenterX in 0f..1f && interestCenterY in 0f..1f)
+        require(interestRadiusX in 0.10f..0.50f && interestRadiusY in 0.10f..0.50f)
+        require(tapInterestRadiusX in 0.10f..0.50f && tapInterestRadiusY in 0.10f..0.50f)
         require(performanceTargetFps >= 1)
     }
 
     fun toTrackerConfig(): ObjectTrackerConfig = ObjectTrackerConfig(
         windowSize = confirmationWindow,
         confirmationsRequired = confirmationsRequired,
+        companionConfirmationsRequired = companionConfirmationsRequired,
         maxObjects = maxObjects,
         minimumIoU = minimumIou,
         maxCenterDistance = maxCenterDistance,
@@ -141,6 +153,11 @@ data class ObjectGuideConfigJson(
         maximumUnknownAspectRatio = maximumUnknownAspectRatio,
         nestedDuplicateCenterDistance = nestedDuplicateCenterDistance,
         nestedDuplicateContainment = nestedDuplicateContainment,
+        interestRegion = com.gamdo.app.detect.SceneInterestRegion(
+            interestCenterX, interestCenterY, interestRadiusX, interestRadiusY,
+        ),
+        tapInterestRadiusX = tapInterestRadiusX,
+        tapInterestRadiusY = tapInterestRadiusY,
     )
 
     fun toDetectedSlotShapeConfig(): DetectedSlotShapeConfig = DetectedSlotShapeConfig(
