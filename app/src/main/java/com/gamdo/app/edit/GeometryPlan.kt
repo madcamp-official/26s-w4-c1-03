@@ -80,12 +80,18 @@ const val MIN_LEVELING_DEG = 0.35f
  * `RenderMatrixTest` pins it — a point right of centre must rise under a negative
  * rotation.
  *
- * **Derived, not observed.** The convention was reasoned out from the gravity-vector
- * contract with no device attached, and guide-capture-agent has flagged that
- * `CameraOverlay`'s horizon line may carry the opposite sign. Both signs come from
- * this one derivation, so they stand or fall together: if the device check shows the
- * overlay is right, this `-tiltDeg` inverts with it. DONE-DEVICE, and harmless until
- * §3-3 starts populating `conditions_json` in wave 3.
+ * **Observed, 2026-07-28 — the sign is correct.** This was written as "derived, not
+ * observed", reasoned out from the gravity-vector contract with no device attached,
+ * and flagged as harmless only until `conditions_json` acquired a reader. Wiring
+ * §4-1 auto-correction into the result screen made it live, so it was measured:
+ *
+ * `cap_01KYHBRHFWAXWJ…` was captured at `tiltDeg = 19.30°` (clipped to the 12°
+ * cap). Opening it on SM-G970N moved the dominant near-horizontal line from
+ * **+14.25° to +0.25°** — level. Had the sign been inverted the same photo would
+ * have come out near 26°.
+ *
+ * If someone later changes `TiltSensor`'s roll convention, this is the measurement
+ * to repeat; a gradient-orientation histogram over the opened photo is enough.
  */
 fun levelingRotationDeg(tiltDeg: Float, maxDeg: Float = MAX_LEVELING_DEG): Float {
     if (!tiltDeg.isFinite()) return 0f

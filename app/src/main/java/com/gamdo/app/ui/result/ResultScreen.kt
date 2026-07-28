@@ -44,10 +44,13 @@ import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.local.entity.Captures
 import com.gamdo.app.data.SavedEdit
+import com.gamdo.app.edit.CaptureConditions
+import com.gamdo.app.edit.EditPlan
 import com.gamdo.app.edit.EditSourceLoader
 import com.gamdo.app.edit.EditTool
 import com.gamdo.app.edit.FilterEngine
 import com.gamdo.app.edit.QuickFilterEditor
+import com.gamdo.app.edit.LocalEditor
 import com.gamdo.app.edit.LocalFilter
 import com.gamdo.app.ui.components.PrimaryPillButton
 import com.gamdo.app.ui.theme.Charcoal700
@@ -65,6 +68,15 @@ import kotlinx.coroutines.withContext
 
 private const val TAG = "ResultScreen"
 
+/**
+ * The opened photo after §4-1 levelling + auto exposure, plus the plan that made
+ * it so the save path can re-apply the identical correction at full resolution.
+ *
+ * [plan] is null when auto-correction could not run; [bitmap] is then the
+ * untouched decode.
+ */
+private data class AutoCorrected(val bitmap: Bitmap, val plan: EditPlan?)
+
 @Composable
 fun ResultScreen(
     container: AppContainer,
@@ -76,8 +88,20 @@ fun ResultScreen(
             container.database.capturesDao().get(captureId)
         }
     }
-    val source by produceState<Bitmap?>(initialValue = null, capture?.filePath) {
-        val path = capture?.filePath ?: return@produceState
+    // §4-1 기하·광학 자동 보정 (O-2): levelling rotation + auto exposure, applied
+    // when the photo opens, with **no visible control**.
+    //
+    // Until now `captures.conditions_json` was written on every shutter and read by
+    // nobody: the only production reader was `rememberResultEditController()`, which
+    // had zero call sites, so the shutter-time tilt was recorded and discarded
+    // (review_report #6). This is that reader.
+    //
+    // `plan` is kept in state and handed to the save path unchanged. Re-deriving it
+    // there from a larger decode would risk preview and save disagreeing about the
+    // crop; `EditPlan.withProcessingMaxSide` exists for exactly this and
+    // `EditPlanTest` pins the property.
+    val corrected by produceState<AutoCorrected?>(initialValue = null, capture?.filePath) {
+        val captureValue = capture ?: return@produceState
         // Decode off the composition thread so entering the editor never blocks
         // the first frame, and decode *small*.
         //
@@ -87,10 +111,41 @@ fun ResultScreen(
         // at roughly 940 wide — about twelve times more work than the screen can
         // show, on the interaction path. Saving still uses the full file; see the
         // save button below.
-        value = withContext(Dispatchers.IO) {
-            EditSourceLoader.decode(File(path), PREVIEW_MAX_SIDE)
+        value = withContext(Dispatchers.Default) {
+            val file = File(captureValue.filePath)
+            val preview = EditSourceLoader.decode(file, PREVIEW_MAX_SIDE)
+                ?: return@withContext null
+            // Every failure below falls back to the untouched decode. An
+            // auto-correction the user never asked for must never be the reason a
+            // photo will not open.
+            runCatching {
+                val fullSize = EditSourceLoader.readSize(file) ?: (preview.width to preview.height)
+                val conditions = CaptureConditions.parse(captureValue.conditionsJson)
+                val editor = LocalEditor()
+                val sample = editor.sample(
+                    bitmap = preview,
+                    tiltDeg = conditions.tiltDegOrZero,
+                    subject = conditions.subject,
+                    sourceWidth = fullSize.first,
+                    sourceHeight = fullSize.second,
+                )
+                // preset = null → geometry + optical only. The style stage stays an
+                // identity, because auto-applying a look the user did not pick is a
+                // different feature and not the one O-2 approved.
+                val plan = editor.plan(
+                    sample = sample,
+                    preset = null,
+                    subject = conditions.subject,
+                    requestedMaxSide = PREVIEW_MAX_SIDE,
+                )
+                AutoCorrected(editor.render(preview, plan).bitmap, plan)
+            }.getOrElse {
+                Log.w(TAG, "auto-correction failed for ${captureValue.id}; showing the original", it)
+                AutoCorrected(preview, plan = null)
+            }
         }
     }
+    val source: Bitmap? = corrected?.bitmap
     var selectedFilter by remember { mutableStateOf(LocalFilter.ORIGINAL) }
     // Every style in presets.json now has a filter of its own, so this is a lookup
     // rather than a when-chain with a fallback. The chain listed four of the six
@@ -258,9 +313,24 @@ fun ResultScreen(
                             // preview: `edited` is a downsampled bitmap now, and
                             // writing it out would quietly ship a low-resolution
                             // photo to the gallery.
+                            val plan = corrected?.plan
                             val result = withContext(Dispatchers.Default) {
                                 EditSourceLoader.decode(File(captureValue.filePath), SAVE_MAX_SIDE)
-                                    ?.let { QuickFilterEditor.apply(it, selectedFilter, adjustments) }
+                                    ?.let { full ->
+                                        // The **same** plan the preview used, only at
+                                        // save resolution. Re-planning here from a
+                                        // larger decode would let the saved crop drift
+                                        // from the one the user approved.
+                                        val levelled = plan?.let { p ->
+                                            runCatching {
+                                                LocalEditor().render(full, p.withProcessingMaxSide(SAVE_MAX_SIDE)).bitmap
+                                            }.getOrElse {
+                                                Log.w(TAG, "save-time auto-correction failed; saving uncorrected", it)
+                                                full
+                                            }
+                                        } ?: full
+                                        QuickFilterEditor.apply(levelled, selectedFilter, adjustments)
+                                    }
                             } ?: edited ?: source ?: return@launch
                             val written = container.captureRepository.saveEditedCapture(
                                 captureId = captureValue.id,
