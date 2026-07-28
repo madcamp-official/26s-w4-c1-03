@@ -117,6 +117,9 @@ import kotlinx.coroutines.withContext
 private val GridLine = Color(0x47FFFFFF)
 private const val TAG = "CameraScreen"
 
+/** Separate tag so per-stage timing greps cleanly out of the per-frame chatter. */
+private const val STAGE_TAG = "DetectStage"
+
 /** 52dp thumbnail + 4dp gap + label, fixed so the preview pane is laid out once. */
 private val STYLE_STRIP_HEIGHT = 78.dp
 
@@ -167,6 +170,15 @@ fun CameraScreen(
             poseDetector = MlKitPoseDetector(),
             objectDetector = ThrottledObjectSceneDetector(MlKitObjectDetector()),
             subjectSegmenter = ThrottledSubjectSceneSegmenter(MlKitSubjectSegmenter()),
+            // Per-stage cost, debug builds only. Every ML Kit model here blocks the
+            // single analysis thread in turn and none of them gets cheaper on an
+            // empty frame, so "which one" is not answerable from the HUD's
+            // whole-lambda number.
+            stageSink = if (BuildConfig.DEBUG) {
+                { timings -> Log.d(STAGE_TAG, timings.format()) }
+            } else {
+                null
+            },
         )
     }
     // Thresholds come from assets only (CFG-1); the data-class defaults are the

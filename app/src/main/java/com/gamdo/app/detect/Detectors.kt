@@ -103,8 +103,45 @@ class ThrottledSubjectSceneSegmenter(
 }
 
 /**
+ * Wall time of each stage inside one [SceneDetector.detect] call, in milliseconds.
+ *
+ * Exists because the numbers the app already reported could not answer "where do
+ * 300ms per frame go?". `FrameAnalyzer`'s `processMs` is the whole lambda, and the
+ * only *stage* timed anywhere was `FrameFeatureCalculator` — a pure-Kotlin function
+ * costing ~0.1ms that reports comfortably inside its 30ms budget while the frame
+ * takes 300. A green budget line on the wrong stage is worse than no line.
+ *
+ * [segRefreshed] and [objectsFresh] are the load-bearing fields. Segmentation runs
+ * every 12th frame and object detection every 3rd; on the other frames both return
+ * a cached value in microseconds. Averaging refresh and cache frames together
+ * hides the real cost by an order of magnitude, so a reader must be able to
+ * separate them.
+ */
+data class DetectStageTimings(
+    val faceMs: Double,
+    val poseMs: Double,
+    val segMs: Double,
+    val objectMs: Double,
+    val postMs: Double,
+    val totalMs: Double,
+    /** True when segmentation actually ran its model rather than returning cache. */
+    val segRefreshed: Boolean,
+    /** True when object detection actually ran its model this frame. */
+    val objectsFresh: Boolean,
+    val segNonNull: Boolean,
+) {
+    fun format(): String =
+        "stage face=%.1f pose=%.1f seg=%.1f obj=%.1f post=%.1f total=%.1f segRun=%s objRun=%s segNonNull=%s"
+            .format(faceMs, poseMs, segMs, objectMs, postMs, totalMs, segRefreshed, objectsFresh, segNonNull)
+}
+
+/**
  * Runs the configured face + pose detectors over one frame. B's
  * FrameFeatureCalculator (Day 2) consumes [DetectionResult] downstream.
+ *
+ * @param stageSink optional per-frame timing sink. A sink rather than a `Log` call
+ *   so this file stays free of `android.*` and JVM-testable; the host wires it to
+ *   logcat behind `BuildConfig.DEBUG`.
  */
 class SceneDetector(
     private val faceDetector: FaceDetector,
@@ -112,21 +149,27 @@ class SceneDetector(
     private val objectDetector: ObjectSceneDetector? = null,
     private val subjectSegmenter: SubjectSceneSegmenter? = null,
     private val customObjectDetector: CustomSceneDetector? = null,
+    private val stageSink: ((DetectStageTimings) -> Unit)? = null,
 ) {
     private val stableSceneTracker = StableSceneTracker()
 
     fun detect(frame: AnalysisFrame): DetectionResult {
+        val t0 = System.nanoTime()
         val faces = faceDetector.detect(frame)
+        val t1 = System.nanoTime()
         val pose = poseDetector.detect(frame)
+        val t2 = System.nanoTime()
         // Subject segmentation is the generic foreground path. ML Kit's
         // classifier intentionally returns no item for many ordinary objects;
         // that must not make the camera behave as if the scene were empty.
         val segmentation = subjectSegmenter?.detect(frame)
+        val t3 = System.nanoTime()
         val objectBatch = when {
             customObjectDetector != null -> customObjectDetector.detectBatch(frame)
             objectDetector != null -> objectDetector.detectBatch(frame)
             else -> ObjectDetectionBatch(emptyList(), isFresh = true, sequenceId = 0L)
         }
+        val t4 = System.nanoTime()
         val genericBatch = if (objectBatch.objects.isEmpty() && segmentation != null) {
             objectBatch.copy(
                 objects = listOf(
@@ -144,6 +187,28 @@ class SceneDetector(
             objectBatch
         }
         val stableObjects = stableSceneTracker.accept(genericBatch)
+        val t5 = System.nanoTime()
+
+        stageSink?.let { sink ->
+            fun ms(from: Long, to: Long) = (to - from) / 1_000_000.0
+            sink(
+                DetectStageTimings(
+                    faceMs = ms(t0, t1),
+                    poseMs = ms(t1, t2),
+                    segMs = ms(t2, t3),
+                    objectMs = ms(t3, t4),
+                    postMs = ms(t4, t5),
+                    totalMs = ms(t0, t5),
+                    // A cached return costs microseconds; the model run costs tens
+                    // to hundreds of ms. 1ms separates them by two orders of
+                    // magnitude, so no plumbing into the throttle wrapper is needed.
+                    segRefreshed = ms(t2, t3) > 1.0,
+                    objectsFresh = objectBatch.isFresh,
+                    segNonNull = segmentation != null,
+                ),
+            )
+        }
+
         return DetectionResult(
             faces = faces,
             pose = pose,
