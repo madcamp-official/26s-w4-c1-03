@@ -30,6 +30,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -158,14 +160,6 @@ fun CameraScreen(
 
     val controller = remember { CameraController(context) }
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
-    val scene = remember {
-        SceneDetector(
-            faceDetector = MlKitFaceDetector(),
-            poseDetector = MlKitPoseDetector(),
-            objectDetector = ThrottledObjectSceneDetector(MlKitObjectDetector()),
-            subjectSegmenter = ThrottledSubjectSceneSegmenter(MlKitSubjectSegmenter()),
-        )
-    }
     // Thresholds come from assets only (CFG-1); the data-class defaults are the
     // fallback for a missing/!unparseable file.
     val guideConfig = remember {
@@ -174,6 +168,23 @@ fun CameraScreen(
                 parseGuideConfigBundle(reader.readText())
             }
         }.getOrDefault(GuideConfigBundle())
+    }
+    val scene = remember(guideConfig) {
+        SceneDetector(
+            faceDetector = MlKitFaceDetector(),
+            poseDetector = MlKitPoseDetector(),
+            // CameraX already keeps only the newest frame. Refreshing objects on
+            // every processed frame gives the 3/5 tracker enough real evidence
+            // to meet the two-second first-layout target without a queue.
+            objectDetector = ThrottledObjectSceneDetector(
+                MlKitObjectDetector(),
+                refreshEveryFrames = guideConfig.objectGuide.objectRefreshEveryFrames,
+            ),
+            subjectSegmenter = ThrottledSubjectSceneSegmenter(
+                MlKitSubjectSegmenter(),
+                refreshEveryFrames = guideConfig.objectGuide.segmentationRefreshEveryFrames,
+            ),
+        )
     }
     val viewModel = remember {
         // The §2-4 stopwatch writes through this sink; the ViewModel itself stays
@@ -204,6 +215,7 @@ fun CameraScreen(
     var sessionStyleId by rememberSaveable { mutableStateOf<String?>(null) }
     var stylePickerOpen by rememberSaveable { mutableStateOf(false) }
     var guideVisible by rememberSaveable { mutableStateOf(true) }
+    var layoutMenuExpanded by rememberSaveable { mutableStateOf(false) }
     val styleIndex = resolveStyleIndex(
         presetIds = presetIds,
         onboardingId = onboardingStyle?.id,
@@ -229,9 +241,8 @@ fun CameraScreen(
     val hudAvailable = BuildConfig.DEBUG
     var showHud by rememberSaveable { mutableStateOf(BuildConfig.DEBUG) }
 
-    // A preset switch invalidates the smoothing window and the last stable target
-    // (handled inside setStyleTarget), so this is keyed on the preset *value*:
-    // a recomposition that resolves to the same style must not reset the guide.
+    // A preset adjusts the fixed template's spacing/scale without triggering a
+    // fresh scene search, so this is keyed on the preset value only.
     // `styleIndex = -1` (still reading / no presets) leaves the target
     // unpublished rather than publishing preset 0 and swapping it a frame later.
     LaunchedEffect(activePreset) {
@@ -326,7 +337,13 @@ fun CameraScreen(
                                     it.box.width * it.box.height
                                 }?.box,
                             ),
-                            sceneSignals = imageProxy.sceneFrameSignals(subjectBox),
+                            sceneSignals = imageProxy.sceneFrameSignals(subjectBox).copy(
+                                viewportAspect = if (aspect == CaptureAspect.RATIO_1_1) {
+                                    com.gamdo.app.guide.GuideViewportAspect.ONE_TO_ONE
+                                } else {
+                                    com.gamdo.app.guide.GuideViewportAspect.FOUR_TO_FIVE
+                                },
+                            ),
                             shake = shakeMeter.shake.value,
                             frameWidth = frame.width,
                             frameHeight = frame.height,
@@ -362,6 +379,18 @@ fun CameraScreen(
             onSelectAspect = { aspect = it },
             hudToggleEnabled = hudAvailable,
             onToggleHud = { showHud = !showHud },
+            layoutMenuExpanded = layoutMenuExpanded,
+            onToggleLayoutMenu = { layoutMenuExpanded = !layoutMenuExpanded },
+            onDismissLayoutMenu = { layoutMenuExpanded = false },
+            manualLayouts = viewModel.availableManualLayouts,
+            onRescanLayout = {
+                viewModel.rescanLayout()
+                layoutMenuExpanded = false
+            },
+            onSelectManualLayout = { templateId ->
+                viewModel.selectManualLayout(templateId)
+                layoutMenuExpanded = false
+            },
             referenceEntry = referenceEntry,
             demoControls = demoControls,
         )
@@ -523,6 +552,12 @@ private fun CameraTopBar(
     onSelectAspect: (CaptureAspect) -> Unit,
     hudToggleEnabled: Boolean,
     onToggleHud: () -> Unit,
+    layoutMenuExpanded: Boolean,
+    onToggleLayoutMenu: () -> Unit,
+    onDismissLayoutMenu: () -> Unit,
+    manualLayouts: List<com.gamdo.app.guide.LayoutTemplateSummary>,
+    onRescanLayout: () -> Unit,
+    onSelectManualLayout: (String) -> Unit,
     referenceEntry: @Composable () -> Unit,
     demoControls: @Composable () -> Unit,
 ) {
@@ -587,6 +622,26 @@ private fun CameraTopBar(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             AspectChip(selected = aspect, onSelect = onSelectAspect)
+            Box {
+                BarChip(onClick = onToggleLayoutMenu) {
+                    Text("구도", color = OnDarkHigh, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+                DropdownMenu(
+                    expanded = layoutMenuExpanded,
+                    onDismissRequest = onDismissLayoutMenu,
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("자동 재탐색") },
+                        onClick = onRescanLayout,
+                    )
+                    manualLayouts.forEach { layout ->
+                        DropdownMenuItem(
+                            text = { Text(layout.displayName) },
+                            onClick = { onSelectManualLayout(layout.id) },
+                        )
+                    }
+                }
+            }
             referenceEntry()
             demoControls()
         }

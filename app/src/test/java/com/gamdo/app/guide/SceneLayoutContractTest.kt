@@ -9,15 +9,13 @@ import org.junit.Test
 
 class SceneLayoutContractTest {
     @Test
-    fun `unknown objects select a fixed generic layout after three fresh scenes`() {
+    fun `already-stable unknown objects select a generic layout without a second confirmation window`() {
         val resolver = AutoLayoutTemplateResolver()
         val detections = listOf(
             SlotDetection("a", GuideObjectCategory.UNKNOWN, NormalizedBox(0.10f, 0.30f, 0.30f, 0.65f), 0.7f, true),
             SlotDetection("b", GuideObjectCategory.UNKNOWN, NormalizedBox(0.65f, 0.32f, 0.85f, 0.68f), 0.7f, true),
         )
 
-        assertEquals(null, resolver.resolve(detections, objectsFresh = true))
-        assertEquals(null, resolver.resolve(detections, objectsFresh = true))
         val fixed = resolver.resolve(detections, objectsFresh = true)
 
         assertNotNull(fixed)

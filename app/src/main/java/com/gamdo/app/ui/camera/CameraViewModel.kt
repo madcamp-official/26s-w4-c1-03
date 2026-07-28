@@ -14,6 +14,10 @@ import com.gamdo.app.guide.OverlayStabilizer
 import com.gamdo.app.guide.StyleTarget
 import com.gamdo.app.guide.SceneFrameSignals
 import com.gamdo.app.guide.SceneGuideCoordinator
+import com.gamdo.app.guide.SceneGuideSessionController
+import com.gamdo.app.guide.GuideLayoutState
+import com.gamdo.app.guide.LayoutTemplateSummary
+import com.gamdo.app.detect.StableSceneTracker
 import com.gamdo.app.guide.SceneLayoutGuide
 import com.gamdo.app.guide.FixedLayoutGuide
 import com.gamdo.app.guide.toProjection
@@ -72,6 +76,15 @@ data class FeatureBudgetStats(
     val withinBudget: Boolean get() = overBudgetFrames == 0L
 }
 
+/** Aggregated, privacy-safe quality evidence for the current camera visit. */
+data class SceneGuideMetrics(
+    val freshObjectFrames: Long = 0,
+    val objectFps: Double = 0.0,
+    val firstLayoutMs: Double? = null,
+    val selectedTemplateId: String? = null,
+    val signature: String? = null,
+)
+
 /**
  * State holder for the camera screen (P1 §3-1) — **the analysis-thread → UI
  * boundary lives here and nowhere else**.
@@ -104,7 +117,13 @@ class CameraViewModel(
     private val guideConfig = config.toGuideConfig()
     private val featureCalculator = config.toFrameFeatureCalculator()
     private val stabilizer = OverlayStabilizer(config.toStabilizerConfig())
-    private val sceneGuideCoordinator = SceneGuideCoordinator()
+    private val sceneGuideSessionController = SceneGuideSessionController(
+        coordinator = SceneGuideCoordinator(
+            templateSafetyMargin = config.objectGuide.templateSafetyMargin,
+            detectedSlotShapeConfig = config.objectGuide.toDetectedSlotShapeConfig(),
+        ),
+        tracker = StableSceneTracker(config.toObjectTrackerConfig()),
+    )
     private val budgetMs = config.features.analysisBudgetMs
     private val logEveryFrames = config.features.budgetLogEveryFrames
 
@@ -112,6 +131,9 @@ class CameraViewModel(
     private var budgetSumMs = 0.0
     private var budgetMaxMs = 0.0
     private var budgetOverFrames = 0L
+    private var sceneStartedNs = 0L
+    private var firstFixedNs: Long? = null
+    private var freshObjectFrames = 0L
 
     private val _stats = MutableStateFlow<AnalysisStats?>(null)
     val stats: StateFlow<AnalysisStats?> = _stats.asStateFlow()
@@ -145,6 +167,12 @@ class CameraViewModel(
     private val _styleTarget = MutableStateFlow(StyleTarget())
     val styleTarget: StateFlow<StyleTarget> = _styleTarget.asStateFlow()
 
+    val layoutState: StateFlow<GuideLayoutState> = sceneGuideSessionController.layoutState
+    val availableManualLayouts: List<LayoutTemplateSummary> = sceneGuideSessionController.availableManualLayouts
+
+    private val _sceneGuideMetrics = MutableStateFlow(SceneGuideMetrics())
+    val sceneGuideMetrics: StateFlow<SceneGuideMetrics> = _sceneGuideMetrics.asStateFlow()
+
     /**
      * Swaps the composition target. A preset switch invalidates the smoothing
      * window, the last stable target and the display damping, so both stages are
@@ -154,7 +182,9 @@ class CameraViewModel(
         _styleTarget.value = target
         alignmentEngine.reset()
         stabilizer.reset()
-        sceneGuideCoordinator.reset()
+        // A style changes only spacing/scale/anchor of a fixed template. It
+        // never makes the camera rediscover the scene.
+        sceneGuideSessionController.updateStyle(target)
     }
 
     /** Called from the analysis executor once per second. */
@@ -191,11 +221,14 @@ class CameraViewModel(
         recordFeatureCost((System.nanoTime() - startNs) / 1_000_000.0)
 
         val target = _styleTarget.value
-        val sceneGuide = sceneGuideCoordinator.update(
+        if (sceneStartedNs == 0L) sceneStartedNs = System.nanoTime()
+        if (detection.objectsFresh) freshObjectFrames++
+        val sceneGuide = sceneGuideSessionController.updateScene(
             detection = detection,
             styleTarget = target,
             signals = sceneSignals,
         )
+        updateSceneMetrics(sceneGuide)
         val resolvedTarget = sceneGuide.proposal.target
         val engineState = alignmentEngine.align(
             features = features,
@@ -247,6 +280,7 @@ class CameraViewModel(
             mirror = mirror,
             guide = projection,
             layoutGuide = sceneGuide.layoutGuide,
+            layoutState = sceneGuide.layoutState,
         )
     }
 
@@ -260,7 +294,48 @@ class CameraViewModel(
         _lastFrame.value = null
         alignmentEngine.reset()
         stabilizer.reset()
-        sceneGuideCoordinator.reset()
+        sceneGuideSessionController.endSession()
+        sceneStartedNs = 0L
+        firstFixedNs = null
+        freshObjectFrames = 0L
+        _sceneGuideMetrics.value = SceneGuideMetrics()
+    }
+
+    fun selectManualLayout(templateId: String): Boolean =
+        sceneGuideSessionController.selectManualLayout(templateId, _styleTarget.value)
+
+    fun rescanLayout() {
+        sceneGuideSessionController.rescan()
+        firstFixedNs = null
+        sceneStartedNs = System.nanoTime()
+        freshObjectFrames = 0L
+        _sceneGuideMetrics.value = SceneGuideMetrics()
+    }
+
+    private fun updateSceneMetrics(sceneGuide: com.gamdo.app.guide.SceneGuideState) {
+        val now = System.nanoTime()
+        val started = sceneStartedNs.takeIf { it > 0L } ?: now
+        val elapsedSeconds = ((now - started) / 1_000_000_000.0).coerceAtLeast(0.001)
+        val fixed = sceneGuide.layoutState as? GuideLayoutState.Fixed
+        if (fixed != null && firstFixedNs == null) {
+            firstFixedNs = now
+            if (collectDebugSignals) {
+                logSink(
+                    "SceneGuide fixed template=${fixed.template.id} source=${fixed.source} " +
+                        "firstMs=%.1f signature=%s".format(
+                            (now - started) / 1_000_000.0,
+                            sceneGuide.sceneSignature,
+                        ),
+                )
+            }
+        }
+        _sceneGuideMetrics.value = SceneGuideMetrics(
+            freshObjectFrames = freshObjectFrames,
+            objectFps = freshObjectFrames / elapsedSeconds,
+            firstLayoutMs = firstFixedNs?.let { (it - started) / 1_000_000.0 },
+            selectedTemplateId = fixed?.template?.id,
+            signature = sceneGuide.sceneSignature?.toString(),
+        )
     }
 
     /**
