@@ -1,5 +1,6 @@
 package com.gamdo.app.ui.camera
 
+import android.content.Context
 import android.util.Log
 import android.widget.Toast
 import androidx.camera.view.PreviewView
@@ -68,6 +69,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.gamdo.app.BuildConfig
 import com.gamdo.app.camera.AnalysisStats
+import com.gamdo.app.camera.AnalysisThreadResource
 import com.gamdo.app.camera.CameraController
 import com.gamdo.app.camera.FrameAnalyzer
 import com.gamdo.app.camera.ShakeMeter
@@ -122,6 +124,12 @@ private const val TAG = "CameraScreen"
 /** Separate tag so per-stage timing greps cleanly out of the per-frame chatter. */
 private const val STAGE_TAG = "DetectStage"
 
+/**
+ * Cold-start attribution. One line per one-off startup cost, so a launch trace
+ * can be read without inferring durations from the gaps between CameraX's logs.
+ */
+private const val STARTUP_TAG = "CameraStartup"
+
 /** 52dp thumbnail + 4dp gap + label, fixed so the preview pane is laid out once. */
 private val STYLE_STRIP_HEIGHT = 78.dp
 
@@ -169,42 +177,31 @@ fun CameraScreen(
     // Thresholds come from assets only (CFG-1); the data-class defaults are the
     // fallback for a missing/!unparseable file.
     val guideConfig = remember {
-        runCatching {
-            context.assets.open("guide_config.json").bufferedReader().use { reader ->
-                parseGuideConfigBundle(reader.readText())
-            }
-        }.getOrDefault(GuideConfigBundle())
+        traceColdStart("guideConfig") {
+            runCatching {
+                context.assets.open("guide_config.json").bufferedReader().use { reader ->
+                    parseGuideConfigBundle(reader.readText())
+                }
+            }.getOrDefault(GuideConfigBundle())
+        }
     }
+    // Built on the analysis thread, not here.
+    //
+    // This block used to construct the detector stack inline — three ML Kit
+    // clients plus a 4.5MB MediaPipe/TFLite model — which meant composition sat
+    // inside `ObjectDetector.createFromOptions` and the `AndroidView` factory
+    // below (the only caller of `CameraController.bind`) could not run until it
+    // returned. Measured on SM-G970N: CameraX had the camera open at +1.1s and
+    // was not told to attach use cases until +7.5s, with a black preview for the
+    // 6.4s in between. See [AnalysisThreadResource] for why the ordering
+    // ("detector exists before the first frame") survives the move.
     val scene = remember(guideConfig) {
-        SceneDetector(
-            faceDetector = MlKitFaceDetector(),
-            // Pose cost 89.8ms of a measured 263ms frame and ran on every frame.
-            // Like every model here it does not get cheaper on an empty frame, so
-            // cadence is the only lever (owner decision, 2026-07-28). Unlike the
-            // object/segmentation divisors this one is still a code default —
-            // externalizing it means adding a key to 담당 B's ObjectGuideConfigJson.
-            poseDetector = ThrottledPoseDetector(MlKitPoseDetector()),
-            // CameraX already keeps only the newest frame. Refreshing objects on
-            // every processed frame gives the 3/5 tracker enough real evidence
-            // to meet the two-second first-layout target without a queue.
-            objectDetector = ThrottledObjectSceneDetector(
-                EfficientDetSceneDetector(context, guideConfig.toEfficientDetConfig()),
-                refreshEveryFrames = guideConfig.objectGuide.objectRefreshEveryFrames,
-            ),
-            subjectSegmenter = ThrottledSubjectSceneSegmenter(
-                MlKitSubjectSegmenter(),
-                refreshEveryFrames = guideConfig.objectGuide.segmentationRefreshEveryFrames,
-            ),
-            // Per-stage cost, debug builds only. Every ML Kit model here blocks the
-            // single analysis thread in turn and none gets cheaper on an empty
-            // frame, so "which one" is not answerable from the HUD's whole-lambda
-            // number.
-            stageSink = if (BuildConfig.DEBUG) {
-                { timings -> Log.d(STAGE_TAG, timings.format()) }
-            } else {
-                null
-            },
-        )
+        AnalysisThreadResource<SceneDetector>(
+            executor = analysisExecutor,
+            close = SceneDetector::close,
+        ) {
+            buildSceneDetector(context, guideConfig)
+        }
     }
     val viewModel = remember {
         // The §2-4 stopwatch writes through this sink; the ViewModel itself stays
@@ -215,7 +212,9 @@ fun CameraScreen(
     // The guide target comes from preset data (assets/presets.json = GET /presets),
     // never from values copied into this file.
     val catalogue = remember {
-        runCatching { container.presetRepository.loadBundledPresets() }.getOrDefault(emptyList())
+        traceColdStart("presets") {
+            runCatching { container.presetRepository.loadBundledPresets() }.getOrDefault(emptyList())
+        }
     }
     // §6-2 onboarding → camera: the style picked during onboarding selects the
     // initial preset. A failed read degrades to "nothing stored" rather than to
@@ -361,7 +360,15 @@ fun CameraScreen(
             FrameAnalyzer(
                 targetFps = 12,
                 onStats = viewModel::onStats,
-                onFrame = { imageProxy ->
+                onFrame = onFrame@{ imageProxy ->
+                    // Read before any conversion work. The detector is built on
+                    // this very executor, so FIFO ordering has it ready before the
+                    // first frame lands here — except during the build itself
+                    // (frames now start arriving several seconds before the models
+                    // finish loading) and if the build failed outright. Both mean
+                    // "no analysis this frame", which costs one null check;
+                    // FrameAnalyzer still closes the ImageProxy in its `finally`.
+                    val detector = scene.get() ?: return@onFrame
                     imageProxy.toAnalysisFrame { crop ->
                         // Called synchronously by MlKitObjectDetector before this
                         // analyzer returns and FrameAnalyzer closes imageProxy.
@@ -372,7 +379,7 @@ fun CameraScreen(
                             if (!bitmap.isRecycled) bitmap.recycle()
                         }
                     }?.let { frame ->
-                        val result = scene.detect(frame)
+                        val result = detector.detect(frame)
                         val subjectBox = result.toSceneObservation().subjectBox
                         viewModel.onFrameAnalyzed(
                             detection = result,
@@ -406,7 +413,11 @@ fun CameraScreen(
         onDispose {
             controller.clearAnalyzer()
             controller.unbind()
-            scene.close()
+            // Torn down on the analysis thread, in the same queue that built and
+            // used it — `shutdown()` (not `shutdownNow()`) lets that last task run.
+            // The old `scene.close()` here closed native detectors from the main
+            // thread while the analysis thread could still be inside detect().
+            scene.release()
             analysisExecutor.shutdown()
             viewModel.onAnalyzerDetached()
         }
@@ -1115,6 +1126,96 @@ private fun CameraHud(
             guideDebug?.let { GuideDebugBadge(it) }
         }
     }
+}
+
+/**
+ * Builds the detection stack. **Called on the analysis executor, never on the
+ * composition thread** — see [AnalysisThreadResource] and the `scene` remember
+ * block for the 6.4s of black preview that motivated the move.
+ *
+ * Extracted verbatim from that block; nothing about *what* is constructed
+ * changed, only *where*. The per-stage timings exist because the cost is now
+ * invisible to logcat timestamps: it used to be bracketed by CameraX's own log
+ * lines, and off the main thread it is bracketed by nothing. Four candidates
+ * share the 6.4s — three ML Kit clients and one 4.5MB MediaPipe model, one of
+ * which (`subject-segmentation`) is a GMS-backed unbundled module that can go to
+ * Play services on first use — and this line is what says which.
+ */
+private fun buildSceneDetector(context: Context, guideConfig: GuideConfigBundle): SceneDetector {
+    val t0 = System.nanoTime()
+    val faceDetector = MlKitFaceDetector()
+    val t1 = System.nanoTime()
+    // Pose cost 89.8ms of a measured 263ms frame and ran on every frame.
+    // Like every model here it does not get cheaper on an empty frame, so
+    // cadence is the only lever (owner decision, 2026-07-28). Unlike the
+    // object/segmentation divisors this one is still a code default —
+    // externalizing it means adding a key to 담당 B's ObjectGuideConfigJson.
+    val poseDetector = ThrottledPoseDetector(MlKitPoseDetector())
+    val t2 = System.nanoTime()
+    // CameraX already keeps only the newest frame. Refreshing objects on
+    // every processed frame gives the 3/5 tracker enough real evidence
+    // to meet the two-second first-layout target without a queue.
+    val objectDetector = ThrottledObjectSceneDetector(
+        EfficientDetSceneDetector(context, guideConfig.toEfficientDetConfig()),
+        refreshEveryFrames = guideConfig.objectGuide.objectRefreshEveryFrames,
+    )
+    val t3 = System.nanoTime()
+    val subjectSegmenter = ThrottledSubjectSceneSegmenter(
+        MlKitSubjectSegmenter(),
+        refreshEveryFrames = guideConfig.objectGuide.segmentationRefreshEveryFrames,
+    )
+    val t4 = System.nanoTime()
+
+    if (BuildConfig.DEBUG) {
+        fun ms(from: Long, to: Long) = (to - from) / 1_000_000.0
+        Log.d(
+            STARTUP_TAG,
+            "detectorBuild face=%.0f pose=%.0f object=%.0f seg=%.0f total=%.0fms (%s)".format(
+                ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3, t4), ms(t0, t4),
+                Thread.currentThread().name,
+            ),
+        )
+    }
+
+    return SceneDetector(
+        faceDetector = faceDetector,
+        poseDetector = poseDetector,
+        objectDetector = objectDetector,
+        subjectSegmenter = subjectSegmenter,
+        // Per-stage cost, debug builds only. Every ML Kit model here blocks the
+        // single analysis thread in turn and none gets cheaper on an empty
+        // frame, so "which one" is not answerable from the HUD's whole-lambda
+        // number.
+        stageSink = if (BuildConfig.DEBUG) {
+            { timings -> Log.d(STAGE_TAG, timings.format()) }
+        } else {
+            null
+        },
+    )
+}
+
+/**
+ * Debug-only stopwatch for work that still runs on the composition thread.
+ *
+ * These two asset reads (`guide_config.json` 2.2KB, `presets.json` 4.5KB) are the
+ * main-thread I/O left in the cold-start path once the detector build moved off
+ * it. They are almost certainly small — but "almost certainly" is how the 6.4s
+ * went unattributed for a week, and neither has a log line of its own to be read
+ * off logcat timestamps.
+ */
+private inline fun <T> traceColdStart(label: String, block: () -> T): T {
+    if (!BuildConfig.DEBUG) return block()
+    val startNs = System.nanoTime()
+    val result = block()
+    Log.d(
+        STARTUP_TAG,
+        "%s %.1fms (%s)".format(
+            label,
+            (System.nanoTime() - startNs) / 1_000_000.0,
+            Thread.currentThread().name,
+        ),
+    )
+    return result
 }
 
 private fun logDetection(result: DetectionResult) {
