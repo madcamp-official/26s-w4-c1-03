@@ -64,6 +64,8 @@ data class ObjectGuideConfigJson(
     val duplicateIou: Float = 0.75f,
     val semanticMinConfidence: Float = 0.80f,
     val semanticConfirmationsRequired: Int = 3,
+    val focusRegionWidth: Float = 0.70f,
+    val focusRegionHeight: Float = 0.68f,
     val templateSafetyMargin: Float = 0.05f,
     val detectedSlotAspectMin: Float = 0.55f,
     val detectedSlotAspectMax: Float = 1.80f,
@@ -88,6 +90,8 @@ data class ObjectGuideConfigJson(
         require(multiScaleCropScale in 1.10f..2.0f)
         require(multiScaleSmallObjectAreaRatio in 0f..1f)
         require(multiScaleDuplicateIou in 0f..1f)
+        require(focusRegionWidth in 0.20f..1f)
+        require(focusRegionHeight in 0.20f..1f)
         require(performanceTargetFps >= 1)
     }
 
@@ -102,6 +106,8 @@ data class ObjectGuideConfigJson(
         duplicateIou = duplicateIou,
         semanticMinConfidence = semanticMinConfidence,
         semanticConfirmationsRequired = semanticConfirmationsRequired,
+        focusRegionWidth = focusRegionWidth,
+        focusRegionHeight = focusRegionHeight,
     )
 
     fun toDetectedSlotShapeConfig(): DetectedSlotShapeConfig = DetectedSlotShapeConfig(

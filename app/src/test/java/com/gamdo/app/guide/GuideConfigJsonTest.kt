@@ -107,6 +107,8 @@ class GuideConfigJsonTest {
         assertEquals(3, objectGuide.confirmationsRequired)
         assertEquals(4, objectGuide.maxObjects)
         assertEquals(0.80f, objectGuide.semanticMinConfidence, 0.0001f)
+        assertEquals(0.70f, objectGuide.focusRegionWidth, 0.0001f)
+        assertEquals(0.68f, objectGuide.focusRegionHeight, 0.0001f)
         val shape = bundle.objectGuide.toDetectedSlotShapeConfig()
         assertEquals(0.55f, shape.aspectRatioMin, 0.0001f)
         assertEquals(1.80f, shape.aspectRatioMax, 0.0001f)

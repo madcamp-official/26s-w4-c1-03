@@ -14,6 +14,14 @@ data class ObjectTrackerConfig(
     val duplicateIou: Float = 0.75f,
     val semanticMinConfidence: Float = 0.80f,
     val semanticConfirmationsRequired: Int = 3,
+    /**
+     * Candidate selection is deliberately centred on the viewfinder. The user
+     * normally composes the intended subject around the focus point, while
+     * edge detections are usually background clutter that should not create a
+     * layout on their own.
+     */
+    val focusRegionWidth: Float = 0.70f,
+    val focusRegionHeight: Float = 0.68f,
 ) {
     init {
         require(windowSize >= 1)
@@ -23,6 +31,8 @@ data class ObjectTrackerConfig(
         require(maximumAreaRatio in minimumAreaRatio..1f)
         require(semanticMinConfidence in 0f..1f)
         require(semanticConfirmationsRequired in 1..windowSize)
+        require(focusRegionWidth in 0.20f..1f)
+        require(focusRegionHeight in 0.20f..1f)
     }
 }
 
@@ -122,6 +132,7 @@ class StableSceneTracker(
                 val fullHeightBackground = candidate.box.height >= 0.92f && area >= 0.45f
                 candidate.mask != null || (!fullWidthBackground && !fullHeightBackground)
             }
+            .filter(::isInsideFocusRegion)
             .sortedByDescending(::rankingScore)
             .forEach { candidate ->
                 val duplicate = selected.any { existing ->
@@ -130,6 +141,19 @@ class StableSceneTracker(
                 if (!duplicate) selected += candidate
             }
         return selected
+    }
+
+    /**
+     * A box belongs to the composition candidate set only when its centre is
+     * inside the central focus region. Using the centre instead of any overlap
+     * avoids promoting a large edge/background box that merely touches the
+     * viewfinder's middle.
+     */
+    private fun isInsideFocusRegion(candidate: ObjectObservation): Boolean {
+        val halfWidth = config.focusRegionWidth / 2f
+        val halfHeight = config.focusRegionHeight / 2f
+        return candidate.box.centerX in (0.5f - halfWidth)..(0.5f + halfWidth) &&
+            candidate.box.centerY in (0.5f - halfHeight)..(0.5f + halfHeight)
     }
 
     private fun sameSubject(a: ObjectObservation, b: ObjectObservation): Boolean =

@@ -43,6 +43,8 @@
     "duplicateIou": 0.75,
     "semanticMinConfidence": 0.80,
     "semanticConfirmationsRequired": 3,
+    "focusRegionWidth": 0.70,
+    "focusRegionHeight": 0.68,
     "templateSafetyMargin": 0.05,
     "detectedSlotAspectMin": 0.55,
     "detectedSlotAspectMax": 1.80,
