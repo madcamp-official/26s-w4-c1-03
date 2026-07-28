@@ -1,3 +1,9 @@
+// 대상이 remain_plan O-1로 컷돼 @Deprecated(ERROR)가 붙었다. 테스트는 **의도적으로 남긴다** —
+// D8-5 GPS 제거 알고리즘의 정확성은 컷과 무관하게 참이어야 하는 사실이다.
+// 폐기를 걷어내고 경로를 되살리는 사람에게 이 테스트가 안전망이 된다. 이 suppress를 지우려면
+// 테스트도 함께 지워야 하고, 그건 컷을 되돌리는 것이 아니라 되돌릴 수단을 버리는 것이다.
+@file:Suppress("DEPRECATION_ERROR")
+
 package com.gamdo.app.core
 
 import org.junit.Assert.assertEquals

@@ -11,7 +11,6 @@ import com.google.mlkit.vision.objects.ObjectDetection
 import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
 import com.google.mlkit.vision.segmentation.subject.SubjectSegmentation
 import com.google.mlkit.vision.segmentation.subject.SubjectSegmenterOptions
-import java.util.concurrent.TimeUnit
 
 private const val TAG = "MlKitDetectors"
 
@@ -21,10 +20,27 @@ private const val TAG = "MlKitDetectors"
  */
 class MlKitFaceDetector : FaceDetector {
 
+    /**
+     * Classification (eye-open / smile) is **off**.
+     *
+     * It is a separate model pass on every face, and on device this detector was
+     * measured at 98.5ms per frame — the single largest cost in the analysis
+     * pipeline, running unthrottled at 37% of a 263ms budget.
+     *
+     * Nothing needs what it produced. `leftEyeOpenProbability` had exactly one
+     * production reader, `SceneProposalEngine`'s person-confidence fallback, and
+     * that reader was a defect (review_report #17): eyelid state standing in for
+     * detection confidence. The fix there removed the last consumer, so the pass
+     * was paying for a wrong answer. The fields stay on [FaceObservation] and
+     * simply read null; the debug HUD prints `?` for them.
+     *
+     * Contours are also off and always were — the guide draws a bracket, not a
+     * face mesh.
+     */
     private val detector = FaceDetection.getClient(
         FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
+            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
             .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)
             .build(),
     )
@@ -202,13 +218,34 @@ class MlKitSubjectSegmenter : SubjectSceneSegmenter {
             .build(),
     )
 
+    /**
+     * Blocks until segmentation finishes. **Deliberately no timeout.**
+     *
+     * There used to be one — 180ms, then 1200ms — and it was unsafe rather than
+     * merely slow. `InputImage.fromMediaImage` wraps the CameraX `Image` by
+     * reference with no copy, and `FrameAnalyzer` closes that `ImageProxy` in a
+     * `finally` the moment this call returns. On a timeout the ML Kit task is
+     * still running: the buffer goes back to the `ImageReader` queue, gets
+     * refilled with a different frame, and the abandoned task reads it. The
+     * symptom is a mask from nowhere, or a native read of recycled memory
+     * (review_report #14).
+     *
+     * The reported remedy — `task.cancel()` — does not exist:
+     * `com.google.android.gms.tasks.Task` has no `cancel`, and
+     * `SubjectSegmenter.process(InputImage)` takes no `CancellationToken`. So the
+     * choice was to either extend the ImageProxy's lifetime past the deadline or
+     * to stop having a deadline. Blocking is what the other three detectors here
+     * already do (`Detectors.kt`: "Implementations block until done"), CameraX is
+     * bound `STRATEGY_KEEP_ONLY_LATEST` so a slow frame is dropped rather than
+     * queued, and the throttle above means this runs once every N frames anyway.
+     *
+     * Owner decision, 2026-07-28. The cost is visible in the `DetectStage` log:
+     * device-measured at ~570ms per run when warm, ~0ms on cached frames.
+     */
     override fun detect(frame: AnalysisFrame): SegmentationObservation? {
         val image = frame.image as? InputImage ?: return null
         return runCatching {
-            // The first on-device invocation can include Play-services model
-            // initialization. 180ms was shorter than the model startup on the
-            // connected Galaxy device, so every frame was discarded as null.
-            val result = Tasks.await(segmenter.process(image), 1200, TimeUnit.MILLISECONDS)
+            val result = Tasks.await(segmenter.process(image))
             val maskBuffer = result.foregroundConfidenceMask ?: return@runCatching null
             val mask = FloatArray(maskBuffer.remaining()).also { values ->
                 maskBuffer.rewind()

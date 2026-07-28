@@ -2,6 +2,7 @@ package com.gamdo.app.ui.camera
 
 import com.gamdo.app.detect.FrameFeatures
 import com.gamdo.app.detect.NormalizedBox
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -27,7 +28,7 @@ import kotlinx.serialization.json.put
  */
 object CaptureAnalysisJson {
 
-    fun encode(features: FrameFeatures, matchScore: Float, aligned: Boolean): JsonObject =
+    fun encode(features: FrameFeatures, matchScore: Float, aligned: Boolean?): JsonObject =
         buildJsonObject {
             features.personBox?.let { put(KEY_PERSON_BOX, boxOf(it)) }
             features.faceBox?.let { put(KEY_FACE_BOX, boxOf(it)) }
@@ -51,10 +52,15 @@ object CaptureAnalysisJson {
             put(KEY_POSE_CONFIDENCE, features.poseConfidence)
             put(KEY_SHAKE, features.shake)
             put(KEY_MATCH_SCORE, matchScore)
-            put(KEY_ALIGNED, aligned)
+            // Written even when null. An absent key and an explicit null read the
+            // same to a lenient parser, but only the explicit null tells 담당 B's
+            // metric script that the frame was recorded and alignment was not
+            // measurable — a fixed layout was in force and the preset bracket was
+            // not on screen. A missing key would look like an older schema.
+            if (aligned == null) put(KEY_ALIGNED, JsonNull) else put(KEY_ALIGNED, aligned)
         }
 
-    fun encodeToString(features: FrameFeatures, matchScore: Float, aligned: Boolean): String =
+    fun encodeToString(features: FrameFeatures, matchScore: Float, aligned: Boolean?): String =
         encode(features, matchScore, aligned).toString()
 
     private fun boxOf(b: NormalizedBox): JsonObject = buildJsonObject {

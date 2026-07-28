@@ -94,12 +94,17 @@ class GuideKpiRepository(
         runCatching {
             sessionGuidesDao.insert(
                 SessionGuides(
-                    id = "sgd_" + Ulid.generate(),
+                    id = "gid_" + Ulid.generate(),
                     sessionId = sessionId,
                     guideType = guideType,
                     message = message,
                     issuedAt = now(),
-                    resolved = 0,
+                    // NULL, not 0. DB 스키마 v2.0 §session_guides: "1=오차 해소,
+                    // 0=미해소, NULL=측정불가". Nothing measures whether showing
+                    // this guide actually resolved the framing error, so writing 0
+                    // claims a measurement that was never taken — and it made the
+                    // guide-effectiveness KPI structurally 0.0 for every row.
+                    resolved = null,
                     deltaJson = deltaJson,
                 ),
             )

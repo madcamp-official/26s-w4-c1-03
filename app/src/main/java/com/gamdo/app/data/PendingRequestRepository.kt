@@ -35,6 +35,12 @@ data class RetrySweepResult(val succeeded: Int, val failed: Int) {
  * are frozen (R2-1) — [replay] is handed the raw row and decides how to turn
  * those fields back into a real call; this class has no HTTP knowledge at all.
  */
+@Deprecated(
+    message = "이 큐가 담을 실패 요청이 없어졌다. remain_plan O-1이 §5-1·§5-3을 컷해서 앱에서 " +
+        "나가는 호출은 GET /presets 하나뿐이고, 그건 assets/presets.json 폴백이 이미 처리한다 " +
+        "— 재연결 후 재생할 것이 없다. §5가 부활하면 이 폐기를 걷어내면 된다. remain_plan §1 참조.",
+    level = DeprecationLevel.ERROR,
+)
 class PendingRequestRepository(
     private val pendingRequestsDao: PendingRequestsDao,
 ) {

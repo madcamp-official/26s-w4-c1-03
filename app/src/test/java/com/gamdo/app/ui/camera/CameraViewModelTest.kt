@@ -79,18 +79,108 @@ class CameraViewModelTest {
         )
     }
 
+    /**
+     * The shutter is unconditional (D2) — nothing in the analysis path can block a
+     * capture, whatever the slots say.
+     *
+     * This used to assert `aligned == true` while a layout was latched, which is
+     * not what its name claims and not how the shutter works: `aligned` has one
+     * consumer, `analysis_json` on the capture row, and it never gated anything.
+     * The assertion was a side effect of `aligned = fixedLayout != null || ...`
+     * being pinned true, so it pinned the defect in place instead of the property.
+     *
+     * What is actually worth stating is that a snapshot exists to capture with at
+     * all, on every frame, latched or not.
+     */
     @Test
-    fun `fixed layout does not gate the shutter on slot occupancy`() {
+    fun `a fixed layout never withholds the shutter snapshot`() {
         val viewModel = CameraViewModel(config = bundle, collectDebugSignals = false)
         viewModel.setStyleTarget(StyleTarget(layoutTemplateId = LayoutTemplateCatalog.PORTRAIT_PERSON))
 
-        feed(viewModel, personBox(0.32f, 0.25f, 0.68f, 0.85f), confidence = 0.9f)
-        assertTrue(viewModel.lastFrame.value!!.aligned)
-        repeat(2) {
+        repeat(3) {
             feed(viewModel, personBox(0.32f, 0.25f, 0.68f, 0.85f), confidence = 0.9f)
+            assertNotNull("every frame must leave a capturable snapshot", viewModel.lastFrame.value)
         }
+        assertNotNull(viewModel.lastFrame.value!!.fixedLayout)
+    }
 
-        assertTrue(viewModel.lastFrame.value!!.aligned)
+    // -------------------------------------------------- KPI (review_report #19)
+
+    /**
+     * `visible` feeds the `session_guides` show/hide KPI and nothing else. It used
+     * to be `fixedLayout != null || projection.visible`, and because the resolver
+     * latches within a few frames and never un-latches, it went true early and
+     * stayed true — the KPI logged one row per session and never a hidden one,
+     * reporting permanent visibility for a guide that was in fact being suppressed
+     * by that very latch.
+     */
+    @Test
+    fun `a latched layout does not pin the show-hide KPI to visible`() {
+        val viewModel = CameraViewModel(config = bundle, collectDebugSignals = false)
+        // An explicit template latches immediately, with no detections needed —
+        // which is exactly the state that used to force `visible = true`.
+        viewModel.setStyleTarget(StyleTarget(layoutTemplateId = LayoutTemplateCatalog.PORTRAIT_PERSON))
+
+        repeat(4) { feed(viewModel, box = null, confidence = 0f) }
+
+        val frame = viewModel.lastFrame.value!!
+        assertNotNull("precondition: a layout is latched", frame.fixedLayout)
+        assertFalse(
+            "no subject was ever seen, so the overlay was never shown — the KPI " +
+                "must read hidden even though a layout is latched",
+            frame.visible,
+        )
+    }
+
+    /**
+     * Note what this does *not* claim. Once the overlay has been shown,
+     * `AlignmentEngine` holds the last stable target (`visible = previous != null`,
+     * AlignmentEngine.kt) — §3-2 requires holding the last stable value rather than
+     * blinking. So `visible` going false after a subject leaves is not something
+     * this vertical controls, and the fix here is narrower than "the KPI now
+     * tracks the overlay perfectly": it removes a term that made the KPI incapable
+     * of reporting hidden *at all*.
+     */
+    @Test
+    fun `the show-hide KPI can still read visible when a subject is framed`() {
+        val viewModel = CameraViewModel(config = bundle, collectDebugSignals = false)
+        viewModel.setStyleTarget(StyleTarget(layoutTemplateId = LayoutTemplateCatalog.PORTRAIT_PERSON))
+
+        repeat(4) { feed(viewModel, personBox(0.32f, 0.25f, 0.68f, 0.85f), confidence = 0.9f) }
+
+        assertTrue(viewModel.lastFrame.value!!.visible)
+    }
+
+    /**
+     * `aligned` is null while a layout is latched (owner decision, 2026-07-28).
+     * The fixed-layout gate keeps the preset bracket off screen, so scoring the
+     * user against it would be scoring them against something they cannot see.
+     * "NULL=측정불가" is the schema's own vocabulary for this.
+     */
+    @Test
+    fun `aligned is not measurable while a layout is latched`() {
+        val viewModel = CameraViewModel(config = bundle, collectDebugSignals = false)
+        viewModel.setStyleTarget(StyleTarget(layoutTemplateId = LayoutTemplateCatalog.PORTRAIT_PERSON))
+
+        repeat(4) { feed(viewModel, personBox(0.32f, 0.25f, 0.68f, 0.85f), confidence = 0.9f) }
+
+        assertNotNull(viewModel.lastFrame.value!!.fixedLayout)
+        assertNull(
+            "a latched layout hides the bracket, so alignment against it is not measurable",
+            viewModel.lastFrame.value!!.aligned,
+        )
+    }
+
+    @Test
+    fun `aligned is a real measurement when no layout is latched`() {
+        val viewModel = CameraViewModel(config = bundle, collectDebugSignals = false)
+
+        feed(viewModel, personBox(0.32f, 0.25f, 0.68f, 0.85f), confidence = 0.9f)
+
+        val frame = viewModel.lastFrame.value!!
+        if (frame.fixedLayout == null) {
+            assertNotNull("without a latch, alignment is measurable either way", frame.aligned)
+        }
     }
 
     @Test
@@ -199,6 +289,71 @@ class CameraViewModelTest {
 
         assertTrue("주기 0이면 무음", lines.isEmpty())
         assertNotNull("그래도 계측은 계속된다", viewModel.featureBudget.value)
+    }
+
+    // ------------------------------------------------- 재탐색 (layout re-scan)
+
+    /**
+     * The auto layout resolver latches a template after a few confirming frames
+     * and, by design, never un-latches inside a session. Before this existed the
+     * only escape was `setStyleTarget`, i.e. the user had to change their style to
+     * get the guide to look at the scene again — and on device that read as "the
+     * app decided once and stopped paying attention".
+     */
+    @Test
+    fun `a latched layout survives further frames`() {
+        val viewModel = CameraViewModel(collectDebugSignals = false)
+        repeat(8) { feed(viewModel, personBox(0.3f, 0.2f, 0.7f, 0.9f), confidence = 0.9f) }
+        val latched = viewModel.lastFrame.value?.fixedLayout
+        assertNotNull("8 confirming frames should latch a template", latched)
+
+        repeat(8) { feed(viewModel, null, confidence = 0f) }
+        assertNotNull(
+            "the latch is deliberately sticky — losing the subject must not drop it",
+            viewModel.lastFrame.value?.fixedLayout,
+        )
+    }
+
+    @Test
+    fun `rescan drops the latched layout so the next frames search again`() {
+        val viewModel = CameraViewModel(collectDebugSignals = false)
+        repeat(8) { feed(viewModel, personBox(0.3f, 0.2f, 0.7f, 0.9f), confidence = 0.9f) }
+        assertNotNull(viewModel.lastFrame.value?.fixedLayout)
+
+        viewModel.rescanLayout()
+
+        // The next analyzed frame is the first one that can observe the cleared
+        // state, so feed one empty frame to read it back.
+        feed(viewModel, null, confidence = 0f)
+        assertNull(
+            "rescan must return the resolver to searching",
+            viewModel.lastFrame.value?.fixedLayout,
+        )
+    }
+
+    @Test
+    fun `rescan before anything latched is harmless`() {
+        val viewModel = CameraViewModel(collectDebugSignals = false)
+        viewModel.rescanLayout()
+        feed(viewModel, null, confidence = 0f)
+        assertNull(viewModel.lastFrame.value?.fixedLayout)
+    }
+
+    /**
+     * Rescan clears the layout, not the style. A user tapping 재탐색 is saying
+     * "look at the scene again", not "forget which preset I picked" — dropping the
+     * style target here would silently reset their composition guide too.
+     */
+    @Test
+    fun `rescan leaves the style target alone`() {
+        val viewModel = CameraViewModel(collectDebugSignals = false)
+        val target = StyleTarget(subjectAnchorX = 1f / 3f)
+        viewModel.setStyleTarget(target)
+        repeat(8) { feed(viewModel, personBox(0.3f, 0.2f, 0.7f, 0.9f), confidence = 0.9f) }
+
+        viewModel.rescanLayout()
+
+        assertEquals(target, viewModel.styleTarget.value)
     }
 
     // ------------------------------------------------------------------ util

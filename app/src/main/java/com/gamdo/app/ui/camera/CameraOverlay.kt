@@ -128,9 +128,17 @@ fun CameraOverlay(
             }
         }
 
-        // A layout is either a fixed scene proposal or still being searched.
-        // The legacy moving object frame is intentionally not rendered here.
-        /*
+        // The style-preset guide: bracket + silhouette + foot marker + outline.
+        //
+        // This block was commented out wholesale on the AI-1 branch. 부록 A names
+        // "목표 프레임·실루엣·수평선 오버레이" as one of the things this project
+        // keeps to the end, and §3-2's completion criterion is exactly this
+        // vocabulary, so commenting it out made that criterion unreachable. Owner
+        // decision 2026-07-28: restore it, keep the fixed-layout gate below.
+        //
+        // The gate means the preset guide yields to a latched scene layout rather
+        // than drawing over it. The way out of a latch is the 재탐색 button on the
+        // preview, not a second set of marks on screen.
         data.guide
             ?.takeIf { it.visible && data.layoutGuide?.fixedLayout == null }
             ?.let { guide ->
@@ -177,7 +185,6 @@ fun CameraOverlay(
                 drawTargetBracket(frame, guideColor)
             }
         }
-        */
 
         if (!showDetections) return@Canvas
 

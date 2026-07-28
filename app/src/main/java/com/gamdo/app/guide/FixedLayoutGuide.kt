@@ -91,31 +91,23 @@ data class SlotDetection(
     )
 }
 
-@Deprecated("Product rendering no longer displays occupancy state; use LayoutTemplate directly.")
-enum class SlotMatchStatus { EMPTY, DETECTING, FILLED }
-
-@Deprecated("Product rendering no longer displays occupancy state; use LayoutTemplate directly.")
-data class SlotMatch(
-    val slotId: String,
-    val status: SlotMatchStatus,
-    val detectionId: String? = null,
-    val overlap: Float = 0f,
-    val centerError: Float = 1f,
-)
-
+/**
+ * A latched layout template plus the per-frame detection→slot correspondence.
+ *
+ * **There is no occupancy state here and there must not be one.** D2 forbids
+ * showing a slot as filled or empty. `SlotMatchStatus`, `SlotMatch`,
+ * `FixedLayoutSlotMatcher` and `allRequiredFilled` lived here, unrendered by
+ * either branch of the 2026-07-28 merge, and carried three live bugs — overlap
+ * normalized by slot area alone (a full-frame box scored 1.0), greedy assignment
+ * with no score floor, and a `filled` flag that was never cleared. The fix for a
+ * display we are not allowed to draw is deletion, not repair. `git log` has them
+ * if occupancy is ever re-specified.
+ */
 data class FixedLayoutGuide(
     val template: LayoutTemplate,
-    /** Debug/KPI only. CameraOverlay must render template slots uniformly. */
-    val matches: List<SlotMatch> = emptyList(),
     /** Detection-to-slot correspondence for downstream KPI and rendering seams. */
     val assignments: List<LayoutSlotAssignment> = emptyList(),
-) {
-    @Deprecated("Never use this value to decide whether the shutter works.")
-    val allRequiredFilled: Boolean
-        get() = template.slots.filter { it.required }.all { slot ->
-            matches.firstOrNull { it.slotId == slot.id }?.status == SlotMatchStatus.FILLED
-        }
-}
+)
 
 data class LayoutSlotAssignment(
     val slotId: String,
@@ -161,70 +153,6 @@ object LayoutSlotAssigner {
 
     private fun centerDistance(slot: RectN, detection: NormalizedBox): Float =
         maxOf(abs(slot.centerX - detection.centerX), abs(slot.centerY - detection.centerY))
-
-    private val RectN.centerX get() = (left + right) / 2f
-    private val RectN.centerY get() = (top + bottom) / 2f
-}
-
-/** Compatibility matcher used only by legacy KPI tests, never by product state. */
-class FixedLayoutSlotMatcher(
-    private val confirmationWindow: Int = 5,
-    private val confirmationsRequired: Int = 3,
-    private val maxOccludedFrames: Int = 4,
-) {
-    private val history = mutableMapOf<String, ArrayDeque<Boolean>>()
-    private val misses = mutableMapOf<String, Int>()
-    private val filled = mutableMapOf<String, Boolean>()
-
-    fun match(template: LayoutTemplate, detections: List<SlotDetection>): FixedLayoutGuide {
-        val available = detections.map { it.normalized() }.toMutableList()
-        val matches = template.slots.map { slot ->
-            val candidate = available
-                .filter { it.isReliable && (slot.expectedCategory == null || it.category == slot.expectedCategory) }
-                .maxByOrNull { score(slot, it) }
-            candidate?.let { available.remove(it) }
-            val overlap = candidate?.let { overlap(slot.bounds, it.bounds) } ?: 0f
-            val centerError = candidate?.let { centerError(slot.bounds, it.bounds) } ?: 1f
-            val inside = candidate != null && overlap >= slot.minimumOverlap && centerError <= slot.centerTolerance
-            val frameHistory = history.getOrPut(slot.id) { ArrayDeque() }
-            frameHistory.addLast(inside)
-            while (frameHistory.size > confirmationWindow) frameHistory.removeFirst()
-            val confirmed = frameHistory.count { it } >= confirmationsRequired
-            if (confirmed) filled[slot.id] = true
-            val wasFilled = filled[slot.id] == true && (misses[slot.id] ?: 0) < maxOccludedFrames
-            if (inside) misses[slot.id] = 0 else misses[slot.id] = (misses[slot.id] ?: 0) + 1
-            val status = when {
-                (confirmed && inside) || wasFilled -> SlotMatchStatus.FILLED
-                candidate != null -> SlotMatchStatus.DETECTING
-                else -> SlotMatchStatus.EMPTY
-            }
-            SlotMatch(slot.id, status, candidate?.id, overlap, centerError)
-        }
-        return FixedLayoutGuide(template, matches)
-    }
-
-    fun reset() {
-        history.clear()
-        misses.clear()
-        filled.clear()
-    }
-
-    private fun score(slot: LayoutSlot, detection: SlotDetection): Float =
-        overlap(slot.bounds, detection.bounds) * 0.7f +
-            (1f - centerError(slot.bounds, detection.bounds)).coerceIn(0f, 1f) * 0.3f
-
-    private fun centerError(slot: RectN, detection: NormalizedBox): Float =
-        max(abs(slot.centerX - detection.centerX), abs(slot.centerY - detection.centerY))
-
-    private fun overlap(slot: RectN, detection: NormalizedBox): Float {
-        val left = max(slot.left, detection.left)
-        val top = max(slot.top, detection.top)
-        val right = minOf(slot.right, detection.right)
-        val bottom = minOf(slot.bottom, detection.bottom)
-        val intersection = ((right - left).coerceAtLeast(0f) * (bottom - top).coerceAtLeast(0f))
-        val slotArea = (slot.width * slot.height).coerceAtLeast(0.0001f)
-        return (intersection / slotArea).coerceIn(0f, 1f)
-    }
 
     private val RectN.centerX get() = (left + right) / 2f
     private val RectN.centerY get() = (top + bottom) / 2f

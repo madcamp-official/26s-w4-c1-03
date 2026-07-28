@@ -6,7 +6,6 @@ import com.gamdo.app.BuildConfig
 import com.gamdo.app.core.DeviceIdStore
 import com.gamdo.app.data.local.GamdoDatabase
 import com.gamdo.app.data.network.GamdoApiClient
-import java.io.File
 import kotlinx.serialization.json.Json
 
 /**
@@ -23,15 +22,33 @@ class AppContainer(context: Context) {
         encodeDefaults = true
     }
 
+    /**
+     * The local database. **Deliberately built with no migration fallback.**
+     *
+     * This app has no server-side copy of the user's data — DB 스키마 v2.0 §6:
+     * "로컬이 원천이므로 앱 삭제 = 데이터 전체 소실". So the two candidate
+     * behaviours on a schema mismatch are:
+     *
+     *  - `fallbackToDestructiveMigration()` — drop and recreate all 14 tables.
+     *    No crash, no log, no prompt. The profile, every capture row, the whole
+     *    edit stack and the session KPI evidence are gone before anyone can look.
+     *  - no fallback (what we do) — Room throws on open.
+     *
+     * A crash is the better failure. It is loud, it happens on the developer's
+     * machine on the very next run, and nothing has been lost yet.
+     *
+     * **If Room starts throwing here, the fix is a `Migration`, not this call.**
+     * `version` lives in [GamdoDatabase]; bump it and add the object in the same
+     * change. DDL §9-4 requires migrations to be additive, and AGENTS.md §7 규칙 2
+     * only permits additive edits, so writing one is short.
+     *
+     * `DatabaseMigrationPolicyTest` fails if the destructive fallback comes back.
+     */
     val database: GamdoDatabase = Room.databaseBuilder(
         appContext,
         GamdoDatabase::class.java,
         GamdoDatabase.NAME,
     )
-        // Dev-phase only: B's schema (v2.x) is still evolving; without this any
-        // entity change crashes existing installs. Replace with real migrations
-        // before release.
-        .fallbackToDestructiveMigration()
         .build()
 
     val deviceIdStore: DeviceIdStore = DeviceIdStore(appContext)
@@ -53,14 +70,10 @@ class AppContainer(context: Context) {
         json = json,
     )
 
-    // §5-1: content-hash cache + /references/analyze upload. Every upload this
-    // client makes goes through ExifSanitizer inside ReferenceRepository (D8-5).
-    val referenceRepository: ReferenceRepository = ReferenceRepository(
-        cachedReferencesDao = database.cachedReferencesDao(),
-        analysisClient = ReferenceAnalysisClient { file -> apiClient.analyzeReference(file) },
-        json = json,
-        cacheDir = File(appContext.cacheDir, "reference_uploads"),
-    )
+    // §5-1 레퍼런스 배선은 remain_plan O-1(컷)로 걷어냈다. 컨테이너 프로퍼티는 그 자체가
+    // "이 경로는 살아 있다"는 선언이라, 폐기 표시만 붙이고 생성은 남겨 두면 신호가 엇갈린다.
+    // ReferenceRepository·ExifSanitizer는 @Deprecated(ERROR)로 남아 있으니 되살릴 때 여기에
+    // 다시 붙이면 된다.
 
     val settingsRepository: SettingsRepository = SettingsRepository(database.appSettingsDao())
 

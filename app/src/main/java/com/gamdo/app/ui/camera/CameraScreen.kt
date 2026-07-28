@@ -3,6 +3,7 @@ package com.gamdo.app.ui.camera
 import android.util.Log
 import android.widget.Toast
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -30,8 +31,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -51,8 +50,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -85,6 +86,7 @@ import com.gamdo.app.data.preset.StylePreset
 import com.gamdo.app.detect.DetectionResult
 import com.gamdo.app.detect.MlKitFaceDetector
 import com.gamdo.app.detect.MlKitPoseDetector
+import com.gamdo.app.detect.ThrottledPoseDetector
 import com.gamdo.app.detect.EfficientDetSceneDetector
 import com.gamdo.app.detect.ThrottledObjectSceneDetector
 import com.gamdo.app.detect.MlKitSubjectSegmenter
@@ -117,6 +119,9 @@ import kotlinx.coroutines.withContext
 // GridLine is white at 28% alpha — a translucent neutral, not a hue.
 private val GridLine = Color(0x47FFFFFF)
 private const val TAG = "CameraScreen"
+
+/** Separate tag so per-stage timing greps cleanly out of the per-frame chatter. */
+private const val STAGE_TAG = "DetectStage"
 
 /** 52dp thumbnail + 4dp gap + label, fixed so the preview pane is laid out once. */
 private val STYLE_STRIP_HEIGHT = 78.dp
@@ -174,7 +179,12 @@ fun CameraScreen(
     val scene = remember(guideConfig) {
         SceneDetector(
             faceDetector = MlKitFaceDetector(),
-            poseDetector = MlKitPoseDetector(),
+            // Pose cost 89.8ms of a measured 263ms frame and ran on every frame.
+            // Like every model here it does not get cheaper on an empty frame, so
+            // cadence is the only lever (owner decision, 2026-07-28). Unlike the
+            // object/segmentation divisors this one is still a code default —
+            // externalizing it means adding a key to 담당 B's ObjectGuideConfigJson.
+            poseDetector = ThrottledPoseDetector(MlKitPoseDetector()),
             // CameraX already keeps only the newest frame. Refreshing objects on
             // every processed frame gives the 3/5 tracker enough real evidence
             // to meet the two-second first-layout target without a queue.
@@ -186,6 +196,15 @@ fun CameraScreen(
                 MlKitSubjectSegmenter(),
                 refreshEveryFrames = guideConfig.objectGuide.segmentationRefreshEveryFrames,
             ),
+            // Per-stage cost, debug builds only. Every ML Kit model here blocks the
+            // single analysis thread in turn and none gets cheaper on an empty
+            // frame, so "which one" is not answerable from the HUD's whole-lambda
+            // number.
+            stageSink = if (BuildConfig.DEBUG) {
+                { timings -> Log.d(STAGE_TAG, timings.format()) }
+            } else {
+                null
+            },
         )
     }
     val viewModel = remember {
@@ -217,7 +236,6 @@ fun CameraScreen(
     var sessionStyleId by rememberSaveable { mutableStateOf<String?>(null) }
     var stylePickerOpen by rememberSaveable { mutableStateOf(false) }
     var guideVisible by rememberSaveable { mutableStateOf(true) }
-    var layoutMenuExpanded by rememberSaveable { mutableStateOf(false) }
     val styleIndex = resolveStyleIndex(
         presetIds = presetIds,
         onboardingId = onboardingStyle?.id,
@@ -390,18 +408,6 @@ fun CameraScreen(
             onSelectAspect = { aspect = it },
             hudToggleEnabled = hudAvailable,
             onToggleHud = { showHud = !showHud },
-            layoutMenuExpanded = layoutMenuExpanded,
-            onToggleLayoutMenu = { layoutMenuExpanded = !layoutMenuExpanded },
-            onDismissLayoutMenu = { layoutMenuExpanded = false },
-            manualLayouts = viewModel.availableManualLayouts,
-            onRescanLayout = {
-                viewModel.rescanLayout()
-                layoutMenuExpanded = false
-            },
-            onSelectManualLayout = { templateId ->
-                viewModel.selectManualLayout(templateId)
-                layoutMenuExpanded = false
-            },
             referenceEntry = referenceEntry,
             demoControls = demoControls,
         )
@@ -429,6 +435,7 @@ fun CameraScreen(
             zoomRatio = actualZoom,
             zoomBounds = zoomBounds,
             onSelectZoom = { controller.setZoom(it) },
+            onRescan = { viewModel.rescanLayout() },
             onPaneRatio = { paneRatioWtoH = it },
             referenceLayer = referenceLayer,
             hud = {
@@ -563,12 +570,6 @@ private fun CameraTopBar(
     onSelectAspect: (CaptureAspect) -> Unit,
     hudToggleEnabled: Boolean,
     onToggleHud: () -> Unit,
-    layoutMenuExpanded: Boolean,
-    onToggleLayoutMenu: () -> Unit,
-    onDismissLayoutMenu: () -> Unit,
-    manualLayouts: List<com.gamdo.app.guide.LayoutTemplateSummary>,
-    onRescanLayout: () -> Unit,
-    onSelectManualLayout: (String) -> Unit,
     referenceEntry: @Composable () -> Unit,
     demoControls: @Composable () -> Unit,
 ) {
@@ -633,26 +634,13 @@ private fun CameraTopBar(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             AspectChip(selected = aspect, onSelect = onSelectAspect)
-            Box {
-                BarChip(onClick = onToggleLayoutMenu) {
-                    Text("구도", color = OnDarkHigh, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                }
-                DropdownMenu(
-                    expanded = layoutMenuExpanded,
-                    onDismissRequest = onDismissLayoutMenu,
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("자동 재탐색") },
-                        onClick = onRescanLayout,
-                    )
-                    manualLayouts.forEach { layout ->
-                        DropdownMenuItem(
-                            text = { Text(layout.displayName) },
-                            onClick = { onSelectManualLayout(layout.id) },
-                        )
-                    }
-                }
-            }
+            // 재탐색은 프리뷰 우측 하단 버튼 하나로 일원화했다(오너 지정 위치,
+            // 2026-07-28). 같은 동작을 상단 드롭다운에도 두면 두 곳이 갈라진다.
+            //
+            // ⚠️ 그 드롭다운이 D13의 **수동 레이아웃 선택**도 담고 있었으므로
+            // 지금은 그 기능이 없다. `CameraViewModel.selectManualLayout`과
+            // `availableManualLayouts`는 완성된 채 호출자 0으로 남아 있다 —
+            // D13 미충족 상태이며 remain_plan 부록 C에 기록한다.
             referenceEntry()
             demoControls()
         }
@@ -814,6 +802,7 @@ private fun CameraPreviewPane(
     zoomRatio: Float,
     zoomBounds: ZoomBounds,
     onSelectZoom: (Float) -> Unit,
+    onRescan: () -> Unit,
     onPaneRatio: (Float) -> Unit,
     referenceLayer: @Composable BoxScope.() -> Unit,
     hud: @Composable BoxScope.() -> Unit,
@@ -993,6 +982,12 @@ private fun CameraPreviewPane(
                     zoomRatio = zoomRatio,
                     bounds = zoomBounds,
                     onSelect = onSelectZoom,
+                )
+                RescanButton(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(bottom = 12.dp, end = 18.dp),
+                    onClick = onRescan,
                 )
             }
             Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
@@ -1191,8 +1186,9 @@ private fun GuideDebugBadge(debug: GuideDebug) {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(
-                text = "aligned=%s visible=%s · IoU %.2f · match %.2f".format(
+                text = "aligned=%s visible=%s · IoU %.2f · match %.2f · fixed=%s".format(
                     debug.aligned, debug.visible, debug.iou, debug.matchScore,
+                    debug.fixedLayoutId ?: "none",
                 ),
                 color = if (debug.aligned) Sage else OnDarkHigh,
                 fontSize = 10.sp,
@@ -1267,6 +1263,52 @@ private fun ZoomStops(
 /** `.5` / `1x` / `2x` — the design's labels, not a formatted ratio. */
 private fun formatZoomStop(stop: Float): String =
     if (stop < 1f) ".5" else "${stop.toInt()}x"
+
+/**
+ * 재탐색 — asks the guide to look at the scene again (owner decision, 2026-07-28).
+ *
+ * Not in the 2c design. It is here because the auto layout resolver latches a
+ * template within a few frames and never un-latches inside a session: on device
+ * that shows up as the same `auto_2_row` slots hanging over every scene until the
+ * user changes style. remain_plan O-3 had ruled a layout control out; the owner
+ * reversed that after seeing the symptom.
+ *
+ * Placed on the zoom row at the preview's trailing edge, per the owner. The zoom
+ * stops stay centred, so this reads as a sibling affordance rather than a fourth
+ * stop — sharing a row with them but never sitting between them.
+ *
+ * The glyph is a miniature of the app's own target bracket, drawn rather than
+ * typed. A refresh arrow would be the conventional choice, but D2 bans direction
+ * arrows from this screen and the four corner marks say "composition" in the same
+ * vocabulary the overlay already uses. Drawing it also means it cannot fail to
+ * render on a device whose font lacks the codepoint.
+ */
+@Composable
+private fun RescanButton(modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier = modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(Color(0x99141614))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.size(15.dp)) {
+            val stroke = 1.6.dp.toPx()
+            val arm = size.minDimension * 0.34f
+            for (right in listOf(false, true)) {
+                for (bottom in listOf(false, true)) {
+                    val x = if (right) size.width else 0f
+                    val y = if (bottom) size.height else 0f
+                    val dx = if (right) -arm else arm
+                    val dy = if (bottom) -arm else arm
+                    drawLine(OnDarkMedium, Offset(x, y), Offset(x + dx, y), stroke, StrokeCap.Round)
+                    drawLine(OnDarkMedium, Offset(x, y), Offset(x, y + dy), stroke, StrokeCap.Round)
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun DetectionBadge(text: String) {

@@ -15,11 +15,6 @@ enum class LayoutGuideLevel {
     CONFIDENT,
 }
 
-enum class LayoutGuidePrompt {
-    FIND_SUBJECT,
-    HOLD_STEADY,
-}
-
 /**
  * Rendering-neutral output for the scene-specific guide.
  *
@@ -32,7 +27,6 @@ data class SceneLayoutGuide(
     val level: LayoutGuideLevel,
     val outline: List<LayoutGuidePoint> = emptyList(),
     val bounds: NormalizedBox? = null,
-    val prompt: LayoutGuidePrompt? = null,
     val subjectKind: SubjectKind = SubjectKind.UNKNOWN,
     val stabilized: Boolean = false,
     /** Fixed slots are rendered by the camera owner; they never follow detections. */
@@ -57,10 +51,11 @@ class SceneLayoutGuideEngine(
         val scene = observation.normalized()
         val box = scene.subjectBox
         if (box == null || scene.subjectConfidence < 0.35f) {
-            return SceneLayoutGuide(
-                level = LayoutGuideLevel.STATIC,
-                prompt = LayoutGuidePrompt.FIND_SUBJECT,
-            ).also { previous = it }
+            // D2 forbids instruction copy, so this state says "nothing to draw"
+            // and draws nothing. There used to be a `prompt` field here whose only
+            // consumer rendered "피사체를 화면에 보여주세요" at TopCenter; the field
+            // is gone with it, because an unread field is how the text comes back.
+            return SceneLayoutGuide(level = LayoutGuideLevel.STATIC).also { previous = it }
         }
 
         val sourceOutline = convexHull(scene.subjectOutline)
@@ -83,7 +78,6 @@ class SceneLayoutGuideEngine(
                 level = LayoutGuideLevel.DETECTING,
                 outline = sourceOutline,
                 bounds = box,
-                prompt = LayoutGuidePrompt.HOLD_STEADY,
                 subjectKind = scene.subjectKind,
             )
         }

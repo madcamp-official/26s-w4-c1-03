@@ -16,6 +16,7 @@ import com.gamdo.app.guide.SceneFrameSignals
 import com.gamdo.app.guide.SceneGuideCoordinator
 import com.gamdo.app.guide.SceneGuideSessionController
 import com.gamdo.app.guide.GuideLayoutState
+import com.gamdo.app.guide.LayoutTemplateCatalog
 import com.gamdo.app.guide.LayoutTemplateSummary
 import com.gamdo.app.detect.StableSceneTracker
 import com.gamdo.app.guide.SceneLayoutGuide
@@ -36,6 +37,15 @@ data class GuideDebug(
     val visible: Boolean,
     val iou: Float,
     val matchScore: Float,
+    /**
+     * Which layout template the auto resolver has latched, or null for none.
+     *
+     * Distinct from the HUD's `layout=` field, which is the *outline confidence
+     * level*. The two were indistinguishable on device and lead to opposite
+     * conclusions about whether the preset guide should be on screen, which made
+     * "did the coexistence fix work?" unanswerable from a screenshot.
+     */
+    val fixedLayoutId: String? = null,
 )
 
 /**
@@ -55,7 +65,14 @@ data class GuideDebug(
 data class ShutterFrame(
     val features: FrameFeatures,
     val target: StyleTarget,
-    val aligned: Boolean,
+    /**
+     * Whether the subject was inside the preset bracket, or **null when a fixed
+     * layout was latched** — the bracket is not drawn then, so there is nothing
+     * the user was aiming at. "NULL=측정불가" is the schema's own vocabulary
+     * (DB 스키마 v2.0 §session_guides.resolved); this field follows it.
+     */
+    val aligned: Boolean?,
+    /** Raw overlay visibility. The show/hide KPI measures exactly this. */
     val visible: Boolean,
     val fixedLayout: FixedLayoutGuide? = null,
 )
@@ -174,17 +191,59 @@ class CameraViewModel(
     val sceneGuideMetrics: StateFlow<SceneGuideMetrics> = _sceneGuideMetrics.asStateFlow()
 
     /**
+     * Work handed from the main thread to the analysis thread (review_report #18).
+     *
+     * `AlignmentEngine`, `OverlayStabilizer` and `SceneGuideSessionController` hold
+     * plain `ArrayDeque`s and plain fields, and [onFrameAnalyzed] mutates all of
+     * them on CameraX's analysis executor. Every main-thread entry point that used
+     * to reset that state — [setStyleTarget] from `LaunchedEffect(activePreset)`,
+     * [rescanLayout] from the 재탐색 button's `onClick` — was writing across a
+     * thread boundary with no synchronization at all.
+     *
+     * A JVM stress test (`CameraViewModelConcurrencyTest`) reproduced two distinct
+     * failures on the pre-fix code, every run: `ConcurrentModificationException`
+     * from the smoothing deque, and — the quieter one — a published target frame of
+     * `RectN(NaN, NaN, NaN, NaN)` from a torn read mid-`clear()`. On device that is
+     * an overlay whose geometry is garbage after the user taps a different style.
+     *
+     * Rather than lock every touch point, the mutation is **confined to one
+     * thread**: callers enqueue, and [onFrameAnalyzed] drains at the top of the
+     * frame it is already running on. Nothing needs a lock because nothing else
+     * writes. The cost is that a reset lands on the next analyzed frame instead of
+     * instantly — about 80ms, invisible next to the 180ms the frame itself takes,
+     * and the reset only matters relative to the frames that follow it anyway.
+     *
+     * If no frames are arriving (camera detached), commands simply wait. That is
+     * correct: there is no guide state to reset while nothing is being analysed,
+     * and [onAnalyzerDetached] clears the queue along with everything else.
+     */
+    private val pendingGuideWork = java.util.concurrent.ConcurrentLinkedQueue<() -> Unit>()
+
+    /** Applies whatever the main thread asked for. Analysis thread only. */
+    private fun drainPendingGuideWork() {
+        while (true) {
+            val work = pendingGuideWork.poll() ?: return
+            work()
+        }
+    }
+
+    /**
      * Swaps the composition target. A preset switch invalidates the smoothing
      * window, the last stable target and the display damping, so both stages are
      * reset with it — otherwise the new bracket would crawl out of the old one.
      */
     fun setStyleTarget(target: StyleTarget) {
+        // Safe to publish immediately — `MutableStateFlow` is thread-safe and the
+        // UI reads it. Everything below it is not, so it is deferred to the
+        // analysis thread; see [pendingGuideWork].
         _styleTarget.value = target
-        alignmentEngine.reset()
-        stabilizer.reset()
-        // A style changes only spacing/scale/anchor of a fixed template. It
-        // never makes the camera rediscover the scene.
-        sceneGuideSessionController.updateStyle(target)
+        pendingGuideWork.add {
+            alignmentEngine.reset()
+            stabilizer.reset()
+            // A style changes only spacing/scale/anchor of a fixed template. It
+            // never makes the camera rediscover the scene.
+            sceneGuideSessionController.updateStyle(target)
+        }
     }
 
     /** Called from the analysis executor once per second. */
@@ -209,6 +268,10 @@ class CameraViewModel(
         mirror: Boolean,
         sceneSignals: SceneFrameSignals = SceneFrameSignals(),
     ) {
+        // Before anything reads the guide state, apply whatever the main thread
+        // asked for. This is the only place any of it is written (#18).
+        drainPendingGuideWork()
+
         val startNs = System.nanoTime()
         val features = featureCalculator.calculate(
             FrameFeatureInput(
@@ -238,10 +301,29 @@ class CameraViewModel(
         )
         val projection = stabilizer.stabilize(engineState.toProjection())
         val fixedLayout = sceneGuide.fixedLayout
-        // A fixed layout is a user-facing composition target, not a checklist.
-        // The shutter must never wait for every slot to be filled.
-        val effectiveAligned = fixedLayout != null || projection.aligned
-        val effectiveVisible = fixedLayout != null || projection.visible
+
+        // Both of these used to be `fixedLayout != null || projection.<x>`, so a
+        // latched layout pinned them true for the rest of the session. The stated
+        // reason was "the shutter must never wait for every slot to be filled" —
+        // but **neither field gates the shutter.** Capture is unconditional (D2),
+        // and each of these has exactly one consumer, both of them KPIs:
+        //
+        //   visible → the session_guides show/hide collector (CameraScreen)
+        //   aligned → analysis_json on the capture row (ShutterSnapshot)
+        //
+        // So the OR term defended against a gate that does not exist while making
+        // two measurements incapable of reporting anything but success. The
+        // show/hide KPI logged one row per session and never a hidden one; every
+        // capture recorded aligned=true.
+        //
+        // `visible` is now the raw overlay state, which is what that KPI measures.
+        //
+        // `aligned` is **null while a layout is latched** (owner decision,
+        // 2026-07-28). With the fixed-layout gate in CameraOverlay the preset
+        // bracket is not on screen, so `projection.aligned` would score the user
+        // against a target they cannot see. Null is the schema's own vocabulary
+        // for this — DB 스키마 v2.0 §session_guides: "NULL=측정불가".
+        val alignedForKpi: Boolean? = if (fixedLayout != null) null else projection.aligned
 
         _detectionLabel.value = detectionLabelOf(detection) +
             " · layout=${sceneGuide.layoutGuide.level.name.lowercase()}"
@@ -250,8 +332,8 @@ class CameraViewModel(
         _lastFrame.value = ShutterFrame(
             features = features,
             target = target,
-            aligned = effectiveAligned,
-            visible = effectiveVisible,
+            aligned = alignedForKpi,
+            visible = projection.visible,
             fixedLayout = fixedLayout,
         )
 
@@ -265,6 +347,7 @@ class CameraViewModel(
                 // quantity — only the `matchScore` field below is loggable (§3-3).
                 iou = alignmentEngine.metrics().matchScore,
                 matchScore = matchScoreCalculator.calculate(features, resolvedTarget),
+                fixedLayoutId = fixedLayout?.template?.id,
             )
         }
 
@@ -286,6 +369,11 @@ class CameraViewModel(
 
     /** Clears per-frame state when the analyzer detaches (background / rebind). */
     fun onAnalyzerDetached() {
+        // Called from `onDispose` on the main thread, at which point the analysis
+        // executor has been unbound and nothing else is touching this state.
+        // Queued work is dropped rather than applied: it describes a scene the
+        // camera is no longer pointed at.
+        pendingGuideWork.clear()
         _overlay.value = null
         _detectionLabel.value = ""
         _guideDebug.value = null
@@ -301,15 +389,47 @@ class CameraViewModel(
         _sceneGuideMetrics.value = SceneGuideMetrics()
     }
 
-    fun selectManualLayout(templateId: String): Boolean =
-        sceneGuideSessionController.selectManualLayout(templateId, _styleTarget.value)
+    /**
+     * Currently unwired — the layout picker was removed with the top-bar dropdown
+     * (remain_plan 부록 C). Kept because the D13 control it serves is expected back.
+     *
+     * Returns whether the id names a real template, decided without touching guide
+     * state; the state change itself is deferred like every other main-thread
+     * mutation. Callers must not read the return value as "applied".
+     */
+    fun selectManualLayout(templateId: String): Boolean {
+        if (LayoutTemplateCatalog.resolve(templateId) == null) return false
+        val target = _styleTarget.value
+        pendingGuideWork.add { sceneGuideSessionController.selectManualLayout(templateId, target) }
+        return true
+    }
 
+    /**
+     * 재탐색 — drops the latched layout so the next frames search the scene again.
+     *
+     * The resolver confirms a template within a few frames and then short-circuits
+     * for the rest of the session. That stickiness is deliberate — a guide that
+     * re-picks every second is worse than one that commits — but until this
+     * existed the only way out was [setStyleTarget], so a user who pointed the
+     * camera somewhere new had to change their style to make the guide look again.
+     * On device that reads as the app having stopped paying attention.
+     *
+     * Deliberately narrower than [setStyleTarget]: the alignment engine, the
+     * stabilizer and the style target are left alone. "Look at the scene again"
+     * is not "forget which preset I picked". The scene KPI counters restart with
+     * the search, because the two-second first-layout target is measured from
+     * when searching begins.
+     */
     fun rescanLayout() {
-        sceneGuideSessionController.rescan()
-        firstFixedNs = null
-        sceneStartedNs = System.nanoTime()
-        freshObjectFrames = 0L
-        _sceneGuideMetrics.value = SceneGuideMetrics()
+        // Deferred to the analysis thread — the counters below are read and written
+        // per frame. See [pendingGuideWork].
+        pendingGuideWork.add {
+            sceneGuideSessionController.rescan()
+            firstFixedNs = null
+            sceneStartedNs = System.nanoTime()
+            freshObjectFrames = 0L
+            _sceneGuideMetrics.value = SceneGuideMetrics()
+        }
     }
 
     /** P1 calls this after CameraX focus succeeds; coordinates are normalized. */

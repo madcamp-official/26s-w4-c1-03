@@ -75,6 +75,21 @@ data class CompositionCandidate(
     val reason: ProposalReason,
 )
 
+/**
+ * Confidence assigned to a subject the detector found but did not score.
+ *
+ * Neither ML Kit's face detector nor its object detector always returns a
+ * confidence value; when they do not, the honest reading of a detection is "this
+ * is here" with no strength attached. This constant is that reading, shared by
+ * both branches so they cannot drift apart.
+ *
+ * It sits above the 0.35 subject gate (a found subject should not be treated as
+ * absent) and above the 0.65 `confidentThreshold`. Clearing the latter is safe:
+ * `SceneLayoutGuideEngine` additionally requires `hasReliableOutline`, which a
+ * face-only detection does not have, so the outline still will not be projected.
+ */
+private const val DETECTED_SUBJECT_FLOOR = 0.7f
+
 /** Minimal bridge from the detector aggregate to the proposal contract. */
 fun DetectionResult.toSceneObservation(): SceneObservation {
     val poseBox = pose?.landmarks
@@ -99,10 +114,22 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
         else -> SubjectKind.UNKNOWN
     }
     val detectorConfidence = when {
-        personBox != null -> pose?.averageInFrameLikelihood ?: faces.maxOfOrNull { it.leftEyeOpenProbability ?: 0f } ?: 0f
+        // Pose likelihood is a real measurement of person-presence, so it wins.
+        // Without it, ML Kit's face detector exposes **no confidence at all** —
+        // DETECTED_SUBJECT_FLOOR stands in for a number that does not exist,
+        // exactly as the object branch below already does.
+        //
+        // This used to fall back to `leftEyeOpenProbability`. That is eyelid
+        // state, not detection confidence: a blink, sunglasses, or simply the
+        // classifier being off reported "no confident subject" for a person
+        // standing in plain view. Pose detection fails routinely on upper-body
+        // and backlit framing, so that fallback was the common path, not the rare
+        // one. `SceneObservationAdapterTest` pins the property that eye state
+        // cannot move this number.
+        personBox != null -> pose?.averageInFrameLikelihood ?: DETECTED_SUBJECT_FLOOR
         objectCandidate != null -> objectCandidate.detectionConfidence
             ?: objectCandidate.confidence.takeIf { it > 0f }
-            ?: 0.7f
+            ?: DETECTED_SUBJECT_FLOOR
         else -> 0f
     }
     val confidence = maxOf(detectorConfidence, segmented?.confidence ?: 0f)
