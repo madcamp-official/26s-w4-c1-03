@@ -125,10 +125,11 @@ class SceneLayoutGuideEngine(
         )
     }
 
+    // 같은 단위 오류가 여기에도 복제돼 있었다 — 리뷰 M1. 이제 AlignmentEngine과
+    // 같은 CompositionFrame을 쓰므로 한쪽만 고쳐질 수 없다.
     private fun targetFrame(target: StyleTarget): RectN {
-        val height = ((target.subjectScaleRange.start + target.subjectScaleRange.endInclusive) / 2f)
-            .coerceIn(0.12f, 0.92f)
-        val width = (height * target.targetAspectRatio).coerceIn(0.12f, 0.92f)
+        val height = CompositionFrame.height(target)
+        val width = CompositionFrame.width(target, height)
         val centerX = target.subjectAnchorX.coerceIn(width / 2f, 1f - width / 2f)
         val headroom = target.headroomRange.start
             .plus(target.headroomRange.endInclusive)

@@ -1,5 +1,6 @@
 package com.gamdo.app.data
 
+import com.gamdo.app.core.Ulid
 import com.gamdo.app.data.local.CardSelectionsDao
 import com.gamdo.app.data.local.StyleProfileDao
 import com.gamdo.app.data.local.entity.CardSelections
@@ -19,7 +20,12 @@ class ProfileRepository(
         cardSelectionsDao.insertAll(
             cardIds.sorted().map { cardId ->
                 CardSelections(
-                    id = "round-$INITIAL_ROUND:$cardId",
+                    // DB 스키마 v2.0 §3.4: id TEXT PRIMARY KEY, -- 'sel_' + ULID.
+                    // Was "round-$INITIAL_ROUND:$cardId" — readable, but not the
+                    // contracted prefix (same class of defect as session_guides'
+                    // sgd_ -> gid_ fix in fe60b9e). (card_id, round) already carries
+                    // the uniqueness; the id only needs to be a valid primary key.
+                    id = "sel_" + Ulid.generate(),
                     cardId = cardId,
                     round = INITIAL_ROUND,
                     createdAt = now,

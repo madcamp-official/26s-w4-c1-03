@@ -87,12 +87,23 @@ object QuickFilterEditor {
         return FilterEngine.measure(pixels)
     }
 
+    /**
+     * @param scratch an unpacking buffer to reuse instead of allocating one. For a
+     *   1440px preview that array is ~10 MB, the same order as the output bitmap, so
+     *   on the drag path reusing it halves what a frame costs the collector. It is
+     *   overwritten by `getPixels` before it is read, so nothing carries over.
+     *
+     *   **Only a caller that renders one frame at a time may pass one** — two renders
+     *   sharing a buffer would write over each other. `renderLatest` is that caller;
+     *   everything else leaves this null and gets a fresh array.
+     */
     fun apply(
         source: Bitmap,
         filter: LocalFilter,
         adjustments: FilterEngine.Adjustments = FilterEngine.Adjustments.NEUTRAL,
+        scratch: IntArray? = null,
     ): Bitmap {
-        val pixels = IntArray(source.width * source.height)
+        val pixels = pixelBuffer(scratch, source.width, source.height)
         source.getPixels(pixels, 0, source.width, 0, 0, source.width, source.height)
         FilterEngine.apply(
             pixels = pixels,

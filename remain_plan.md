@@ -18,6 +18,8 @@
 | O-3 | **자동 고정 레이아웃은 "수리만, 버튼 없이"** | `FixedLayoutGuide`/`AutoLayoutTemplateResolver` 경로는 제거하지 않고 결함(리뷰 #1·#10·#16·#17·#20 등)을 개별 수정한다. 래치는 스타일 변경 시 해제되게 한다. **D13의 레이아웃 버튼+재탐색은 만들지 않는다** — D13 위반 상태가 지속됨을 이 문서에 명시 기록한다 |
 | O-4 | **gamdo-server는 이번 범위에서 제외** | 서버 결함(IDOR·워커 영구 종료·기동 실패 등)은 수정하지 않는다. `gamdo-server/**` 무접촉. 알려진 위험은 부록 C에 기록만 한다 |
 | O-5 | **O-3의 "D13 버튼 없음"을 번복 — 수동 재탐색 버튼을 만든다** | 위치는 **프리뷰 우측 하단, 배율 스톱과 같은 줄**. 오너가 기기에서 증상을 직접 보고 내린 결정이다: 공존 수정으로 프리셋 가이드는 살아났지만 래치가 세션 내내 고정돼 `auto_2_row` 슬롯이 모든 장면에 유령처럼 남았다. O-3은 증상을 보기 **전**의 판단이었다. 자동 재무장은 채택하지 않는다 — 사용자가 명시적으로 요청할 때만 다시 탐색한다 |
+| O-6 | **EfficientDet의 ML Kit 폴백을 버린다** | "옛날거를 그냥 버려"(2026-07-28). `EfficientDetSceneDetector`가 중앙에 물체가 없으면 `MlKitObjectDetector`를 **추가로** 돌렸는데, 빈 벽·천장처럼 흔한 장면에서 그 조건이 항상 참이라 두 검출기가 매 프레임 다 돌았다(기기 로그: 분석 39프레임에 ML Kit 39회). **B 모듈 수정 예외 승인** — R2의 예외 목록에 추가된다 |
+| O-7 | **M1 브래킷 폭 수정 승인** | "M1 승인할게"(2026-07-28). `targetAspectRatio`(픽셀 비)를 정규화 폭에 그대로 곱해 4:3 분석 프레임에서 모든 브래킷이 선언 폭의 75%로 그려지던 것을 고친다. **B 모듈 수정 예외 승인** — `guide/AlignmentEngine.kt`. 계산은 `SceneLayoutGuide`와 공유하도록 `CompositionFrame`으로 뽑아 두 곳이 갈라지지 못하게 한다 |
 
 ### 승계되는 기존 오너 결정 (유효)
 
@@ -64,7 +66,14 @@
 
 ### R2. 코드 규칙
 - **Room 스키마 동결.** `data/local/entity/**` 수정 금지. 테이블·컬럼 추가/변경 금지. ID 접두사는 DDL v2.0을 따른다(위반 수정은 W2에 명시된 것만).
-- **B 모듈 무접촉 원칙.** `guide/AlignmentEngine.kt`, `detect/FrameFeatureCalculator.kt`, `data/ProfileEngine.kt` 등 B 작성 파일은 원칙적으로 수정하지 않는다. 이번 플랜에서 예외로 허용된 수정은 W1-7·W2-6 **둘뿐**이며, 수정 시 파일 상단에 `// B 모듈 리드 승인 수정(remain_plan W1-7)` 형식의 주석과 부록 B 통지 기록을 남긴다.
+- **B 모듈 무접촉 원칙.** `guide/AlignmentEngine.kt`, `detect/FrameFeatureCalculator.kt`, `data/ProfileEngine.kt` 등 B 작성 파일은 원칙적으로 수정하지 않는다. 이번 플랜에서 예외로 허용된 수정은 **아래 넷**이며, 수정 시 파일 상단에 `// B 모듈 리드 승인 수정(remain_plan <항목>)` 형식의 주석과 부록 B 통지 기록을 남긴다.
+
+  | 예외 | 파일 | 근거 |
+  |---|---|---|
+  | W1-7 | `guide/AlignmentEngine.kt` | 플랜 수립 시 승인 |
+  | W2-6 | `data/ProfileEngine.kt` | 플랜 수립 시 승인 |
+  | O-6 | `detect/EfficientDetSceneDetector.kt` | 2026-07-28 오너 승인 — ML Kit 폴백 제거 |
+  | O-7 | `guide/AlignmentEngine.kt` | 2026-07-28 오너 승인 — 브래킷 폭 단위 오류(M1) |
 - **public 심볼 삭제 전 트리 전체 grep + 참조 파일 소유자 통지** (TEAM.md 규약 — KDoc 링크는 깨져도 컴파일이 통과한다).
 - 새 로직은 가능한 한 **순수 Kotlin(`android.*` import 0)으로 추출**해 JVM 테스트를 붙인다. `android.graphics`·Compose·CameraX 코드는 JVM에서 한 줄도 돌지 않는다.
 - 임계값·주기 등 튜닝 값은 하드코딩하지 않고 `guide_config.json`으로 외부화한다(AGENTS §4). 단 `scoring` 네임스페이스는 비워 둔 채 유지한다(기존 리드 판정).
@@ -149,9 +158,9 @@
 - [x] 📱 **W1-F. 세그멘테이션 수명** (구 W1-8 / 리뷰 #14·#15) — 타임아웃 제거(오너 결정; `task.cancel()`은 **API에 존재하지 않는다**), null이 캐시를 지우게. 기기: `Image is already closed` 0 · `IllegalStateException` 0. **#15의 null 경로는 기기에서 못 밟았다**(모델이 항상 마스크를 찾음) — DONE-DEVICE 적립. 커밋 `1cd3731`
 - [x] 📱 **W1-G. KPI 정직화** (구 W1-10 / 리뷰 #19) — `visible`·`aligned`의 `fixedLayout != null ||` 제거(**둘 다 셔터를 막지 않는데 성공만 보고하고 있었다**), `sgd_`→`gid_`, `resolved` 0→NULL, `aligned`는 래치 중 null. 기기 DB 직접 확인. 커밋 `fe60b9e`
 - [x] 📱 **W1-H. 분석 스레드 안전성** (구 W1-9 / 리뷰 #18) — 메인 스레드 변경을 커맨드 큐로 분석 스레드에 위임. **JVM 스트레스 테스트가 수정 전 3/3 재현**(`ConcurrentModificationException`, 그리고 오버레이 `RectN(NaN,NaN,NaN,NaN)`), 수정 후 5/5 통과
-- [ ] **W1-I. 전면 카메라 가이드 미러** (구 W1-5 / 리뷰 #9) — 전면 렌즈 실기기 확인이 필요해 별도 단위
+- [x] 📱 **W1-I. 전면 카메라 가이드 미러** (구 W1-5 / 리뷰 #9) — `OverlayMapping` 신설로 분석공간(미러함)과 구도공간(미러 안 함)을 분리. 결함 재주입 시 가드 3건 실패 확인. 기기 SM-G970N: `third_left`(밤거리) 프리셋이 후면·전면 **양쪽 모두 왼쪽 1/3**에 브래킷을 그림(후면 중심 360/1080, 전면 브래킷 우측 팔 479)
 - [ ] **W1-J. 브래킷 폭 25% 축소** (구 W1-7 / 리뷰 M1) — B 모듈 수정 승인 필요. 프레임 종횡비를 `guide/`로 배관해야 해서 시그니처 변경
-- [ ] **W1-K. matchScore의 15%가 상수** (리뷰 M2) — `observedHorizonPosition = 0.5f`를 `SceneStructureAnalyzer` 실측값으로. `ShutterFrame`에 필드 추가 필요
+- [x] 📱 **W1-K. matchScore의 15%가 상수** (리뷰 M2) — `ShutterFrame.observedHorizonPosition` 신설 후 두 호출부에 배선. **`MatchScoreCalculator.kt`(B 인접 파일)는 무접촉** — 파라미터를 이미 받고 있어 호출부만 고치면 됐다. 미검출 시 타깃 값으로 폴백해 감점하지 않는다(`SceneProposalEngine`의 기존 관례와 동일). 결함 재주입으로 가드 검증. 기기: 촬영·`final_match_score` 기록 정상 — 다만 빈 벽이라 수평선 미검출이어서 **이 수정의 효과는 기기에서 분리 관측되지 않았다**
 - ~~구 W1-3의 `choose()`/`match()` 자격 모순 (리뷰 #16)~~ — **이미 해소**. 재확인 결과 상류가 양쪽을 같은 술어로 통일했고 반박 에이전트도 확인
 - ~~구 W1-6의 마스크 필수·레이블 화이트리스트 (리뷰 #11 후반)~~ — **이미 해소**. 상류가 `isValidBox`/`isSemanticMatch`로 분리
 - ~~구 W1-4의 D17 로딩 표시 (L-2)~~ — **미착수**. 아래 부록 C 참조
@@ -192,6 +201,34 @@ onboarding-polish:
 - [ ] W3-5. **§7-2 폴리싱** — 차콜 다크 테마 전 화면 통일 점검, 문구 검수(전문 용어 0건), HUD는 릴리스에서 개발자 제스처로만, 스플래시·아이콘, Pretendard 폰트 번들
 - [ ] W3-6. (리드 판정 필요 시) 기동 후 첫 프리뷰 제스처 유실 — 기존 "별건" 판정 유지. `surfaceProvider` 바인딩 전환은 이번 범위에서 착수하지 않되, W3 중 기기 회차에서 비용(앱 실행당 탭 1회)이 시연에 문제되는지 리드가 재판정
 - 웨이브 완료 기준: 감사 그린 + clean 빌드 1회 + 기기 확인 적립 소진 시작
+
+### W3.5 — 앨범 전체 사진 접근 (오너 결정 2026-07-28, 신규)
+
+**목표: 앨범이 기기 사진 라이브러리를 직접 읽는다. 한 장씩 가져오는 방식을 대체한다.**
+
+오너 결정: *"추후에 앨범의 전체사진권한을 얻도록 할거여서 가져오기 버튼은 필요없음."* `가져오기` 칩은 제거했고(디자인 2e에 없었고 §4-3 컷으로 명분도 사라졌다), 그 자리를 이 항목이 대신한다.
+
+- [ ] **W3.5-1. 권한 모델 확정** — 이 앱은 minSdk 26 / targetSdk 35이므로 API 레벨마다 다른 권한이 필요하다. `core/AppPermissions.kt`가 이미 분기를 갖고 있으니 그 위에 얹는다.
+
+  | Android | 권한 | 성격 |
+  |---|---|---|
+  | 12 이하 (API ≤32) | `READ_EXTERNAL_STORAGE` | 전체 접근 |
+  | 13 (API 33) | `READ_MEDIA_IMAGES` | 전체 접근 |
+  | 14+ (API 34+) | `READ_MEDIA_IMAGES` + `READ_MEDIA_VISUAL_USER_SELECTED` | **부분 접근이 기본** — 사용자가 고른 사진만 보일 수 있다 |
+
+  **부분 접근이 이 기능의 핵심 함정이다.** API 34+에서 사용자가 "일부만 허용"을 고르면 라이브러리 전체가 아니라 선택분만 읽힌다. 그 상태를 "권한 거부"로 취급하면 안 되고, "전부 보여주는 중"인 척해도 안 된다. 어느 쪽인지 판정하는 로직을 **순수 함수로 뽑아** JVM 테스트를 붙인다(`PhotoAccessLevel.of(sdkInt, granted)` → `FULL` / `PARTIAL` / `NONE`).
+
+- [ ] **W3.5-2. MediaStore 질의** — `MediaStore.Images` 커서를 페이지 단위로 읽어 앨범 그리드에 붙인다. 현재 그리드는 `capturesDao().getRecent(60)` 한 번으로 끝나므로, 수천 장을 한 번에 읽지 않도록 페이징이 필요하다. 커서 조회·정렬·페이지 경계 계산은 `android.*` 없이 뽑아 테스트한다.
+
+- [ ] **W3.5-3. 앱 촬영본과 기기 사진의 관계 결정** — ⚠️ **오너 판단 필요.** 앨범에 (a) 기기 사진만, (b) 앱 촬영본만, (c) 둘을 한 그리드에 섞어서, (d) 탭으로 분리 중 무엇을 보여줄지. 앱 촬영본은 `captures` 행과 `conditions_json`을 갖고 있어 §4-1 자동 보정이 걸리지만 기기 사진은 그것이 없다 — **같은 그리드에 섞으면 탭했을 때 동작이 달라진다.** 결정 없이 착수하지 않는다.
+
+- [ ] **W3.5-4. 기기 사진을 열었을 때의 보정 경로** — `conditions_json`이 없으므로 기울기를 모른다. `CaptureConditions.NONE`으로 0도 보정이 되는 것은 이미 동작하지만(§4-1 배선 시 확인), **광학 보정(자동 노출)은 여전히 걸린다.** 사용자가 고르지 않은 보정이 남의 사진에 적용되는 것이 맞는지 판단이 필요하다.
+
+- [ ] **W3.5-5. `가져오기` 잔재 처분** — `CaptureRepository.importGalleryPhoto`는 이제 프로덕션 호출자가 0이다. 이 기능이 그것을 대체하므로 L-3에 따라 삭제하거나 폐기 표시한다. **W3.5 착수 전까지는 남겨 둔다** — 새 경로가 서기 전에 지우면 되돌릴 곳이 없다.
+
+- [ ] 📱 **완료 기준**: 실기기에서 권한 부여 → 기기 사진이 그리드에 보임 → 한 장 탭 → 보정 화면 정상 → 저장. API 34+ 기기가 없으므로 **부분 접근 경로는 이번 범위에서 실기기 확인 불가**이며, 그 사실을 부록 C에 기록한다.
+
+---
 
 ### W4 — 시연 준비 (리드 전담)
 
@@ -242,7 +279,7 @@ onboarding-polish:
 ## 부록 C. 알려진 위험 (이번 범위 밖 — 수정하지 않음)
 
 - **서버**: edit-job 조회 IDOR(`edit_jobs.py:333`) · 워커 `UnboundLocalError` 영구 종료(`comfyui_provider.py:166`) · 클린 체크아웃 기동 실패(`main.py:24`) · 보존 기간 3종(`worker.py:124` 외) · `/references/analyze` 무제한 업로드 — 전부 `review_report.md` §1 기준. 서버를 실기동할 일이 생기면 이 목록을 먼저 볼 것
-- **D17 로딩 표시 미구현** (L-2) — 레이아웃을 탐색 중이라는 것을 알리는 표시가 없다. `ui/` 전체에 `CircularProgressIndicator` 0건. W1에서 미착수로 남았고 W3-5 폴리싱에서 처리한다
+- ~~**D17 로딩 표시 미구현** (L-2)~~ → **이미 구현돼 있다.** [CameraOverlay.kt:216](app/src/main/java/com/gamdo/app/ui/camera/CameraOverlay.kt#L216)이 `layoutState is GuideLayoutState.Searching`일 때 `CircularProgressIndicator`를 그린다. 담당 B가 `3e251dd`에서 만든 것을 리드가 `d99b149`로 병합해 놓고 이 기록을 갱신하지 않았다 — **감사(2026-07-28)가 잡았다.** W3-5에서 있는 것을 다시 만들 뻔했다
 - **앱(수용된 위반·갭)**: **D13 수동 레이아웃 선택 미제공** — 2026-07-28 상류 병합에서 담당 B가 만든 상단 `구도` 드롭다운(재탐색 + 레이아웃 목록)을 제거하고 재탐색만 프리뷰 버튼으로 일원화했다(오너 결정). `CameraViewModel.selectManualLayout`과 `availableManualLayouts`는 완성된 채 호출자 0으로 남아 있으므로, 되살릴 때는 UI만 붙이면 된다 · 기동 후 첫 프리뷰 제스처 유실(W3-6에서 재판정) · `captures.problems_json` 항상 `"[]"`(§1-5 컷 귀결) · FK 미선언·인덱스 DESC 미지정(스키마 동결 유지 — 시연 후 마이그레이션 과제로 이월) · §7-1 안내 갱신 250ms vs 목표 200ms(`alignedEnterFrames`×fps 산술 — W3-1 외부화 후 값 튜닝으로 해소 시도)
 
 ## 부록 D. 시연 후 과제 (이 플랜이 끝나도 남는 것)

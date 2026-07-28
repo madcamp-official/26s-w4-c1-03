@@ -7,10 +7,12 @@ import com.gamdo.app.detect.ImageMetrics
 import com.gamdo.app.detect.ProblemCode
 import com.gamdo.app.detect.ProblemDiagnoser
 import kotlinx.serialization.json.Json
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -55,6 +57,65 @@ class EditPlanTest {
             fade = 0.25,
         ),
     )
+
+    // ------------------- §4-1 자동 보정: 프리뷰와 저장의 일치 (review_report #6)
+
+    /**
+     * The property the result screen's auto-correction depends on.
+     *
+     * O-2 applies levelling + auto exposure when a photo is opened, with no visible
+     * control. The preview is rendered from a downscaled decode and the save path
+     * re-renders from a much larger one — if those two derived *different* plans,
+     * the file the user gets would not be the photo they approved.
+     *
+     * `EditPlan.withProcessingMaxSide` exists for exactly this and its KDoc says so:
+     * only the working resolution moves, "the colour maths is resolution-independent
+     * and the geometry is scaled by the renderer". This pins that promise, because
+     * the wiring in `ResultScreen` is built on it and cannot itself run on the JVM.
+     */
+    @Test
+    fun `changing the working resolution changes nothing but the working resolution`() {
+        val preview = planFor(tiltDeg = 3.2f)
+        val save = preview.withProcessingMaxSide(4096)
+
+        assertEquals(4096, save.processingMaxSide)
+        assertSame("geometry must not be re-derived", preview.geometry, save.geometry)
+        assertSame("optical must not be re-derived", preview.optical, save.optical)
+        assertArrayEquals(preview.opticalMatrix, save.opticalMatrix, 0f)
+        assertArrayEquals(preview.toneLut, save.toneLut)
+    }
+
+    /**
+     * With no preset the plan is levelling + optical only — the style stage has to
+     * be an identity, or "auto-correct on open" would silently apply a look the
+     * user never chose. O-2 approved geometry and optical, nothing else.
+     */
+    @Test
+    fun `the auto-correction plan carries no style`() {
+        val plan = planFor(tiltDeg = 2.5f, preset = null)
+
+        assertTrue(
+            "styleMatrix must be an identity when no preset is applied",
+            isIdentityColorMatrix(plan.styleMatrix),
+        )
+        assertNull("no preset means no preset id on the record", plan.style.presetId)
+    }
+
+    /**
+     * And it has to actually do something, or wiring it in would be theatre. A
+     * tilted capture must produce a non-zero levelling rotation.
+     */
+    @Test
+    fun `a tilted capture produces a levelling rotation`() {
+        val level = planFor(tiltDeg = 0f)
+        val tilted = planFor(tiltDeg = 4f)
+
+        assertEquals(0f, level.geometry.rotationDeg, 0.001f)
+        assertTrue(
+            "a 4-degree tilt must be corrected, got ${tilted.geometry.rotationDeg}",
+            kotlin.math.abs(tilted.geometry.rotationDeg) > 0.5f,
+        )
+    }
 
     private fun planFor(
         width: Int = 4000,

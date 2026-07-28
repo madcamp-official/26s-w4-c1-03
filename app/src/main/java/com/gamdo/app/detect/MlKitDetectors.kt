@@ -110,6 +110,14 @@ class MlKitPoseDetector : PoseDetector {
  * supplies tracking IDs across frames; classification is coarse and used only as
  * an internal hint, never as user-facing certainty.
  */
+@Deprecated(
+    message = "물체 검출은 EfficientDet 하나로 간다(오너 결정 O-6, 2026-07-28). 이 검출기는 " +
+        "EfficientDet이 중앙에서 아무것도 못 찾을 때마다 **추가로** 돌면서 프레임을 527ms로 " +
+        "만들고 있었다 — 빈 벽·천장처럼 흔한 장면에서 그 조건이 항상 참이라 기기 로그에서 " +
+        "분석 39프레임에 39회 호출됐다. 되살리려면 1회당 EfficientDet의 3배 비용을 " +
+        "어디서 낼지부터 정해야 한다. `ObjectDetectorWiringTest`가 재배선을 막는다.",
+    level = DeprecationLevel.ERROR,
+)
 class MlKitObjectDetector(
     private val multiScaleConfig: MultiScaleObjectDetectionConfig = MultiScaleObjectDetectionConfig(),
 ) : ObjectSceneDetector {

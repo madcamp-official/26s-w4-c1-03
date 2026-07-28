@@ -29,13 +29,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
-import com.gamdo.app.data.CardFeature
+import com.gamdo.app.data.CardEntry
 import com.gamdo.app.data.ProfileEngine
 import com.gamdo.app.data.StyleProfileResult
 import com.gamdo.app.data.toPresetProfile
@@ -47,54 +46,12 @@ import com.gamdo.app.ui.theme.OnDarkMuted
 import com.gamdo.app.ui.theme.OnSage
 import com.gamdo.app.ui.theme.Sage
 import kotlinx.coroutines.launch
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 
 // 5, not 3: P1_Plan_1.md §6-2 says "5장 이상", and ProfileEngine derives per-dimension
 // confidence from the variance of the picks — three samples cannot make §6-2's criterion
 // ("두 카드 세트가 스타일 스트립 상위 순서를 다르게 만듦") hold reliably. Lead ruling,
 // .claude/TEAM.md §8. Every UI string interpolates this constant, so nothing says "3장".
 private const val MIN_PICKS = 5
-private val CardJson = Json { ignoreUnknownKeys = true }
-
-@Serializable
-private data class CardCatalog(val v: Int = 1, val cards: List<OnboardingCard>)
-
-@Serializable
-private data class OnboardingCard(
-    val id: String,
-    val thumbnail: String,
-    val subjectScale: Float,
-    val subjectPosition: Float,
-    val headroom: Float,
-    val backgroundRatio: Float,
-    val brightness: Float,
-    val lightType: String,
-    val colorTemperature: Float,
-    val saturation: Float,
-    val contrast: Float,
-    val sharpness: Float,
-    val grain: Float,
-    val candidness: Float,
-    val framing: Float,
-) {
-    fun toFeature() = CardFeature(
-        id = id,
-        subjectScale = subjectScale,
-        subjectPosition = subjectPosition,
-        headroom = headroom,
-        backgroundRatio = backgroundRatio,
-        brightness = brightness,
-        lightType = lightType,
-        colorTemperature = colorTemperature,
-        saturation = saturation,
-        contrast = contrast,
-        sharpness = sharpness,
-        grain = grain,
-        candidness = candidness,
-        framing = framing,
-    )
-}
 
 /**
  * t2 onboarding: pick preferences → save on-device profile → enter camera.
@@ -102,13 +59,12 @@ private data class OnboardingCard(
  */
 @Composable
 fun OnboardingScreen(container: AppContainer, onFinished: () -> Unit) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // Single reader of assets/cards.json — CardRepository, not a second inline parser
+    // (was a duplicate CardCatalog/OnboardingCard model here that could drift from
+    // CardRepositoryTest's contract without anything noticing).
     val cards = remember {
-        runCatching {
-            val text = context.assets.open("cards.json").bufferedReader().use { it.readText() }
-            CardJson.decodeFromString<CardCatalog>(text).cards
-        }.getOrDefault(emptyList())
+        runCatching { container.cardRepository.loadBundledCardEntries() }.getOrDefault(emptyList())
     }
     val presets = remember {
         runCatching { container.presetRepository.loadBundledPresets() }.getOrDefault(emptyList())
@@ -138,7 +94,7 @@ fun OnboardingScreen(container: AppContainer, onFinished: () -> Unit) {
         } else {
             runCatching {
                 ProfileEngine.build(
-                    cards.filter { it.id in selectedIds }.map { it.toFeature() },
+                    cards.filter { it.feature.id in selectedIds }.map { it.feature },
                     presetProfiles,
                 )
             }.getOrNull()
@@ -229,7 +185,7 @@ private fun CatalogUnavailableStep(onSkip: () -> Unit) {
 }
 
 @Composable
-private fun PickStep(cards: List<OnboardingCard>, onNext: (Set<String>) -> Unit) {
+private fun PickStep(cards: List<CardEntry>, onNext: (Set<String>) -> Unit) {
     // Saved for the same reason the parent's picks are: rotating the phone
     // half-way through choosing photos used to clear every tick silently.
     var selectedCsv by rememberSaveable { mutableStateOf("") }
@@ -265,14 +221,14 @@ private fun PickStep(cards: List<OnboardingCard>, onNext: (Set<String>) -> Unit)
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            items(cards, key = { it.id }) { card ->
-                val isSelected = card.id in selected
+            items(cards, key = { it.feature.id }) { card ->
+                val isSelected = card.feature.id in selected
                 PickCard(
                     card = card,
                     selected = isSelected,
                     onToggle = {
                         selectedCsv = selected.toMutableSet()
-                            .apply { if (isSelected) remove(card.id) else add(card.id) }
+                            .apply { if (isSelected) remove(card.feature.id) else add(card.feature.id) }
                             .joinToString(",")
                     },
                 )
@@ -290,7 +246,7 @@ private fun PickStep(cards: List<OnboardingCard>, onNext: (Set<String>) -> Unit)
 }
 
 @Composable
-private fun PickCard(card: OnboardingCard, selected: Boolean, onToggle: () -> Unit) {
+private fun PickCard(card: CardEntry, selected: Boolean, onToggle: () -> Unit) {
     Box(
         modifier = Modifier
             .aspectRatio(3f / 4f)

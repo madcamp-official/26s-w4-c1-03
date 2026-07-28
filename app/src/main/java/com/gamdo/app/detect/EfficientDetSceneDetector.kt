@@ -2,11 +2,14 @@ package com.gamdo.app.detect
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.util.Log
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetector
+
+private const val TAG = "EfficientDet"
 
 /** Runtime knobs for the bundled mobile object detector. */
 data class EfficientDetSceneDetectorConfig(
@@ -38,32 +41,64 @@ data class EfficientDetSceneDetectorConfig(
 class EfficientDetSceneDetector(
     context: Context,
     private val config: EfficientDetSceneDetectorConfig = EfficientDetSceneDetectorConfig(),
-) : CustomSceneDetector {
+) : CustomSceneDetector, AcceleratorReporting {
     private data class DetectorHandle(
         val detector: ObjectDetector,
-        val delegate: Delegate,
+        val accelerator: DetectorAccelerator,
     )
 
     override val modelId: String = "efficientdet-lite0-coco-int8"
 
     private val appContext = context.applicationContext
-    private val fallback = MlKitObjectDetector(config.fallback)
-    private var detector: DetectorHandle? = if (config.enabled) {
-        runCatching { createDetector(appContext) }.getOrNull()
-    } else {
-        null
-    }
+
+    // B 모듈 리드 승인 수정(오너 결정 O-6, 2026-07-28): 델리게이트 결과를 기록으로 남긴다.
+    //
+    // preferGpu는 기본값도 true이고 guide_config.json도 true인데, 기기에서는 GPU가
+    // 잡히지 않는다. 검출기 init 부근 logcat에 "Created TensorFlow Lite XNNPACK
+    // delegate for CPU."만 있고 GPU 쪽 대응 문구는 한 번도 나오지 않는다 — 그 문구
+    // ("Created TensorFlow Lite delegate for GPU.")는 실제로 배포된
+    // libmediapipe_tasks_vision_jni.so 안에 문자열로 들어 있으므로, 없다는 사실
+    // 자체가 GPU 초기화가 성공하지 못했다는 증거다.
+    //
+    // 문제는 강등이 아니라 침묵이다. 예전 코드는 델리게이트 실패를 지역 변수
+    // lastFailure에 담았다가 뒤 델리게이트가 성공하는 순간 그대로 버렸고, 최종
+    // 델리게이트는 아무도 읽지 않는 private 필드에만 남았다. 프레임당 가장 비싼
+    // 단계가 GPU인지 CPU인지를 서드파티 로그의 노드 수로 추측해야 했다.
+    @Volatile
+    private var acceleratorState: DetectorAcceleratorReport =
+        DetectorAcceleratorReport(requestedGpu = config.preferGpu, accelerator = null)
+
+    override val acceleratorReport: DetectorAcceleratorReport
+        get() = acceleratorState
+
+    // B 모듈 리드 승인 수정(오너 결정 O-6, 2026-07-28): ML Kit 폴백 제거.
+    //
+    // 이 클래스는 EfficientDet이 아무것도 찾지 못하거나 찾은 것이 화면 중앙에
+    // 없을 때 MlKitObjectDetector를 **추가로** 돌렸다. 빈 벽·천장·책상처럼
+    // 중앙에 물체가 없는 장면에서는 그 조건이 항상 참이라, 두 검출기가 매 프레임
+    // 모두 실행됐다. 기기 로그로 확정: 분석 프레임 39개에 ML Kit 호출도 39회.
+    //
+    // 대가는 프레임당 431.9ms(객체 단계)와 527ms(전체) — 가이드가 초당 1.9회만
+    // 갱신됐다. 게다가 폴백 호출마다 cropBitmapProvider가 YUV→RGB 변환·회전·복사로
+    // 3.5MB를 새로 만든다.
+    //
+    // EfficientDet은 1회당 ML Kit의 약 3배 빠르다. 문제는 느린 검출기를 **교체한**
+    // 것이 아니라 **조건부로 덧붙인** 것이었다.
+    private var detector: DetectorHandle? = if (config.enabled) createInitialDetector() else null
     private var frameCount = 0
     private var sequenceId = 0L
 
     override fun detectBatch(frame: AnalysisFrame): ObjectDetectionBatch {
-        if (detector == null) return fallback.detectBatch(frame)
+        // Every "cannot run" path now reports **no objects** rather than reaching for
+        // a second detector. An empty batch is the honest answer, and the guide
+        // degrades to the person/preset path rather than to a 527ms frame.
+        if (detector == null) return empty()
         frameCount++
         sequenceId++
-        val provider = frame.cropBitmapProvider ?: return fallback.detectBatch(frame)
+        val provider = frame.cropBitmapProvider ?: return empty()
         val full = runCatching {
             provider(ObjectDetectionCrop(0f, 0f, 1f, 1f))
-        }.getOrNull() ?: return fallback.detectBatch(frame)
+        }.getOrNull() ?: return empty()
 
         val primary = try {
             filterRawCandidates(detectBitmap(full))
@@ -91,35 +126,68 @@ class EfficientDetSceneDetector(
             primary
         }
 
-        return if (merged.isEmpty() || merged.none(::isCentralCandidate)) {
-            fallback.detectBatch(frame).copy(isFresh = true, sequenceId = sequenceId)
-        } else {
-            ObjectDetectionBatch(merged, isFresh = true, sequenceId = sequenceId)
-        }
+        return ObjectDetectionBatch(merged, isFresh = true, sequenceId = sequenceId)
     }
+
+    private fun empty() = ObjectDetectionBatch(emptyList(), isFresh = true, sequenceId = sequenceId)
 
     override fun detect(frame: AnalysisFrame): List<ObjectObservation> = detectBatch(frame).objects
 
     override fun close() {
         detector?.detector?.close()
-        fallback.close()
     }
 
-    private fun createDetector(context: Context): DetectorHandle {
-        val delegates = if (config.preferGpu) listOf(Delegate.GPU, Delegate.CPU) else listOf(Delegate.CPU)
+    /**
+     * Tries each accelerator in [DetectorAcceleratorReport.plan] order and
+     * **records which one won**.
+     *
+     * Every early-exit here writes [acceleratorState] before returning, because
+     * the one thing this method must not do is leave the app guessing. The GPU
+     * throwable is logged where it happens rather than accumulated into a
+     * `lastFailure` that a later success discards — that discard is why a GPU
+     * refusal has never once been visible in a device capture.
+     */
+    private fun createInitialDetector(): DetectorHandle? {
+        var gpuFailure: Throwable? = null
         var lastFailure: Throwable? = null
-        delegates.forEach { delegate ->
-            runCatching {
-                return createDetector(context, delegate)
-            }.onFailure { lastFailure = it }
+        DetectorAcceleratorReport.plan(config.preferGpu).forEach { accelerator ->
+            val attempt = runCatching { createDetector(appContext, accelerator) }
+            val handle = attempt.getOrNull()
+            if (handle != null) {
+                acceleratorState = DetectorAcceleratorReport(
+                    requestedGpu = config.preferGpu,
+                    accelerator = accelerator,
+                    gpuFailure = gpuFailure?.describe(),
+                )
+                // The line that makes the delegate discoverable without decompiling.
+                // Info, not debug: this is true of release builds too, and a reader
+                // chasing a slow frame should not have to rebuild to see it.
+                Log.i(TAG, acceleratorState.format())
+                return handle
+            }
+            lastFailure = attempt.exceptionOrNull()
+            if (accelerator == DetectorAccelerator.GPU) {
+                gpuFailure = lastFailure
+                Log.w(TAG, "GPU delegate refused — falling back to CPU", gpuFailure)
+            }
         }
-        throw IllegalStateException("Unable to initialize EfficientDet detector", lastFailure)
+        acceleratorState = DetectorAcceleratorReport(
+            requestedGpu = config.preferGpu,
+            accelerator = null,
+            gpuFailure = gpuFailure?.describe(),
+        )
+        Log.w(
+            TAG,
+            "EfficientDet unavailable — object detection is off this session. " + acceleratorState.format(),
+            lastFailure,
+        )
+        return null
     }
 
-    private fun createDetector(context: Context, delegate: Delegate): DetectorHandle {
+    private fun createDetector(context: Context, accelerator: DetectorAccelerator): DetectorHandle {
         val base = BaseOptions.builder()
             .setModelAssetPath(config.modelAsset)
-            .setDelegate(delegate)
+            .setDelegate(accelerator.toDelegate())
             .build()
         val options = ObjectDetector.ObjectDetectorOptions.builder()
             .setBaseOptions(base)
@@ -127,7 +195,7 @@ class EfficientDetSceneDetector(
             .setMaxResults(config.maxResults)
             .setScoreThreshold(config.minimumConfidence)
             .build()
-        return DetectorHandle(ObjectDetector.createFromOptions(context, options), delegate)
+        return DetectorHandle(ObjectDetector.createFromOptions(context, options), accelerator)
     }
 
     private fun shouldRunCenterCrop(primary: List<ObjectObservation>): Boolean {
@@ -158,18 +226,32 @@ class EfficientDetSceneDetector(
     /**
      * Some Samsung GPU drivers can initialise the delegate successfully and
      * still fail on a later GL buffer map. Keep that native failure inside the
-     * detector seam: retry once on CPU, then let the regular ML Kit fallback
-     * handle this frame rather than crashing the CameraX analyzer thread.
+     * detector seam: retry once on CPU, then report no objects for this frame
+     * rather than crashing the CameraX analyzer thread.
      */
     private fun detectBitmap(bitmap: Bitmap): List<ObjectObservation> {
         val current = detector ?: return emptyList()
         val first = runCatching { detectBitmap(current.detector, bitmap) }
         if (first.isSuccess) return first.getOrThrow()
 
-        if (current.delegate == Delegate.GPU) {
+        if (current.accelerator == DetectorAccelerator.GPU) {
+            val cause = first.exceptionOrNull()
+            Log.w(TAG, "GPU inference failed mid-session — rebuilding the detector on CPU", cause)
             runCatching { current.detector.close() }
-            detector = runCatching { createDetector(appContext, Delegate.CPU) }.getOrNull()
-            detector?.let { cpu ->
+            val rebuilt = runCatching { createDetector(appContext, DetectorAccelerator.CPU) }.getOrNull()
+            detector = rebuilt
+            // Both outcomes are recorded, including the bad one. `rebuilt == null`
+            // used to leave `detector` null for the rest of the session with no log
+            // at all: object detection simply stopped and every later frame returned
+            // an empty batch that looked like "nothing in view".
+            acceleratorState = DetectorAcceleratorReport(
+                requestedGpu = config.preferGpu,
+                accelerator = if (rebuilt != null) DetectorAccelerator.CPU else null,
+                gpuFailure = cause?.describe(),
+                runtimeDowngrade = true,
+            )
+            Log.w(TAG, acceleratorState.format())
+            rebuilt?.let { cpu ->
                 return runCatching { detectBitmap(cpu.detector, bitmap) }.getOrDefault(emptyList())
             }
         }
@@ -202,11 +284,20 @@ class EfficientDetSceneDetector(
         }
     }
 
-    private fun isCentralCandidate(candidate: ObjectObservation): Boolean {
-        val dx = candidate.box.centerX - 0.5f
-        val dy = candidate.box.centerY - 0.5f
-        return dx * dx + dy * dy <= 0.36f * 0.36f
+
+    private fun DetectorAccelerator.toDelegate(): Delegate = when (this) {
+        DetectorAccelerator.GPU -> Delegate.GPU
+        DetectorAccelerator.CPU -> Delegate.CPU
     }
+
+    /**
+     * Class name plus message. `toString()` alone would be enough for most
+     * throwables, but MediaPipe's `MediaPipeException` prints a multi-line graph
+     * dump, and this string has to survive into a one-line log record and a HUD
+     * field.
+     */
+    private fun Throwable.describe(): String =
+        "${this::class.java.name}: ${message?.lineSequence()?.firstOrNull()?.trim().orEmpty()}"
 
     private fun ObjectObservation.remapFrom(crop: ObjectDetectionCrop): ObjectObservation = copy(
         box = NormalizedBox(

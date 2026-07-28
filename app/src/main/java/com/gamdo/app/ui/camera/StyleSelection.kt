@@ -60,3 +60,62 @@ fun resolveStyleIndex(
 
     return 0
 }
+
+/**
+ * §6-2 onboarding → camera: reorders the style strip so the profile's recommended
+ * styles come first, in rank order.
+ *
+ * Everything the profile ranks is hoisted to the front in the order given;
+ * everything else keeps its `presets.json` order behind them. That fallback tail is
+ * the point — a ranking is a *preference*, not a filter, so a preset the profile has
+ * no opinion about must still be reachable, and must not shuffle relative to its
+ * neighbours just because something ahead of it moved.
+ *
+ * Ids in [rankedIds] that match nothing are skipped rather than treated as an error.
+ * They are expected: `presets.json` is the offline fallback for `GET /presets`, so a
+ * ranking computed against one catalogue can outlive it, exactly as a stored
+ * `style_preset_id` can (see [resolveStyleIndex]). A ranking that has gone entirely
+ * stale therefore degrades to "no reordering", which is the pre-§6-2 strip.
+ *
+ * ## The trap this is built around
+ *
+ * Reordering a list that something else is indexing into is how a user silently ends
+ * up on a style they did not pick. This screen is already safe from that — the active
+ * style is carried as an **id** through `sessionStyleId` and [resolveStyleIndex], and
+ * the index is re-derived from it on every recomposition — and it must stay that way.
+ * The caller's contract is therefore: derive the id list from the **reordered**
+ * presets, and let [resolveStyleIndex] recompute the index. Anything that caches an
+ * index across a reorder is a bug, which is what `StyleSelectionTest` pins.
+ *
+ * Returns [items] itself when there is nothing to do, so an unchanged strip is
+ * cheap and reference-stable for `remember`.
+ *
+ * @param items the presets in catalogue order.
+ * @param rankedIds recommended ids, best first. Empty means "no opinion".
+ * @param idOf the stable id of an item — the same id space as [rankedIds].
+ */
+fun <T> orderByRank(
+    items: List<T>,
+    rankedIds: List<String>,
+    idOf: (T) -> String,
+): List<T> {
+    if (rankedIds.isEmpty() || items.size < 2) return items
+
+    val ids = items.map(idOf)
+    val hoisted = BooleanArray(items.size)
+    val ordered = ArrayList<T>(items.size)
+
+    for (rankedId in rankedIds) {
+        val index = ids.indexOf(rankedId)
+        // indexOf pins duplicates to their first occurrence, and `hoisted` makes a
+        // repeated id a no-op, so a malformed ranking can neither drop an item nor
+        // list one twice. Every item appears exactly once, always.
+        if (index < 0 || hoisted[index]) continue
+        hoisted[index] = true
+        ordered += items[index]
+    }
+    for (index in items.indices) {
+        if (!hoisted[index]) ordered += items[index]
+    }
+    return ordered
+}
