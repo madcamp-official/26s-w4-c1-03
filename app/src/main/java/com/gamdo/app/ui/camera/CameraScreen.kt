@@ -1125,8 +1125,9 @@ private fun GuideDebugBadge(debug: GuideDebug) {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(
-                text = "aligned=%s visible=%s · IoU %.2f · match %.2f".format(
+                text = "aligned=%s visible=%s · IoU %.2f · match %.2f · fixed=%s".format(
                     debug.aligned, debug.visible, debug.iou, debug.matchScore,
+                    debug.fixedLayoutId ?: "none",
                 ),
                 color = if (debug.aligned) Sage else OnDarkHigh,
                 fontSize = 10.sp,

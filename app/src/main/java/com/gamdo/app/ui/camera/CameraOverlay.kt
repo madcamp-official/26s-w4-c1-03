@@ -3,11 +3,8 @@ package com.gamdo.app.ui.camera
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -23,7 +20,6 @@ import com.gamdo.app.guide.OverlayProjection
 import com.gamdo.app.guide.RectN
 import com.gamdo.app.guide.LayoutGuideLevel
 import com.gamdo.app.guide.SceneLayoutGuide
-import com.gamdo.app.guide.SlotMatchStatus
 import com.gamdo.app.ui.theme.Sage
 import kotlin.math.abs
 import kotlin.math.max
@@ -59,9 +55,11 @@ data class OverlayData(
  * 3. **horizon** — a line that tilts with device roll, red while tilted and
  *    straight + sage once level.
  *
- * The colour change remains the framing feedback. A short confidence prompt is
- * rendered only for the explicit scene-layout-guide flow; there is still no
- * arrow, match gauge, or auto-capture.
+ * When the scene resolver has latched a fixed layout, its template slots are
+ * drawn **as well** — one flat colour, no occupancy state (D2).
+ *
+ * The colour change on the bracket is the entire framing feedback. There is no
+ * arrow, no match gauge, no auto-capture, and no text instruction of any kind.
  *
  * Flicker damping lives upstream in `OverlayStabilizer`, not here: this composable
  * renders whatever state it is handed, so the §0.4 harness measuring the state
@@ -114,32 +112,43 @@ fun CameraOverlay(
 
         // Fixed-layout mode is intentionally independent from detections: the
         // slots stay on screen while the user moves the camera or the objects.
+        //
+        // D2: slots carry no occupancy state. One colour, always — a slot that
+        // turns sage when "filled" is a match gauge with a different shape, and
+        // the occupancy machinery that used to feed one is gone (see the commit
+        // that removed FixedLayoutSlotMatcher).
         data.layoutGuide?.fixedLayout?.let { fixed ->
+            val slotRadius = CornerRadius(22.dp.toPx(), 22.dp.toPx())
             fixed.template.slots.forEach { slot ->
-                val match = fixed.matches.firstOrNull { it.slotId == slot.id }
                 val slotRect = mapRect(slot.bounds, data, vw, vh)
-                val color = when (match?.status) {
-                    SlotMatchStatus.FILLED -> Sage
-                    SlotMatchStatus.DETECTING -> Color.White.copy(alpha = 0.72f)
-                    SlotMatchStatus.EMPTY, null -> Color.White.copy(alpha = 0.9f)
-                }
                 drawRoundRect(
-                    color = color.copy(alpha = fixed.template.opacity),
+                    color = Color.White.copy(alpha = fixed.template.opacity),
                     topLeft = Offset(slotRect.left, slotRect.top),
                     size = Size(slotRect.width, slotRect.height),
+                    // Without this the fill squares off and pokes out past the
+                    // rounded stroke below.
+                    cornerRadius = slotRadius,
                 )
                 drawRoundRect(
-                    color = color,
+                    color = Color.White.copy(alpha = 0.9f),
                     topLeft = Offset(slotRect.left, slotRect.top),
                     size = Size(slotRect.width, slotRect.height),
-                    cornerRadius = CornerRadius(22.dp.toPx(), 22.dp.toPx()),
+                    cornerRadius = slotRadius,
                     style = Stroke(width = 2.dp.toPx()),
                 )
             }
         }
 
+        // The preset guide draws **alongside** any fixed layout, not instead of it.
+        //
+        // These three sites used to be gated on `fixedLayout == null`. Because the
+        // auto resolver latches a template within ~3 frames of almost any scene and
+        // never un-latches inside a session, that gate silently deleted the bracket,
+        // silhouette, foot marker and outline for the rest of the session — the six
+        // style presets all collapsed to the same rectangle. Owner decision
+        // (remain_plan, 2026-07-28): the two vocabularies coexist.
         data.guide
-            ?.takeIf { it.visible && data.layoutGuide?.fixedLayout == null }
+            ?.takeIf { it.visible }
             ?.let { guide ->
             val frame = mapRect(guide.targetFrame, data, vw, vh)
             // D2-3: the colour swap is the entire success feedback.
@@ -157,7 +166,7 @@ fun CameraOverlay(
                 drawFootMarker(ghost, guideColor)
             }
 
-            data.layoutGuide?.takeIf { it.level != LayoutGuideLevel.STATIC && it.fixedLayout == null }?.let { layout ->
+            data.layoutGuide?.takeIf { it.level != LayoutGuideLevel.STATIC }?.let { layout ->
                 if (layout.outline.size >= 3) {
                     val points = layout.outline.map { point ->
                         mapNormalized(point.x, point.y, data, vw, vh)
@@ -180,9 +189,7 @@ fun CameraOverlay(
                 }
             }
 
-            if (data.layoutGuide?.fixedLayout == null) {
-                drawTargetBracket(frame, guideColor)
-            }
+            drawTargetBracket(frame, guideColor)
         }
 
         if (!showDetections) return@Canvas
@@ -208,19 +215,11 @@ fun CameraOverlay(
         }
         }
 
-        overlay?.layoutGuide?.prompt?.let { prompt ->
-            val message = when (prompt) {
-                com.gamdo.app.guide.LayoutGuidePrompt.FIND_SUBJECT -> "피사체를 화면에 보여주세요"
-                com.gamdo.app.guide.LayoutGuidePrompt.HOLD_STEADY -> "피사체를 잠시 유지해주세요"
-            }
-            Text(
-                text = message,
-                color = Color.White.copy(alpha = 0.92f),
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 18.dp),
-            )
-        }
+        // D2: no instruction copy. Two Text() prompts ("피사체를 화면에 보여주세요",
+        // "피사체를 잠시 유지해주세요") used to render here with no debug gate. D2
+        // bans text instructions outright and AGENTS.md 규칙 3 makes D2 재론 불가,
+        // so they are gone rather than gated. `LayoutGuidePrompt` is retired with
+        // them — a field nobody reads is how they come back.
     }
 }
 
