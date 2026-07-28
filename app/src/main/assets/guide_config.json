@@ -56,6 +56,16 @@
     "multiScaleCropScale": 1.60,
     "multiScaleSmallObjectAreaRatio": 0.05,
     "multiScaleDuplicateIou": 0.55,
+    "overlapDetailEnabled": true,
+    "overlapDetailEveryFrames": 4,
+    "overlapDetailCropScale": 1.85,
+    "overlapDetailMinimumAreaRatio": 0.09,
+    "overlapDetailMinimumSpan": 0.34,
+    "overlapDetailFocusWidth": 0.70,
+    "overlapDetailFocusHeight": 0.68,
+    "overlapDetailMaxChildAreaRatio": 0.72,
+    "overlapDetailChildDuplicateIou": 0.45,
+    "overlapDetailCacheFrames": 8,
     "performanceTargetFps": 8
   }
 }
