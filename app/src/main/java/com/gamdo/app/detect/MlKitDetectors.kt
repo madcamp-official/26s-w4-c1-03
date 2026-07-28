@@ -109,56 +109,37 @@ class MlKitObjectDetector(
             .build(),
     )
     private val multiScaleScheduler = MultiScaleFallbackScheduler(multiScaleConfig)
-    private val overlapDetailScheduler = OverlapDetailPassScheduler(multiScaleConfig)
-    private val overlapDetailRefiner = OverlapDetailRefiner(multiScaleConfig)
 
     override fun detect(frame: AnalysisFrame): List<ObjectObservation> {
         val image = frame.image as? InputImage ?: return emptyList()
         val primary = detectInput(image, frame.width, frame.height)
-        val cropBitmapProvider = frame.cropBitmapProvider
-        val detailParent = MultiScaleObjectDetection.overlapDetailCandidate(primary, multiScaleConfig)
-        val detailCrop = detailParent
-            ?.takeIf { cropBitmapProvider != null && overlapDetailScheduler.shouldRun(it) }
-            ?.let { parent -> ObjectDetectionCrop.around(parent.box, multiScaleConfig.overlapDetailCropScale) }
-        val fallbackCrop = if (
-            detailCrop == null && cropBitmapProvider != null && multiScaleScheduler.shouldRun(primary)
+        val crop = ObjectDetectionCrop.centered(multiScaleConfig.cropScale)
+        val cropBitmap = if (
+            frame.cropBitmapProvider != null && multiScaleScheduler.shouldRun(primary)
         ) {
-            ObjectDetectionCrop.centered(multiScaleConfig.cropScale)
-        } else {
-            null
-        }
-        val crop = detailCrop ?: fallbackCrop
-        val cropBitmap = if (crop != null && cropBitmapProvider != null) {
-            runCatching { cropBitmapProvider.invoke(crop) }
+            runCatching { frame.cropBitmapProvider.invoke(crop) }
                 .onFailure { Log.w(TAG, "multi-scale crop unavailable", it) }
                 .getOrNull()
         } else {
             null
         }
         val observations = if (cropBitmap == null) {
-            overlapDetailRefiner.reuseConfirmed(primary, detailParent) ?: primary
+            primary
         } else {
             try {
                 val cropped = detectInput(InputImage.fromBitmap(cropBitmap, 0), cropBitmap.width, cropBitmap.height)
-                val remapped = MultiScaleObjectDetection.remapToFrame(cropped, requireNotNull(crop))
-                if (detailParent != null && detailCrop != null) {
-                    overlapDetailRefiner.recordDetailPass(primary, detailParent, remapped)
-                } else {
-                    MultiScaleObjectDetection.mergeDistinct(
-                        primary = primary,
-                        secondary = remapped,
-                        duplicateIou = multiScaleConfig.duplicateIou,
-                    )
-                }
+                MultiScaleObjectDetection.mergeDistinct(
+                    primary = primary,
+                    secondary = MultiScaleObjectDetection.remapToFrame(cropped, crop),
+                    duplicateIou = multiScaleConfig.duplicateIou,
+                )
             } finally {
                 if (!cropBitmap.isRecycled) cropBitmap.recycle()
             }
         }
         Log.d(
             TAG,
-            "objects=${observations.size} primary=${primary.size} " +
-                "crop=${if (cropBitmap != null) "on" else "off"} " +
-                "detail=${if (detailCrop != null) "on" else "off"} " +
+            "objects=${observations.size} primary=${primary.size} crop=${if (cropBitmap != null) "on" else "off"} " +
                 observations.joinToString(separator = ";") { objectObservation ->
                     "box=${objectObservation.box.left.formatBox()},${objectObservation.box.top.formatBox()}," +
                         "${objectObservation.box.right.formatBox()},${objectObservation.box.bottom.formatBox()} " +
@@ -201,8 +182,6 @@ class MlKitObjectDetector(
 
     override fun close() {
         multiScaleScheduler.reset()
-        overlapDetailScheduler.reset()
-        overlapDetailRefiner.reset()
         detector.close()
     }
 }

@@ -77,16 +77,6 @@ data class ObjectGuideConfigJson(
     val multiScaleCropScale: Float = 1.60f,
     val multiScaleSmallObjectAreaRatio: Float = 0.05f,
     val multiScaleDuplicateIou: Float = 0.55f,
-    val overlapDetailEnabled: Boolean = true,
-    val overlapDetailEveryFrames: Int = 4,
-    val overlapDetailCropScale: Float = 1.85f,
-    val overlapDetailMinimumAreaRatio: Float = 0.09f,
-    val overlapDetailMinimumSpan: Float = 0.34f,
-    val overlapDetailFocusWidth: Float = 0.70f,
-    val overlapDetailFocusHeight: Float = 0.68f,
-    val overlapDetailMaxChildAreaRatio: Float = 0.72f,
-    val overlapDetailChildDuplicateIou: Float = 0.45f,
-    val overlapDetailCacheFrames: Int = 8,
     val performanceTargetFps: Int = 8,
 ) {
     init {
@@ -100,15 +90,6 @@ data class ObjectGuideConfigJson(
         require(multiScaleCropScale in 1.10f..2.0f)
         require(multiScaleSmallObjectAreaRatio in 0f..1f)
         require(multiScaleDuplicateIou in 0f..1f)
-        require(overlapDetailEveryFrames >= 1)
-        require(overlapDetailCropScale in 1.10f..2.5f)
-        require(overlapDetailMinimumAreaRatio in 0f..1f)
-        require(overlapDetailMinimumSpan in 0f..1f)
-        require(overlapDetailFocusWidth in 0.20f..1f)
-        require(overlapDetailFocusHeight in 0.20f..1f)
-        require(overlapDetailMaxChildAreaRatio in 0f..1f)
-        require(overlapDetailChildDuplicateIou in 0f..1f)
-        require(overlapDetailCacheFrames >= 1)
         require(focusRegionWidth in 0.20f..1f)
         require(focusRegionHeight in 0.20f..1f)
         require(performanceTargetFps >= 1)
@@ -144,16 +125,6 @@ data class ObjectGuideConfigJson(
             cropScale = multiScaleCropScale,
             smallObjectAreaRatio = multiScaleSmallObjectAreaRatio,
             duplicateIou = multiScaleDuplicateIou,
-            overlapDetailEnabled = overlapDetailEnabled,
-            overlapDetailEveryFrames = overlapDetailEveryFrames,
-            overlapDetailCropScale = overlapDetailCropScale,
-            overlapDetailMinimumAreaRatio = overlapDetailMinimumAreaRatio,
-            overlapDetailMinimumSpan = overlapDetailMinimumSpan,
-            overlapDetailFocusWidth = overlapDetailFocusWidth,
-            overlapDetailFocusHeight = overlapDetailFocusHeight,
-            overlapDetailMaxChildAreaRatio = overlapDetailMaxChildAreaRatio,
-            overlapDetailChildDuplicateIou = overlapDetailChildDuplicateIou,
-            overlapDetailCacheFrames = overlapDetailCacheFrames,
         )
 }
 

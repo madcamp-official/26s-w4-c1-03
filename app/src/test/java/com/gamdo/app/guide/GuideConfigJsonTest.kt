@@ -118,9 +118,6 @@ class GuideConfigJsonTest {
         assertTrue(multiScale.enabled)
         assertEquals(6, multiScale.fallbackEveryFrames)
         assertEquals(1.60f, multiScale.cropScale, 0.0001f)
-        assertTrue(multiScale.overlapDetailEnabled)
-        assertEquals(4, multiScale.overlapDetailEveryFrames)
-        assertEquals(1.85f, multiScale.overlapDetailCropScale, 0.0001f)
     }
 
     @Test
