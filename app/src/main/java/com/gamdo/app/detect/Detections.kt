@@ -1,5 +1,6 @@
 package com.gamdo.app.detect
 
+import android.graphics.Bitmap
 import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageProxy
 import com.google.mlkit.vision.common.InputImage
@@ -98,11 +99,14 @@ data class DetectionResult(
  * A camera frame handed to the detector interfaces. [image] is an opaque platform
  * image (ML Kit `InputImage` at runtime; `null` in tests) so the interface stays
  * ML-Kit-free. [width]/[height] are the upright dimensions used to normalize.
+ * [cropBitmapProvider] is invoked synchronously on the analysis thread while its
+ * source ImageProxy is still open; it is absent in JVM tests and normal callers.
  */
 data class AnalysisFrame(
     val image: Any?,
     val width: Int,
     val height: Int,
+    val cropBitmapProvider: ((ObjectDetectionCrop) -> Bitmap?)? = null,
 )
 
 /**
@@ -111,7 +115,9 @@ data class AnalysisFrame(
  * dimensions are used for normalization. Returns null if the frame has no image.
  */
 @ExperimentalGetImage
-fun ImageProxy.toAnalysisFrame(): AnalysisFrame? {
+fun ImageProxy.toAnalysisFrame(
+    cropBitmapProvider: ((ObjectDetectionCrop) -> Bitmap?)? = null,
+): AnalysisFrame? {
     val media = image ?: return null
     val rotation = imageInfo.rotationDegrees
     val rotated = rotation == 90 || rotation == 270
@@ -121,5 +127,6 @@ fun ImageProxy.toAnalysisFrame(): AnalysisFrame? {
         image = InputImage.fromMediaImage(media, rotation),
         width = uprightWidth,
         height = uprightHeight,
+        cropBitmapProvider = cropBitmapProvider,
     )
 }

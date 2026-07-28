@@ -102,3 +102,27 @@ object MultiScaleObjectDetection {
         return if (union <= 0f) 0f else intersection / union
     }
 }
+
+/** Limits the expensive crop pass while allowing the first empty scene to recover immediately. */
+class MultiScaleFallbackScheduler(
+    private val config: MultiScaleObjectDetectionConfig,
+) {
+    private var remainingFrames = 0
+
+    fun shouldRun(primary: List<ObjectObservation>): Boolean {
+        if (!MultiScaleObjectDetection.shouldRunFallback(primary, config)) {
+            remainingFrames = 0
+            return false
+        }
+        if (remainingFrames > 0) {
+            remainingFrames--
+            return false
+        }
+        remainingFrames = (config.fallbackEveryFrames - 1).coerceAtLeast(0)
+        return true
+    }
+
+    fun reset() {
+        remainingFrames = 0
+    }
+}

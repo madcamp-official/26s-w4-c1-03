@@ -94,7 +94,9 @@ class MlKitPoseDetector : PoseDetector {
  * supplies tracking IDs across frames; classification is coarse and used only as
  * an internal hint, never as user-facing certainty.
  */
-class MlKitObjectDetector : ObjectSceneDetector {
+class MlKitObjectDetector(
+    private val multiScaleConfig: MultiScaleObjectDetectionConfig = MultiScaleObjectDetectionConfig(),
+) : ObjectSceneDetector {
 
     private val detector = ObjectDetection.getClient(
         ObjectDetectorOptions.Builder()
@@ -106,15 +108,54 @@ class MlKitObjectDetector : ObjectSceneDetector {
             .enableClassification()
             .build(),
     )
+    private val multiScaleScheduler = MultiScaleFallbackScheduler(multiScaleConfig)
 
     override fun detect(frame: AnalysisFrame): List<ObjectObservation> {
         val image = frame.image as? InputImage ?: return emptyList()
-        val w = frame.width.toFloat().coerceAtLeast(1f)
-        val h = frame.height.toFloat().coerceAtLeast(1f)
+        val primary = detectInput(image, frame.width, frame.height)
+        val crop = ObjectDetectionCrop.centered(multiScaleConfig.cropScale)
+        val cropBitmap = if (
+            frame.cropBitmapProvider != null && multiScaleScheduler.shouldRun(primary)
+        ) {
+            runCatching { frame.cropBitmapProvider.invoke(crop) }
+                .onFailure { Log.w(TAG, "multi-scale crop unavailable", it) }
+                .getOrNull()
+        } else {
+            null
+        }
+        val observations = if (cropBitmap == null) {
+            primary
+        } else {
+            try {
+                val cropped = detectInput(InputImage.fromBitmap(cropBitmap, 0), cropBitmap.width, cropBitmap.height)
+                MultiScaleObjectDetection.mergeDistinct(
+                    primary = primary,
+                    secondary = MultiScaleObjectDetection.remapToFrame(cropped, crop),
+                    duplicateIou = multiScaleConfig.duplicateIou,
+                )
+            } finally {
+                if (!cropBitmap.isRecycled) cropBitmap.recycle()
+            }
+        }
+        Log.d(
+            TAG,
+            "objects=${observations.size} primary=${primary.size} crop=${if (cropBitmap != null) "on" else "off"} " +
+                observations.joinToString(separator = ";") { objectObservation ->
+                    "box=${objectObservation.box.left.formatBox()},${objectObservation.box.top.formatBox()}," +
+                        "${objectObservation.box.right.formatBox()},${objectObservation.box.bottom.formatBox()} " +
+                        "label=${objectObservation.labels.firstOrNull() ?: "unknown"}"
+                },
+        )
+        return observations
+    }
+
+    private fun detectInput(image: InputImage, width: Int, height: Int): List<ObjectObservation> {
+        val w = width.toFloat().coerceAtLeast(1f)
+        val h = height.toFloat().coerceAtLeast(1f)
         val detected = runCatching { Tasks.await(detector.process(image)) }
             .onFailure { Log.w(TAG, "object detect failed", it) }
             .getOrDefault(emptyList())
-        val observations = detected.mapNotNull { item ->
+        return detected.mapNotNull { item ->
                 val bounds = item.boundingBox
                 val labels = item.labels.map { it.text }.filter { it.isNotBlank() }
                 // A missing label is not a 0.5-confidence classification. Keep
@@ -137,19 +178,12 @@ class MlKitObjectDetector : ObjectSceneDetector {
                     category = category,
                 )
             }
-        Log.d(
-            TAG,
-            "objects=${observations.size} raw=${detected.size} " +
-                observations.joinToString(separator = ";") { objectObservation ->
-                    "box=${objectObservation.box.left.formatBox()},${objectObservation.box.top.formatBox()}," +
-                        "${objectObservation.box.right.formatBox()},${objectObservation.box.bottom.formatBox()} " +
-                        "label=${objectObservation.labels.firstOrNull() ?: "unknown"}"
-                },
-        )
-        return observations
     }
 
-    override fun close() = detector.close()
+    override fun close() {
+        multiScaleScheduler.reset()
+        detector.close()
+    }
 }
 
 private fun Float.formatBox(): String = "%.2f".format(this)

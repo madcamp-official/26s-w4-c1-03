@@ -74,8 +74,10 @@ import com.gamdo.app.camera.TiltSensor
 import com.gamdo.app.camera.ZoomBounds
 import com.gamdo.app.camera.centerCropToRatio
 import com.gamdo.app.camera.brightnessSample
+import com.gamdo.app.camera.croppedForObjectDetection
 import com.gamdo.app.camera.sceneFrameSignals
 import com.gamdo.app.camera.scaledToMaxSide
+import com.gamdo.app.camera.toAnalysisBitmap
 import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.GuideKpiRepository
@@ -177,7 +179,7 @@ fun CameraScreen(
             // every processed frame gives the 3/5 tracker enough real evidence
             // to meet the two-second first-layout target without a queue.
             objectDetector = ThrottledObjectSceneDetector(
-                MlKitObjectDetector(),
+                MlKitObjectDetector(guideConfig.objectGuide.toMultiScaleObjectDetectionConfig()),
                 refreshEveryFrames = guideConfig.objectGuide.objectRefreshEveryFrames,
             ),
             subjectSegmenter = ThrottledSubjectSceneSegmenter(
@@ -322,7 +324,16 @@ fun CameraScreen(
                 targetFps = 12,
                 onStats = viewModel::onStats,
                 onFrame = { imageProxy ->
-                    imageProxy.toAnalysisFrame()?.let { frame ->
+                    imageProxy.toAnalysisFrame { crop ->
+                        // Called synchronously by MlKitObjectDetector before this
+                        // analyzer returns and FrameAnalyzer closes imageProxy.
+                        val bitmap = imageProxy.toAnalysisBitmap()
+                        try {
+                            bitmap.croppedForObjectDetection(crop)
+                        } finally {
+                            if (!bitmap.isRecycled) bitmap.recycle()
+                        }
+                    }?.let { frame ->
                         val result = scene.detect(frame)
                         val subjectBox = result.toSceneObservation().subjectBox
                         viewModel.onFrameAnalyzed(

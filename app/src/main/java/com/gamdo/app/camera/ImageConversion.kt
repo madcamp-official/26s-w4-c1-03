@@ -1,6 +1,7 @@
 package com.gamdo.app.camera
 
 import android.graphics.Bitmap
+import com.gamdo.app.detect.ObjectDetectionCrop
 import androidx.camera.core.ImageProxy
 import com.gamdo.app.detect.BrightnessSample
 import com.gamdo.app.detect.NormalizedBox
@@ -15,8 +16,22 @@ import com.gamdo.app.guide.SceneFrameSignals
  * the orientation. ML Kit's InputImage path (which can skip the RGB copy) is
  * added alongside this in §2-2.
  */
-fun ImageProxy.toAnalysisBitmap(): Bitmap =
-    toBitmap().rotated(imageInfo.rotationDegrees)
+fun ImageProxy.toAnalysisBitmap(): Bitmap {
+    val source = toBitmap()
+    val rotated = source.rotated(imageInfo.rotationDegrees)
+    if (rotated !== source && !source.isRecycled) source.recycle()
+    return rotated
+}
+
+/** Creates an upright RGB crop for the occasional small-object fallback pass. */
+fun Bitmap.croppedForObjectDetection(crop: ObjectDetectionCrop): Bitmap? {
+    val left = (crop.left * width).toInt().coerceIn(0, width - 1)
+    val top = (crop.top * height).toInt().coerceIn(0, height - 1)
+    val right = (crop.right * width).toInt().coerceIn(left + 1, width)
+    val bottom = (crop.bottom * height).toInt().coerceIn(top + 1, height)
+    return if (right <= left || bottom <= top) null
+    else Bitmap.createBitmap(this, left, top, right - left, bottom - top)
+}
 
 /**
  * Mean luma of the frame in 0..1, sampled every [stride] pixels from the Y plane

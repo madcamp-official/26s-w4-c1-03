@@ -59,4 +59,19 @@ class MultiScaleObjectDetectionTest {
 
         assertEquals(listOf(1, 3), merged.mapNotNull { it.trackingId })
     }
+
+    @Test
+    fun `scheduler runs immediately then rate limits repeated tiny-scene crops`() {
+        val scheduler = MultiScaleFallbackScheduler(
+            MultiScaleObjectDetectionConfig(fallbackEveryFrames = 3),
+        )
+
+        assertTrue(scheduler.shouldRun(emptyList()))
+        assertFalse(scheduler.shouldRun(emptyList()))
+        assertFalse(scheduler.shouldRun(emptyList()))
+        assertTrue(scheduler.shouldRun(emptyList()))
+
+        assertFalse(scheduler.shouldRun(listOf(observation(1, 0.1f, 0.1f, 0.8f, 0.8f))))
+        assertTrue(scheduler.shouldRun(emptyList()))
+    }
 }
