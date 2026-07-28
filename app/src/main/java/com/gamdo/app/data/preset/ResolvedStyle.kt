@@ -3,6 +3,7 @@ package com.gamdo.app.data.preset
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
@@ -18,6 +19,7 @@ data class ResolvedStyle(
     val referenceScope: ReferenceScope = ReferenceScope.BOTH,
     val strength: Double = DEFAULT_STRENGTH,
     val referenceHash: String? = null,
+    val referenceSlots: List<ReferenceCompositionSlot> = emptyList(),
 ) {
     enum class Source { PRESET, REFERENCE }
     enum class ReferenceScope { BOTH, COMPOSITION, COLOR }
@@ -65,6 +67,18 @@ data class ResolvedStyle(
                 blurStrength = colorTarget.number("blurStrength", 0.0),
                 fade = colorTarget.number("fade", 0.0),
             )
+            val slots = target["layoutSlots"]?.jsonArray.orEmpty().mapNotNull { element ->
+                val slot = element.jsonObject
+                val bounds = slot["bounds"]?.jsonArray?.mapNotNull { it.jsonPrimitive.doubleOrNull }
+                    ?.takeIf { it.size == 4 }
+                    ?: return@mapNotNull null
+                ReferenceCompositionSlot(
+                    role = slot.string("role") ?: "object",
+                    visualKind = slot.string("visualKind") ?: "generic_object",
+                    bounds = bounds,
+                    semanticHint = slot.string("semanticHint"),
+                )
+            }.take(4)
             return ResolvedStyle(
                 source = Source.REFERENCE,
                 sourceKey = hash,
@@ -74,10 +88,18 @@ data class ResolvedStyle(
                 referenceScope = scope,
                 strength = strength,
                 referenceHash = hash,
+                referenceSlots = slots,
             ).clamped()
         }
     }
 }
+
+data class ReferenceCompositionSlot(
+    val role: String,
+    val visualKind: String,
+    val bounds: List<Double>,
+    val semanticHint: String? = null,
+)
 
 private fun JsonObject.string(key: String): String? = this[key]?.jsonPrimitive?.content
 

@@ -10,6 +10,14 @@ enum class SlotRole { PERSON, OBJECT }
 
 enum class SlotVisualKind { PERSON_SILHOUETTE, GENERIC_OBJECT, CUP, PLATE }
 
+/** Server-derived, normalized slot used only when a reference is active. */
+data class ReferenceTargetSlot(
+    val role: SlotRole,
+    val visualKind: SlotVisualKind,
+    val bounds: RectN,
+    val semanticHint: String? = null,
+)
+
 /** The two capture ratios supported by GAMDO's camera contract. */
 enum class GuideViewportAspect { FOUR_TO_FIVE, ONE_TO_ONE }
 
@@ -54,6 +62,29 @@ data class LayoutTemplate(
     }
 
     companion object {
+        fun fromReference(
+            id: String,
+            slots: List<ReferenceTargetSlot>,
+            horizonY: Float? = null,
+            viewportAspect: GuideViewportAspect = GuideViewportAspect.FOUR_TO_FIVE,
+            opacity: Float = 0.30f,
+        ): LayoutTemplate? {
+            val normalized = slots.take(4).mapIndexed { index, slot ->
+                LayoutSlot(
+                    id = "reference_${index + 1}",
+                    expectedCategory = null,
+                    bounds = slot.bounds.clamped(),
+                    role = slot.role,
+                    visualKind = slot.visualKind,
+                    preferredAspectRatio = slot.bounds.width / slot.bounds.height.coerceAtLeast(0.01f),
+                    semanticHint = slot.semanticHint,
+                )
+            }
+            return normalized.takeIf { it.isNotEmpty() }?.let {
+                LayoutTemplate(id, it, horizonY, opacity, viewportAspect)
+            }
+        }
+
         fun cafeTable(viewportAspect: GuideViewportAspect = GuideViewportAspect.FOUR_TO_FIVE): LayoutTemplate = LayoutTemplate(
             id = "cafe_table_v1",
             horizonY = 0.62f,
@@ -198,7 +229,7 @@ object LayoutTemplateCatalog {
     }
 }
 
-enum class LayoutSource { AUTO, MANUAL }
+enum class LayoutSource { AUTO, MANUAL, REFERENCE }
 
 sealed interface GuideLayoutState {
     data object Searching : GuideLayoutState

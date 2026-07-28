@@ -1,9 +1,3 @@
-// 이 파일 전체가 remain_plan O-1로 컷된 §5-1 경로다. 같은 컷으로 폐기된 ExifSanitizer를
-// import·호출하는 것은 옳다 — 레퍼런스 경로가 부활하면 D8-5 가드도 함께 부활해야 하므로
-// 둘의 결합은 끊지 않고 통째로 폐기 상태에 둔다. 파일 수준 suppress인 이유는 클래스 수준
-// 어노테이션이 import 문까지는 덮지 못하기 때문이다.
-@file:Suppress("DEPRECATION_ERROR")
-
 package com.gamdo.app.data
 
 import android.content.Context
@@ -20,6 +14,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 
 /**
@@ -44,6 +39,15 @@ fun interface ReferenceImageSanitizer {
 }
 
 /**
+ * Re-encodes a picker result before upload so orientation and all metadata are
+ * normalized at the app boundary. JVM tests use the no-op default; Android
+ * production wiring supplies the bitmap implementation from [ReferenceImagePreprocessor].
+ */
+fun interface ReferenceImagePreprocessor {
+    fun normalize(file: File)
+}
+
+/**
  * §5-1 resolution result — either a `cached_references` hit or a fresh
  * `/references/analyze` response, normalized to the same shape either way.
  * [targetComposition] and [colorTarget] are what §5-2 (wave 2, out of scope in
@@ -52,9 +56,12 @@ fun interface ReferenceImageSanitizer {
  */
 data class ReferenceResolution(
     val contentHash: String,
+    val analysisVersion: Int,
     val analysis: JsonObject,
     val targetComposition: JsonObject,
     val colorTarget: JsonObject,
+    val compositionAvailable: Boolean,
+    val colorAvailable: Boolean,
     val fromCache: Boolean,
 )
 
@@ -83,18 +90,13 @@ data class ReferenceResolution(
  * stored. [resolveBytes] is the Context-free core where the orchestration (and
  * the tests) actually live.
  */
-@Deprecated(
-    message = "§5-1 레퍼런스 따라 찍기는 remain_plan O-1로 컷됐다. AppContainer에서 배선을 " +
-        "걷어냈으므로 프로덕션 생성자 호출이 0이다. 되살리려면 카메라 진입점·업로드 고지 " +
-        "문구·D8-5 가드가 함께 필요하고, 그건 오너 결정 사항이다. remain_plan §1 참조.",
-    level = DeprecationLevel.ERROR,
-)
 class ReferenceRepository(
     private val cachedReferencesDao: CachedReferencesDao,
     private val analysisClient: ReferenceAnalysisClient,
     private val json: Json,
     private val cacheDir: File,
     private val sanitizer: ReferenceImageSanitizer = ReferenceImageSanitizer(ExifSanitizer::sanitizeFile),
+    private val preprocessor: ReferenceImagePreprocessor = ReferenceImagePreprocessor { },
 ) {
 
     suspend fun activate(
@@ -103,6 +105,10 @@ class ReferenceRepository(
         scope: ResolvedStyle.ReferenceScope = ResolvedStyle.ReferenceScope.BOTH,
         strength: Double = ResolvedStyle.DEFAULT_STRENGTH,
     ): ResolvedStyle {
+        require(scope == ResolvedStyle.ReferenceScope.COLOR || resolution.compositionAvailable) {
+            "composition is unavailable for this reference; choose color-only"
+        }
+        require(resolution.colorAvailable) { "color analysis is unavailable" }
         settings.saveActiveReference(resolution.contentHash, scope.name.lowercase(), strength)
         cleanupCache(resolution.contentHash)
         return ResolvedStyle.fromReference(
@@ -121,6 +127,16 @@ class ReferenceRepository(
         cachedReferencesDao.trimInactive(MAX_CACHE_ENTRIES, active)
     }
 
+    suspend fun active(settings: SettingsRepository): ReferenceResolution? {
+        val hash = settings.getActiveReferenceHash() ?: return null
+        return cachedReferencesDao.get(hash)?.toResolution(json, fromCache = true)
+    }
+
+    suspend fun clearActive(settings: SettingsRepository) {
+        settings.clearActiveReference()
+        cleanupCache()
+    }
+
     /**
      * §5-1 entry point: [uri] just came back from the system photo picker.
      * Reads the picked bytes through [context]'s resolver and delegates to
@@ -128,7 +144,19 @@ class ReferenceRepository(
      * on-device (DONE-DEVICE).
      */
     suspend fun resolve(context: Context, uri: Uri): ReferenceResolution = withContext(Dispatchers.IO) {
-        val bytes = context.applicationContext.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        val bytes = context.applicationContext.contentResolver.openInputStream(uri)?.use { input ->
+            val output = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(16 * 1024)
+            var total = 0
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                total += read
+                require(total <= MAX_INPUT_BYTES) { "reference image exceeds the 20MB limit" }
+                output.write(buffer, 0, read)
+            }
+            output.toByteArray()
+        }
             ?: error("cannot open reference image: $uri")
         resolveBytes(bytes)
     }
@@ -141,7 +169,9 @@ class ReferenceRepository(
      */
     suspend fun resolveBytes(imageBytes: ByteArray): ReferenceResolution = withContext(Dispatchers.IO) {
         val hash = sha256Hex(imageBytes)
-        cachedReferencesDao.get(hash)?.let { cached ->
+        cachedReferencesDao.get(hash)
+            ?.takeIf { it.analysisV >= CURRENT_ANALYSIS_VERSION }
+            ?.let { cached ->
             return@withContext cached.toResolution(json, fromCache = true)
         }
 
@@ -149,6 +179,7 @@ class ReferenceRepository(
         val tempFile = File(cacheDir, "$hash.jpg")
         try {
             tempFile.writeBytes(imageBytes)
+            preprocessor.normalize(tempFile)
             // D8-5 blocker: unconditional and not reorderable — every byte that
             // leaves the device through analyzeReference() must go through the
             // sanitizer first.
@@ -170,6 +201,7 @@ class ReferenceRepository(
                 // one in `NetworkDaos.kt`, is the documentation of record until
                 // the lead applies it there directly.
                 paletteJson = json.encodeToString(JsonObject.serializer(), response.colorTarget),
+                analysisV = response.analysisVersion,
                 createdAt = System.currentTimeMillis(),
             )
             cachedReferencesDao.upsert(entry)
@@ -180,6 +212,8 @@ class ReferenceRepository(
     }
 
     companion object {
+        const val CURRENT_ANALYSIS_VERSION = 3
+        const val MAX_INPUT_BYTES = 20 * 1024 * 1024
         const val MAX_CACHE_ENTRIES = 20
         const val CACHE_MAX_AGE_MS = 30L * 24L * 60L * 60L * 1000L
         /** SHA-256 of [bytes] as lowercase hex — the `cached_references` cache key. */
@@ -192,11 +226,17 @@ class ReferenceRepository(
     }
 }
 
-private fun CachedReferences.toResolution(json: Json, fromCache: Boolean): ReferenceResolution =
-    ReferenceResolution(
+private fun CachedReferences.toResolution(json: Json, fromCache: Boolean): ReferenceResolution {
+    val target = json.parseToJsonElement(targetJson).jsonObject
+    val color = json.parseToJsonElement(paletteJson).jsonObject
+    return ReferenceResolution(
         contentHash = contentHash,
+        analysisVersion = analysisV,
         analysis = json.parseToJsonElement(analysisJson).jsonObject,
-        targetComposition = json.parseToJsonElement(targetJson).jsonObject,
-        colorTarget = json.parseToJsonElement(paletteJson).jsonObject,
+        targetComposition = target,
+        colorTarget = color,
+        compositionAvailable = target["layoutSlots"]?.jsonArray?.isNotEmpty() == true,
+        colorAvailable = color.isNotEmpty(),
         fromCache = fromCache,
     )
+}

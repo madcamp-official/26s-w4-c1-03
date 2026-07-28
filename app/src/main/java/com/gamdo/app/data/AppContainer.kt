@@ -4,8 +4,10 @@ import android.content.Context
 import androidx.room.Room
 import com.gamdo.app.BuildConfig
 import com.gamdo.app.core.DeviceIdStore
+import com.gamdo.app.core.AndroidReferenceImagePreprocessor
 import com.gamdo.app.data.local.GamdoDatabase
 import com.gamdo.app.data.network.GamdoApiClient
+import java.io.File
 import kotlinx.serialization.json.Json
 
 /**
@@ -70,10 +72,14 @@ class AppContainer(context: Context) {
         json = json,
     )
 
-    // §5-1 레퍼런스 배선은 remain_plan O-1(컷)로 걷어냈다. 컨테이너 프로퍼티는 그 자체가
-    // "이 경로는 살아 있다"는 선언이라, 폐기 표시만 붙이고 생성은 남겨 두면 신호가 엇갈린다.
-    // ReferenceRepository·ExifSanitizer는 @Deprecated(ERROR)로 남아 있으니 되살릴 때 여기에
-    // 다시 붙이면 된다.
+    /** AI 2 reference analysis: stateless server response + local content-hash cache. */
+    val referenceRepository: ReferenceRepository = ReferenceRepository(
+        cachedReferencesDao = database.cachedReferencesDao(),
+        analysisClient = ReferenceAnalysisClient { file -> apiClient.analyzeReference(file) },
+        json = json,
+        cacheDir = File(appContext.cacheDir, "reference-analysis"),
+        preprocessor = AndroidReferenceImagePreprocessor(),
+    )
 
     val settingsRepository: SettingsRepository = SettingsRepository(database.appSettingsDao())
 

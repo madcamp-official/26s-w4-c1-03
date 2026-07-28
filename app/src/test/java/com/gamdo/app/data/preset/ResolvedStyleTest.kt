@@ -22,6 +22,13 @@ class ResolvedStyleTest {
                 put("subjectPosition", "third_left")
                 put("horizonPosition", 0.42)
                 put("subjectScaleRange", buildJsonArray { add(0.2); add(0.5) })
+                put("layoutSlots", kotlinx.serialization.json.buildJsonArray {
+                    add(buildJsonObject {
+                        put("role", "object")
+                        put("visualKind", "generic_object")
+                        put("bounds", buildJsonArray { add(0.1); add(0.2); add(0.3); add(0.4) })
+                    })
+                })
             },
             colorTarget = buildJsonObject {
                 put("colorTemperature", 6100)
@@ -37,6 +44,7 @@ class ResolvedStyleTest {
         assertEquals("third_left", style.composition.subjectPosition)
         assertEquals(6100.0, style.color.colorTemperature, 0.01)
         assertEquals(1.0, style.strength, 0.01)
+        assertEquals(1, style.referenceSlots.size)
     }
 
     @Test

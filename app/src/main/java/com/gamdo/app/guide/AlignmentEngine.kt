@@ -41,6 +41,8 @@ data class StyleTarget(
     val backgroundRatioRange: ClosedFloatingPointRange<Float>? = 0.25f..0.85f,
     /** Optional fixed-layout ID; null keeps the legacy single-subject contract. */
     val layoutTemplateId: String? = null,
+    /** Reference-derived slots are screen-fixed and take precedence over auto search. */
+    val referenceSlots: List<ReferenceTargetSlot> = emptyList(),
 )
 
 data class GuideConfig(

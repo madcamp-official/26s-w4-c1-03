@@ -2,6 +2,7 @@ package com.gamdo.app.guide
 
 import com.gamdo.app.data.preset.StylePreset
 import com.gamdo.app.data.preset.ResolvedStyle
+import com.gamdo.app.data.preset.ReferenceCompositionSlot
 import com.gamdo.app.detect.FrameFeatures
 import kotlin.math.abs
 
@@ -89,6 +90,11 @@ fun ResolvedStyle.toStyleTarget(): StyleTarget {
         "third_right" -> 2f / 3f
         else -> 0.5f
     }
+    val referenceSlots = if (referenceScope == ResolvedStyle.ReferenceScope.COLOR) {
+        emptyList()
+    } else {
+        referenceSlots.mapNotNull { it.toReferenceTargetSlot() }
+    }
     return StyleTarget(
         targetAspectRatio = aspect,
         subjectScaleRange = scale,
@@ -98,7 +104,29 @@ fun ResolvedStyle.toStyleTarget(): StyleTarget {
         horizonPosition = composition.horizonPosition.toFloat(),
         cameraPitchRange = pitch,
         backgroundRatioRange = composition.backgroundRatio.toFloatRange(default = 0.25f..0.85f),
+        referenceSlots = referenceSlots,
     )
+}
+
+private fun ReferenceCompositionSlot.toReferenceTargetSlot(): ReferenceTargetSlot? {
+    val values = bounds.takeIf { it.size == 4 } ?: return null
+    val rect = RectN(
+        values[0].toFloat(),
+        values[1].toFloat(),
+        (values[0] + values[2]).toFloat(),
+        (values[1] + values[3]).toFloat(),
+    ).clamped()
+    val role = when (role.lowercase()) {
+        "person" -> SlotRole.PERSON
+        else -> SlotRole.OBJECT
+    }
+    val kind = when (visualKind.lowercase()) {
+        "person_silhouette" -> SlotVisualKind.PERSON_SILHOUETTE
+        "cup", "drinkware" -> SlotVisualKind.CUP
+        "plate", "food_tableware" -> SlotVisualKind.PLATE
+        else -> SlotVisualKind.GENERIC_OBJECT
+    }
+    return ReferenceTargetSlot(role, kind, rect, semanticHint)
 }
 
 private fun List<Double>.toFloatRange(default: ClosedFloatingPointRange<Float>): ClosedFloatingPointRange<Float> =
