@@ -117,7 +117,8 @@ fun CameraOverlay(
         // slots stay on screen while the user moves the camera or the objects.
         data.layoutGuide?.fixedLayout?.let { fixed ->
             fixed.template.slots.forEach { slot ->
-                val slotRect = mapRect(slot.bounds, data, vw, vh)
+                // Template slots are authored as screen positions, not detections.
+                val slotRect = mapRect(slot.bounds, data, vw, vh, OverlayMapping.Space.COMPOSITION)
                 drawRoundRect(
                     color = Color.White.copy(alpha = fixed.template.opacity * 0.32f),
                     topLeft = Offset(slotRect.left, slotRect.top),
@@ -142,12 +143,13 @@ fun CameraOverlay(
         data.guide
             ?.takeIf { it.visible && data.layoutGuide?.fixedLayout == null }
             ?.let { guide ->
-            val frame = mapRect(guide.targetFrame, data, vw, vh)
+            // The composition target: where the subject should end up in the photo.
+            val frame = mapRect(guide.targetFrame, data, vw, vh, OverlayMapping.Space.COMPOSITION)
             // D2-3: the colour swap is the entire success feedback.
             val guideColor = if (guide.aligned) Sage else Color.White.copy(alpha = 0.9f)
 
             guide.silhouetteBounds?.let { silhouette ->
-                val ghost = mapRect(silhouette, data, vw, vh)
+                val ghost = mapRect(silhouette, data, vw, vh, OverlayMapping.Space.COMPOSITION)
                 drawRoundRect(
                     color = guideColor.copy(alpha = 0.22f),
                     topLeft = Offset(ghost.left, ghost.top),
@@ -161,7 +163,8 @@ fun CameraOverlay(
             data.layoutGuide?.takeIf { it.level != LayoutGuideLevel.STATIC && it.fixedLayout == null }?.let { layout ->
                 if (layout.outline.size >= 3) {
                     val points = layout.outline.map { point ->
-                        mapNormalized(point.x, point.y, data, vw, vh)
+                        // Segmentation outline — detector output.
+                        mapNormalized(point.x, point.y, data, vw, vh, OverlayMapping.Space.ANALYSIS)
                     }
                     val outlineColor = when (layout.level) {
                         LayoutGuideLevel.CONFIDENT -> guideColor.copy(alpha = 0.72f)
@@ -189,8 +192,8 @@ fun CameraOverlay(
         if (!showDetections) return@Canvas
 
         data.faces.forEach { box ->
-            val a = mapNormalized(box.left, box.top, data, vw, vh)
-            val b = mapNormalized(box.right, box.bottom, data, vw, vh)
+            val a = mapNormalized(box.left, box.top, data, vw, vh, OverlayMapping.Space.ANALYSIS)
+            val b = mapNormalized(box.right, box.bottom, data, vw, vh, OverlayMapping.Space.ANALYSIS)
             drawRoundRect(
                 color = Sage,
                 topLeft = Offset(min(a.x, b.x), min(a.y, b.y)),
@@ -204,7 +207,7 @@ fun CameraOverlay(
             drawCircle(
                 color = Sage,
                 radius = 5.dp.toPx(),
-                center = mapNormalized(cx, cy, data, vw, vh),
+                center = mapNormalized(cx, cy, data, vw, vh, OverlayMapping.Space.ANALYSIS),
             )
         }
         }
@@ -292,40 +295,37 @@ private fun DrawScope.drawFootMarker(silhouette: RectN, color: Color) {
     )
 }
 
-/** Maps a normalized (0~1) analysis point to view pixels via FILL_CENTER. */
-private fun mapNormalized(nx: Float, ny: Float, data: OverlayData, vw: Float, vh: Float): Offset {
-    val arAnalysis = data.frameWidth.toFloat() / data.frameHeight.toFloat()
-    val arView = vw / vh
-    val contentW: Float
-    val contentH: Float
-    val offX: Float
-    val offY: Float
-    if (arView > arAnalysis) {
-        // fill width, crop height
-        contentW = vw
-        contentH = vw / arAnalysis
-        offX = 0f
-        offY = (vh - contentH) / 2f
-    } else {
-        // fill height, crop width
-        contentH = vh
-        contentW = vh * arAnalysis
-        offX = (vw - contentW) / 2f
-        offY = 0f
-    }
-    val fx = if (data.mirror) 1f - nx else nx
-    return Offset(offX + fx * contentW, offY + ny * contentH)
+/**
+ * Maps a normalized point onto the view. [space] decides whether the front-lens
+ * mirror applies — see [OverlayMapping] for why that is not one answer for
+ * everything.
+ */
+private fun mapNormalized(
+    nx: Float,
+    ny: Float,
+    data: OverlayData,
+    vw: Float,
+    vh: Float,
+    space: OverlayMapping.Space,
+): Offset {
+    val p = OverlayMapping.point(
+        nx, ny, space, data.mirror, data.frameWidth, data.frameHeight, vw, vh,
+    )
+    return Offset(p.x, p.y)
 }
 
-private fun mapRect(rect: RectN, data: OverlayData, vw: Float, vh: Float): RectN {
-    val topLeft = mapNormalized(rect.left, rect.top, data, vw, vh)
-    val bottomRight = mapNormalized(rect.right, rect.bottom, data, vw, vh)
-    return RectN(
-        left = min(topLeft.x, bottomRight.x),
-        top = min(topLeft.y, bottomRight.y),
-        right = max(topLeft.x, bottomRight.x),
-        bottom = max(topLeft.y, bottomRight.y),
+private fun mapRect(
+    rect: RectN,
+    data: OverlayData,
+    vw: Float,
+    vh: Float,
+    space: OverlayMapping.Space,
+): RectN {
+    val r = OverlayMapping.rect(
+        rect.left, rect.top, rect.right, rect.bottom,
+        space, data.mirror, data.frameWidth, data.frameHeight, vw, vh,
     )
+    return RectN(left = r.left, top = r.top, right = r.right, bottom = r.bottom)
 }
 
 /**
