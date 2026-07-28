@@ -202,6 +202,71 @@ class CameraViewModelTest {
         assertNotNull("그래도 계측은 계속된다", viewModel.featureBudget.value)
     }
 
+    // ------------------------------------------------- 재탐색 (layout re-scan)
+
+    /**
+     * The auto layout resolver latches a template after a few confirming frames
+     * and, by design, never un-latches inside a session. Before this existed the
+     * only escape was `setStyleTarget`, i.e. the user had to change their style to
+     * get the guide to look at the scene again — and on device that read as "the
+     * app decided once and stopped paying attention".
+     */
+    @Test
+    fun `a latched layout survives further frames`() {
+        val viewModel = CameraViewModel(collectDebugSignals = false)
+        repeat(8) { feed(viewModel, personBox(0.3f, 0.2f, 0.7f, 0.9f), confidence = 0.9f) }
+        val latched = viewModel.lastFrame.value?.fixedLayout
+        assertNotNull("8 confirming frames should latch a template", latched)
+
+        repeat(8) { feed(viewModel, null, confidence = 0f) }
+        assertNotNull(
+            "the latch is deliberately sticky — losing the subject must not drop it",
+            viewModel.lastFrame.value?.fixedLayout,
+        )
+    }
+
+    @Test
+    fun `rescan drops the latched layout so the next frames search again`() {
+        val viewModel = CameraViewModel(collectDebugSignals = false)
+        repeat(8) { feed(viewModel, personBox(0.3f, 0.2f, 0.7f, 0.9f), confidence = 0.9f) }
+        assertNotNull(viewModel.lastFrame.value?.fixedLayout)
+
+        viewModel.rescanLayout()
+
+        // The next analyzed frame is the first one that can observe the cleared
+        // state, so feed one empty frame to read it back.
+        feed(viewModel, null, confidence = 0f)
+        assertNull(
+            "rescan must return the resolver to searching",
+            viewModel.lastFrame.value?.fixedLayout,
+        )
+    }
+
+    @Test
+    fun `rescan before anything latched is harmless`() {
+        val viewModel = CameraViewModel(collectDebugSignals = false)
+        viewModel.rescanLayout()
+        feed(viewModel, null, confidence = 0f)
+        assertNull(viewModel.lastFrame.value?.fixedLayout)
+    }
+
+    /**
+     * Rescan clears the layout, not the style. A user tapping 재탐색 is saying
+     * "look at the scene again", not "forget which preset I picked" — dropping the
+     * style target here would silently reset their composition guide too.
+     */
+    @Test
+    fun `rescan leaves the style target alone`() {
+        val viewModel = CameraViewModel(collectDebugSignals = false)
+        val target = StyleTarget(subjectAnchorX = 1f / 3f)
+        viewModel.setStyleTarget(target)
+        repeat(8) { feed(viewModel, personBox(0.3f, 0.2f, 0.7f, 0.9f), confidence = 0.9f) }
+
+        viewModel.rescanLayout()
+
+        assertEquals(target, viewModel.styleTarget.value)
+    }
+
     // ------------------------------------------------------------------ util
 
     private fun feed(viewModel: CameraViewModel, box: NormalizedBox?, confidence: Float) {
