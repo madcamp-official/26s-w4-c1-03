@@ -113,38 +113,50 @@
 
 **목표: 컷 결정을 코드에 반영해 죽은 경로를 제거하고, 검증 환경 결함을 없앤다.**
 
-- [ ] W0-1. `gradlew` 실행 비트 커밋 — `git update-index --chmod=+x gradlew` (리뷰: 실행 비트 없이 커밋되어 CI에서 exit 0으로 무동작 성공 처리됨)
+- [x] W0-1. `gradlew` 실행 비트 커밋 — `git update-index --chmod=+x gradlew` (리뷰: 실행 비트 없이 커밋되어 CI에서 exit 0으로 무동작 성공 처리됨)
+  - ✅ 📱 · `100755` 확인 · 커밋 `42fca26`
   - 완료 기준: `git ls-files -s gradlew`가 `100755`
-- [ ] W0-2. **파괴적 마이그레이션 제거** — [AppContainer.kt:34](app/src/main/java/com/gamdo/app/data/AppContainer.kt#L34)의 `.fallbackToDestructiveMigration()` 삭제 (리뷰 #12. 로컬이 데이터 원천인 앱에서 스키마 불일치 시 14테이블 전부 무음 소실). 버전은 1 유지, Migration 객체는 지금 만들지 않는다
+- [x] W0-2. **파괴적 마이그레이션 제거** — [AppContainer.kt:34](app/src/main/java/com/gamdo/app/data/AppContainer.kt#L34)의 `.fallbackToDestructiveMigration()` 삭제 (리뷰 #12. 로컬이 데이터 원천인 앱에서 스키마 불일치 시 14테이블 전부 무음 소실). 버전은 1 유지, Migration 객체는 지금 만들지 않는다
+  - ✅ 📱 · 회귀 가드 `DatabaseMigrationPolicyTest`(결함 재주입으로 검증) · 기기: 업데이트 설치 후 14테이블 전부 보존, `user_version=1` 유지 · 커밋 `4d14910`
   - 완료 기준: 삭제 후 기존 설치 위에 업데이트 설치해도 데이터 유지(기기 확인 항목으로 적립). 향후 스키마 변경 시 Migration 없으면 크래시가 나는 것이 **의도된 동작**임을 KDoc에 명시
-- [ ] W0-3. **A 소유 도달 불가 코드 삭제** (L-3): `ui/result/BeforeAfterSlider.kt`, `ui/result/ResultTabs.kt`와 각 테스트. 삭제 전 트리 grep으로 참조 0 확인(R2)
-- [ ] W0-4. **B 계약·컷 경로 모듈 `@Deprecated(level = ERROR)` 처리** (L-3): `data/network/GamdoApiClient.kt`의 `createEditJob`/`getEditJob`/`downloadResult`, `data/network/JobTimeoutPolicy.kt`, `data/ReferenceRepository.kt`, `core/ExifSanitizer.kt`, `data/PendingRequestRepository.kt`, `detect/ProblemDiagnoser.kt`. 각 메시지에 "remain_plan §1 컷 확정(O-1/O-2)" 명시. 해당 JVM 테스트는 남긴다(폐기 해제 시 안전망)
+- [x] W0-3. **A 소유 도달 불가 코드 삭제** (L-3): `ui/result/BeforeAfterSlider.kt`, `ui/result/ResultTabs.kt`와 각 테스트. 삭제 전 트리 grep으로 참조 0 확인(R2)
+  - ✅ 📱 · 385줄 삭제, 참조 0 확인 · 커밋 `0c81393`
+- [x] W0-4. **B 계약·컷 경로 모듈 `@Deprecated(level = ERROR)` 처리** (L-3): `data/network/GamdoApiClient.kt`의 `createEditJob`/`getEditJob`/`downloadResult`, `data/network/JobTimeoutPolicy.kt`, `data/ReferenceRepository.kt`, `core/ExifSanitizer.kt`, `data/PendingRequestRepository.kt`, `detect/ProblemDiagnoser.kt`. 각 메시지에 "remain_plan §1 컷 확정(O-1/O-2)" 명시. 해당 JVM 테스트는 남긴다(폐기 해제 시 안전망)
+  - ✅ 📱 · 8심볼 폐기, 테스트 5파일에 사유 적은 억제. **`ProblemDiagnoser`·`P2ValueDumpTest`는 오너 지시로 보류**(B 통지 대기) · 커밋 `0c81393`
   - 완료 기준: 프로덕션 소스에서 위 심볼 참조 0건, `compileDebugKotlin` 그린
-- [ ] W0-5. presets 경로 존치 확인 — 컷 이후 앱의 서버 호출이 `GET /presets` 하나뿐임을 grep으로 확정하고, 실패 시 `assets/presets.json` 폴백이 동작함을 테스트로 확인(기존 테스트 있으면 지목만)
-- [ ] W0-6. (리드) `P1_Plan_1.md` §0.5·§5·§4-3·§6-3과 `P2_Plan_1.md`의 무효 체크박스에 컷·무효 표시 — 특히 `📱` 근거가 `daafdb7` 이전인 항목 전부 (리뷰 §2-1)
-- [ ] W0-7. (감사) 기준선 재확정 — clean 후 `assembleDebug` + 전체 테스트 1회, 결과 수치를 이 문서 밑에 기록. 리뷰 결함 20건 중 현재 HEAD에서 이미 해소된 것 목록화 (R5)
+- [x] W0-5. presets 경로 존치 확인 — 컷 이후 앱의 서버 호출이 `GET /presets` 하나뿐임을 grep으로 확정하고, 실패 시 `assets/presets.json` 폴백이 동작함을 테스트로 확인(기존 테스트 있으면 지목만)
+  - ✅ · **플랜 전제가 틀렸다** — `getPresets()`도 프로덕션 호출자 0. 컷 이후 앱은 서버 호출을 **하나도 하지 않는다**
+- [x] W0-6. (리드) `P1_Plan_1.md` §0.5·§5·§4-3·§6-3과 `P2_Plan_1.md`의 무효 체크박스에 컷·무효 표시 — 특히 `📱` 근거가 `daafdb7` 이전인 항목 전부 (리뷰 §2-1)
+  - ✅ · `P1_Plan_1.md` 첫머리에 무효 선언(컷 10개 절 표 + `📱` 전면 무효화) · 커밋 `fb12128`
+- [x] W0-7. (감사) 기준선 재확정 — clean 후 `assembleDebug` + 전체 테스트 1회, 결과 수치를 이 문서 밑에 기록. 리뷰 결함 20건 중 현재 HEAD에서 이미 해소된 것 목록화 (R5)
+  - ✅ · 기준선 **393 tests / 0 failed**, `assembleDebug` 성공. 리뷰 15건 재확인 결과 잔존 11 · 부분 3 · 해소 1
 
 ### W1 — 가이드·검출 결함 소탕 (guide-capture)
 
-**목표: 리뷰 결함 중 카메라·가이드 경로 전부. 사람을 비추면 프리셋 가이드가 죽는 최상위 결함을 잡는다.**
+**목표: 리뷰 결함 중 카메라·가이드 경로 전부.**
 
-- [ ] W1-1. **자동 레이아웃 래치 해제** (리뷰 #1, O-3) — [FixedLayoutGuide.kt](app/src/main/java/com/gamdo/app/guide/FixedLayoutGuide.kt)의 `selectedId` 단락이 `choose()`를 영구 차단하는 구조 수정. 스타일 프리셋 변경·`reset()` 시 래치 해제. 프리셋이 `subjectPosition`/`subjectScaleRange` 가이드를 가지면 자동 레이아웃이 그것을 **대체하지 않는다**(공존 규칙은 "프리셋 가이드 우선"으로 고정)
-  - 완료 기준: JVM 테스트 — 래치 후 스타일 변경 시 레거시 가이드 복귀. 기기 확인 적립: 사람을 1분 비춰도 6개 프리셋 가이드가 사라지지 않음
-- [ ] W1-2. **슬롯 매처 3결함** (리뷰 #10) — (a) 겹침 정규화에 슬롯 밖 삐져나옴 페널티 추가(`intersection / union` 또는 동등 수식), (b) 그리디 배정에 점수 하한 도입(하한 미달이면 미배정), (c) `filled` 해제 경로 추가 + misses off-by-one 수정
-  - 완료 기준: 리뷰의 세 실패 시나리오(전체 화면 박스 FILLED, DRINK_PAIR 좌슬롯 강탈, 1프레임 재무장) 각각 회귀 테스트
-- [ ] W1-3. **자격 기준 모순·신뢰도 결함** (리뷰 #16·#17) — `choose()`의 카운트 기준과 `match()`의 `isReliable` 기준 통일. `SceneProposalEngine`의 사람 신뢰도가 눈 뜸 확률로 채워지는 경로 수정(포즈 없고 얼굴만 있을 때의 신뢰도 정의를 명시적으로)
-- [ ] W1-4. **D2 위반 제거** (리뷰 #8·#20) — 슬롯 상태별 색상 매핑(FILLED=Sage 등) 제거(단일 색), `"피사체를 화면에 보여주세요"`/`"피사체를 잠시 유지해주세요"` 문구 삭제, 슬롯 채움 모서리 반경 정합. **D17 로딩 표시**를 디자인 언어로 최소 신설(L-2)
-  - 완료 기준: `ui/` 전체에서 행동 지시 문구 grep 0건, 로딩 표시 1개 존재
-- [ ] W1-5. **전면 카메라 가이드 미러 수정** (리뷰 #9) — `mapNormalized`의 미러가 뒤집는 가이드 기하를 `AlignmentEngine` 배치 의도와 일치시킴. `SubjectProjection`이 미러를 이미 처리하는 방식을 참조
-  - 완료 기준: JVM 테스트 — 전면 + `third_left` 프리셋에서 브래킷 x=1/3에 위치. 기기 확인 적립: 전면 렌즈 촬영 결과의 피사체 위치가 프리셋 의도와 일치
-- [ ] W1-6. **검출 주기·D12 게이트** (리뷰 #11) — `refreshEveryFrames=3`(실효 4FPS)을 D15 하한 8FPS 이상으로, 값은 `guide_config.json`으로 외부화. `SceneRecognitionPolicy`의 마스크 필수·레이블 화이트리스트를 D12대로 선택 정보로 완화
-  - 완료 기준: 임의 5프레임 창에서 실검출 ≥3회가 산술적으로 성립(테스트), 마스크 없는 객체가 후보로 통과(테스트)
-- [ ] W1-7. **브래킷 폭 25% 축소 버그** (리뷰 §3-4) — `AlignmentEngine.kt:158`·`SceneLayoutGuide.kt:137`의 픽셀 비율×정규화 폭 이중 적용 수정. **B 모듈 리드 승인 수정** — R2 절차(주석+부록 B 통지) 준수
-- [ ] W1-8. **낡은 검출 캐시·수명 결함** (리뷰 #14·#15) — 세그멘테이션 타임아웃 시 `task.cancel()` 및 이미지 수명 정리, `delegate.detect(frame)`이 null일 때 캐시 무효화(연속 null N프레임 후 소거 등 명시 규칙으로)
-- [ ] W1-9. **`reset()` 스레드 동기화** (리뷰 #18) — 분석 스레드와 UI 스레드가 공유하는 매처·리졸버 상태의 동기화(분석 스레드로 리셋 위임 또는 스냅샷 교체 방식). `ConcurrentModificationException` 가능 경로 소거
-- [ ] W1-10. **KPI 정직화** (리뷰 #19 + §3-3) — (a) `effectiveVisible`이 자동 레이아웃 래치로 true 고정되는 문제를 W1-1과 함께 해소, (b) `session_guides.resolved` 하드코딩 `0` → 측정하지 않으므로 **`NULL`** 기록(스키마의 "측정불가" 의미대로), (c) `sessions.resolved_style_json` `"{}"` → 실제 적용 프리셋 id·파라미터 기록, (d) `session_guides` ID 접두사 `sgd_` → **`gid_`**(DDL 준수, [GuideKpiRepository.kt:97](app/src/main/java/com/gamdo/app/data/GuideKpiRepository.kt#L97)), (e) `matchScore`의 `observedHorizonPosition = 0.5f` 하드코딩을 `SceneStructureAnalyzer` 실측값으로
-  - 완료 기준: 기기 확인 적립 — 촬영 3회 후 `sessions`·`session_guides`에 위 값들이 정직하게 기록됨
-- 웨이브 완료 기준: 감사 그린 + 위 기기 확인 3건이 DONE-DEVICE 목록에 적립됨
+> ⚠️ **이 절은 2026-07-28에 재작성됐다.** 원래 W1-1~W1-10은 리뷰(`e2bca9c` 기준)를 그대로 옮긴 것인데, 현재 HEAD에서 전수 재확인하니 **1건은 이미 해소, 3건은 형태가 변했고**, 그 사이 담당 B가 같은 경로를 크게 바꿨다. 실제 작업 단위(W1-A~)로 다시 적는다. 원래 번호와의 대응은 각 항목에 적었다.
+
+- [x] 📱 **W1-A. 자동 레이아웃이 프리셋 가이드를 덮는 문제 + 점유 머신 삭제** (구 W1-1·W1-2·W1-4 일부 / 리뷰 #1·#8·#10·#20)
+  - D2 지시 문구 2종 삭제 + `LayoutGuidePrompt` 타입 제거, 슬롯 점유 색 분기 제거, 모서리 반경 정합
+  - `FixedLayoutSlotMatcher`·`SlotMatch`·`SlotMatchStatus`·`allRequiredFilled` 삭제 — 셋 다 프로덕션 호출자를 이미 잃었고 세 버그를 품고 있었다. **그릴 수 없는 표시(D2)의 버그는 고치는 게 아니라 지우는 것**
+  - `CameraOverlayD2Test` 신설 — `Text(` 0건·점유 심볼 0건을 소스에서 고정
+  - ⚠️ **공존은 최종적으로 채택되지 않았다.** 2026-07-28 상류 병합에서 오너가 상대 방식(게이트 유지 + 재탐색으로 탈출)을 택했다. 커밋 `02f563d` → 병합 `d99b149`에서 게이트 복원
+- [x] 📱 **W1-B. 재탐색 버튼** (O-5 / 구 W1-1의 탈출 경로) — 프리뷰 우측 하단, 배율 스톱과 같은 줄. `rescanLayout()`이 `setStyleTarget`보다 좁다(스타일 타깃 보존)는 것을 테스트로 고정. 커밋 `92173fb`
+- [x] 📱 **W1-C. 분석 단계별 계측** (구 W1-6의 선행) — `DetectStageTimings`. 실측: 얼굴 98.5 · 포즈 89.8 · 세그 48.2(1회 572.8) · 객체 26.4 · **가이드 체인 0.1ms**. 커밋 `9d1ea72`
+- [x] 📱 **W1-D. 사람 신뢰도에서 눈뜸 확률 제거 + 얼굴 분류기 off** (구 W1-3 / 리뷰 #17) — `DETECTED_SUBJECT_FLOOR`를 객체 분기와 공유. 분류기 off의 **성능 근거는 측정으로 반증됐고**(빈 장면엔 분류할 얼굴이 없다) 근거를 "소비처가 결함뿐"으로 좁혔다. 커밋 `5012bc0`
+- [x] 📱 **W1-E. 포즈 1/2 스로틀** (오너 결정 / 구 W1-6) — 프레임당 약 29ms 절감(같은 실행 내 귀속). 첫 측정은 발열로 무효였고(**이상치 분포에서 평균은 틀린 통계**) AP 38°C로 식혀 재측정. 커밋 `70865fe`
+- [x] 📱 **W1-F. 세그멘테이션 수명** (구 W1-8 / 리뷰 #14·#15) — 타임아웃 제거(오너 결정; `task.cancel()`은 **API에 존재하지 않는다**), null이 캐시를 지우게. 기기: `Image is already closed` 0 · `IllegalStateException` 0. **#15의 null 경로는 기기에서 못 밟았다**(모델이 항상 마스크를 찾음) — DONE-DEVICE 적립. 커밋 `1cd3731`
+- [x] 📱 **W1-G. KPI 정직화** (구 W1-10 / 리뷰 #19) — `visible`·`aligned`의 `fixedLayout != null ||` 제거(**둘 다 셔터를 막지 않는데 성공만 보고하고 있었다**), `sgd_`→`gid_`, `resolved` 0→NULL, `aligned`는 래치 중 null. 기기 DB 직접 확인. 커밋 `fe60b9e`
+- [x] 📱 **W1-H. 분석 스레드 안전성** (구 W1-9 / 리뷰 #18) — 메인 스레드 변경을 커맨드 큐로 분석 스레드에 위임. **JVM 스트레스 테스트가 수정 전 3/3 재현**(`ConcurrentModificationException`, 그리고 오버레이 `RectN(NaN,NaN,NaN,NaN)`), 수정 후 5/5 통과
+- [ ] **W1-I. 전면 카메라 가이드 미러** (구 W1-5 / 리뷰 #9) — 전면 렌즈 실기기 확인이 필요해 별도 단위
+- [ ] **W1-J. 브래킷 폭 25% 축소** (구 W1-7 / 리뷰 M1) — B 모듈 수정 승인 필요. 프레임 종횡비를 `guide/`로 배관해야 해서 시그니처 변경
+- [ ] **W1-K. matchScore의 15%가 상수** (리뷰 M2) — `observedHorizonPosition = 0.5f`를 `SceneStructureAnalyzer` 실측값으로. `ShutterFrame`에 필드 추가 필요
+- ~~구 W1-3의 `choose()`/`match()` 자격 모순 (리뷰 #16)~~ — **이미 해소**. 재확인 결과 상류가 양쪽을 같은 술어로 통일했고 반박 에이전트도 확인
+- ~~구 W1-6의 마스크 필수·레이블 화이트리스트 (리뷰 #11 후반)~~ — **이미 해소**. 상류가 `isValidBox`/`isSemanticMatch`로 분리
+- ~~구 W1-4의 D17 로딩 표시 (L-2)~~ — **미착수**. 아래 부록 C 참조
+
+**성능 현황 (D15 재정의 대상, 오너 승인):** 객체 분석 실효 **1.28 → 5.52 FPS**. 목표 8 미달이며 냉각 상태 수치다. 25초 촬영에 AP가 38.0→54.6°C로 오르므로 **냉각 수치는 실사용에서 도달 불가능한 최선값**이다. ⚠️ 상류가 객체 검출기를 EfficientDet로 교체(`8c92fff`)해서 단계별 실측은 **만료** — 재측정 필요.
 
 ### W2 — 보정 파이프라인·데이터 정합 (local-edit + onboarding-polish, 병렬)
 
@@ -230,6 +242,7 @@ onboarding-polish:
 ## 부록 C. 알려진 위험 (이번 범위 밖 — 수정하지 않음)
 
 - **서버**: edit-job 조회 IDOR(`edit_jobs.py:333`) · 워커 `UnboundLocalError` 영구 종료(`comfyui_provider.py:166`) · 클린 체크아웃 기동 실패(`main.py:24`) · 보존 기간 3종(`worker.py:124` 외) · `/references/analyze` 무제한 업로드 — 전부 `review_report.md` §1 기준. 서버를 실기동할 일이 생기면 이 목록을 먼저 볼 것
+- **D17 로딩 표시 미구현** (L-2) — 레이아웃을 탐색 중이라는 것을 알리는 표시가 없다. `ui/` 전체에 `CircularProgressIndicator` 0건. W1에서 미착수로 남았고 W3-5 폴리싱에서 처리한다
 - **앱(수용된 위반·갭)**: **D13 수동 레이아웃 선택 미제공** — 2026-07-28 상류 병합에서 담당 B가 만든 상단 `구도` 드롭다운(재탐색 + 레이아웃 목록)을 제거하고 재탐색만 프리뷰 버튼으로 일원화했다(오너 결정). `CameraViewModel.selectManualLayout`과 `availableManualLayouts`는 완성된 채 호출자 0으로 남아 있으므로, 되살릴 때는 UI만 붙이면 된다 · 기동 후 첫 프리뷰 제스처 유실(W3-6에서 재판정) · `captures.problems_json` 항상 `"[]"`(§1-5 컷 귀결) · FK 미선언·인덱스 DESC 미지정(스키마 동결 유지 — 시연 후 마이그레이션 과제로 이월) · §7-1 안내 갱신 250ms vs 목표 200ms(`alignedEnterFrames`×fps 산술 — W3-1 외부화 후 값 튜닝으로 해소 시도)
 
 ## 부록 D. 시연 후 과제 (이 플랜이 끝나도 남는 것)
