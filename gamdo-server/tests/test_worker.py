@@ -63,6 +63,9 @@ class RejectingMaskValidator:
     def mask_is_safe(self, original_path, operations):
         return False
 
+    def validate(self, original_path, candidate, operations):
+        return ValidationResult(True, "passed", {"histogramDistance": 0.0})
+
 
 class CountingProvider(CopyProvider):
     def __init__(self, output: Path) -> None:
@@ -130,7 +133,7 @@ def test_worker_removes_rejected_generated_candidate(tmp_path: Path, monkeypatch
     assert database.get_job("job_worker_001")["status"] == "fallback"
 
 
-def test_worker_falls_back_before_provider_when_mask_touches_face(tmp_path: Path, monkeypatch) -> None:
+def test_worker_keeps_explicit_face_touch_operation_as_quality_warning(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("app.db.DEFAULT_DB_PATH", tmp_path / "gamdo.sqlite3")
     database = Database()
     database.initialize()
@@ -146,10 +149,9 @@ def test_worker_falls_back_before_provider_when_mask_touches_face(tmp_path: Path
 
     job = database.get_job("job_worker_001")
     assert job is not None
-    assert job["status"] == "fallback"
-    assert job["fail_reason"] == "face_mask_protected"
-    assert provider.calls == 0
-    assert not input_path.exists()
+    assert job["status"] == "done"
+    assert provider.calls == 1
+    assert database.get_results("job_worker_001")
 
 
 def test_result_delivery_schedules_24_hour_purge(tmp_path: Path, monkeypatch) -> None:

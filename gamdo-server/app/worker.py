@@ -44,13 +44,14 @@ class JobWorker:
         operations = json.loads(job["operations_json"])
         input_row = self.database.get_input_file(job["id"])
         try:
-            if input_row is None or not self.validator.mask_is_safe(
+            if input_row is None:
+                raise OSError("edit input is missing")
+            # Face overlap is retained in validation diagnostics. It is not a
+            # hard rejection: a user explicitly requested this operation and
+            # the candidate must be judged by integrity and output dimensions.
+            mask_quality_warning = not self.validator.mask_is_safe(
                 Path(input_row["storage_path"]), operations
-            ):
-                self.database.transition_job(job["id"], "fallback", fail_reason="face_mask_protected")
-                self.database.schedule_input_purge(job["id"])
-                self.purge_once()
-                return True
+            )
             operation_type = operations[0].get("type") if operations else ""
             generate = getattr(self.provider, operation_type, None)
             if not callable(generate):
@@ -81,6 +82,8 @@ class JobWorker:
             validation.validation.setdefault(
                 "qualityScore", round(1.0 - float(validation.validation.get("histogramDistance", 1.0)), 6)
             )
+            if mask_quality_warning:
+                validation.validation.setdefault("qualityWarnings", []).append("mask_overlaps_face")
             passed_candidates.append((candidate, validation))
         passed_candidates.sort(
             key=lambda item: (

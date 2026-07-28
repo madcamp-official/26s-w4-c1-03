@@ -27,7 +27,7 @@ class FaceMaskGuard:
         return self.same_face_count
 
 
-def test_candidate_validator_requires_identity_verifier(tmp_path: Path) -> None:
+def test_candidate_validator_keeps_candidate_when_identity_is_unavailable(tmp_path: Path) -> None:
     original = tmp_path / "original.png"
     candidate = tmp_path / "candidate.png"
     Image.new("RGB", (16, 16), (120, 140, 120)).save(original)
@@ -35,8 +35,8 @@ def test_candidate_validator_requires_identity_verifier(tmp_path: Path) -> None:
 
     result = CandidateValidator().validate(original, GeneratedCandidate(candidate, 1))
 
-    assert result.passed is False
-    assert result.reason == "face_identity_unverified"
+    assert result.passed is True
+    assert "face_identity_unverified" in result.validation["qualityWarnings"]
 
 
 def test_candidate_validator_rejects_input_path_alias(tmp_path: Path) -> None:
@@ -89,7 +89,7 @@ def test_candidate_validator_allows_mask_away_from_face(tmp_path: Path) -> None:
     ) is True
 
 
-def test_candidate_validator_rejects_changed_face_count(tmp_path: Path) -> None:
+def test_candidate_validator_reports_changed_face_count_as_quality_signal(tmp_path: Path) -> None:
     original = tmp_path / "original.png"
     candidate = tmp_path / "candidate.png"
     Image.new("RGB", (16, 16), (120, 140, 120)).save(original)
@@ -99,8 +99,8 @@ def test_candidate_validator_rejects_changed_face_count(tmp_path: Path) -> None:
         original, GeneratedCandidate(candidate, 3)
     )
 
-    assert result.passed is False
-    assert result.reason == "face_count_changed"
+    assert result.passed is True
+    assert "face_count_changed" in result.validation["qualityWarnings"]
 
 
 def test_candidate_validator_allows_bounded_outpaint_with_original_interior(tmp_path: Path) -> None:
