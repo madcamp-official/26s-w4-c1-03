@@ -114,6 +114,21 @@ class CardRepositoryTest {
         spread("colorTemperature", { it.colorTemperature }, 800f)
     }
 
+    /**
+     * `decodeCardEntries` is what the onboarding picker calls instead of re-parsing
+     * `cards.json` itself: it must carry the same 16 features as [decodeCards] plus the
+     * `thumbnail` path each `PickCard` needs for its `AsyncImage`.
+     */
+    @Test
+    fun `decodeCardEntries pairs every feature with its bundled thumbnail path`() {
+        val entries = decodeCardEntries(cardsJsonText, json)
+        assertEquals(16, entries.size)
+        assertEquals(cards().map { it.id }, entries.map { it.feature.id })
+        entries.forEach { entry ->
+            assertEquals("cards/${entry.feature.id}.jpg", entry.thumbnail)
+        }
+    }
+
     @Test
     fun `card ids are unique and feed ProfileEngine without error`() {
         val cards = cards()

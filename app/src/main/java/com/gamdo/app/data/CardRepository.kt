@@ -24,14 +24,31 @@ class CardRepository(
         return decodeCards(text, json)
     }
 
+    /**
+     * Same 16 cards as [loadBundledCards], paired with the `thumbnail` asset path the
+     * onboarding pick grid renders. [CardFeature] itself carries no display concern
+     * (it is `ProfileEngine`'s pure input shape), so the picker needs this richer read
+     * instead — one asset parse serving both the grid and `ProfileEngine.build()`.
+     */
+    fun loadBundledCardEntries(): List<CardEntry> {
+        val text = context.assets.open(ASSET_NAME).bufferedReader().use { it.readText() }
+        return decodeCardEntries(text, json)
+    }
+
     private companion object {
         const val ASSET_NAME = "cards.json"
     }
 }
 
+/** A bundled card as the onboarding picker needs it: features plus its thumbnail path. */
+data class CardEntry(val feature: CardFeature, val thumbnail: String)
+
 @Serializable
 internal data class CardJson(
     val id: String,
+    // Not read by decodeCards()/toFeature() — CardFeature has no display concern —
+    // but present in the asset for the picker grid, so decodeCardEntries() needs it.
+    val thumbnail: String = "",
     val subjectScale: Float,
     val subjectPosition: Float,
     val headroom: Float,
@@ -64,3 +81,7 @@ internal data class CardsFile(val v: Int, val cards: List<CardJson>)
  */
 internal fun decodeCards(text: String, json: Json): List<CardFeature> =
     json.decodeFromString<CardsFile>(text).cards.map { it.toFeature() }
+
+/** Pure decode step for [CardRepository.loadBundledCardEntries]; see [decodeCards]. */
+internal fun decodeCardEntries(text: String, json: Json): List<CardEntry> =
+    json.decodeFromString<CardsFile>(text).cards.map { CardEntry(it.toFeature(), it.thumbnail) }
