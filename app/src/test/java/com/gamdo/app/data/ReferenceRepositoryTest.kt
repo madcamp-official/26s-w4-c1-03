@@ -1,9 +1,3 @@
-// 대상이 remain_plan O-1로 컷돼 @Deprecated(ERROR)가 붙었다. 테스트는 **의도적으로 남긴다** —
-// "같은 사진 재선택 시 네트워크 0회" 캐시 계약과 sanitize→upload 순서 고정이 여기 들어 있다.
-// 폐기를 걷어내고 경로를 되살리는 사람에게 이 테스트가 안전망이 된다. 이 suppress를 지우려면
-// 테스트도 함께 지워야 하고, 그건 컷을 되돌리는 것이 아니라 되돌릴 수단을 버리는 것이다.
-@file:Suppress("DEPRECATION_ERROR")
-
 package com.gamdo.app.data
 
 import com.gamdo.app.data.local.CachedReferencesDao
@@ -83,6 +77,7 @@ private class FakeSanitizer(
 }
 
 private fun sampleResponse(tag: String = "x") = ReferenceAnalysisResponse(
+    analysisVersion = ReferenceRepository.CURRENT_ANALYSIS_VERSION,
     analysis = buildJsonObject {
         put("peopleCount", 1)
         put("tag", tag)
@@ -235,5 +230,18 @@ class ReferenceRepositoryTest {
             "scratch file must still be cleaned up on failure",
             tempDir.listFiles()?.isEmpty() ?: true,
         )
+    }
+
+    @Test
+    fun `stale analysis version is uploaded once to refresh the cache`() = runBlocking {
+        val bytes = byteArrayOf(8, 8, 8)
+        repository.resolveBytes(bytes)
+        val hash = ReferenceRepository.sha256Hex(bytes)
+        dao.rows[hash] = dao.rows.getValue(hash).copy(analysisV = 1)
+
+        repository.resolveBytes(bytes)
+
+        assertEquals("stale cache must be refreshed once", 2, client.callCount)
+        assertEquals(ReferenceRepository.CURRENT_ANALYSIS_VERSION, dao.rows.getValue(hash).analysisV)
     }
 }

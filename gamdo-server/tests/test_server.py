@@ -91,10 +91,23 @@ def test_reference_analysis_is_synchronous_and_does_not_persist_upload() -> None
         )
         assert response.status_code == 200
         payload = response.json()
+        assert payload["analysisVersion"] == 3
         assert payload["analysis"]["peopleCount"] == 0
         assert len(payload["analysis"]["palette"]) == 5
         assert len(payload["analysis"]["luminanceHistogram"]) == 16
         assert payload["targetComposition"]["targetAspectRatio"] in {"4:5", "1:1"}
+        assert payload["capabilities"] == {"composition": False, "color": True}
+
+
+def test_reference_analysis_rejects_unsupported_content_type() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/references/analyze",
+            headers={"X-Device-Id": "test-device"},
+            files={"image": ("reference.txt", b"not an image", "text/plain")},
+        )
+    assert response.status_code == 415
+    assert response.json()["code"] == "unsupported_image_type"
 
 
 def test_edit_job_rejects_large_edit_area() -> None:

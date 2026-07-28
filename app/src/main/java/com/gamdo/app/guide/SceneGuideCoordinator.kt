@@ -36,6 +36,7 @@ class SceneGuideCoordinator(
     private var layoutState: GuideLayoutState = GuideLayoutState.Searching
     private var manualTemplateId: String? = null
     private var fixedBaseTemplate: LayoutTemplate? = null
+    private var fixedSource: LayoutSource? = null
 
     val currentLayoutState: GuideLayoutState get() = layoutState
 
@@ -66,15 +67,27 @@ class SceneGuideCoordinator(
             objectsFresh = detected.objectsFresh,
         )
         val proposal = proposalEngine.propose(observation, styleTarget)
+        val referenceTemplate = LayoutTemplate.fromReference(
+            id = "reference_${styleTarget.referenceSlots.hashCode()}",
+            slots = styleTarget.referenceSlots,
+            horizonY = styleTarget.horizonPosition,
+            viewportAspect = signals.viewportAspect,
+        )
         val explicitTemplate = signals.layoutTemplate
             ?: signals.layoutTemplateId?.let { LayoutTemplateCatalog.resolve(it, signals.viewportAspect) }
+            ?: referenceTemplate
             ?: styleTarget.layoutTemplateId?.let { LayoutTemplateCatalog.resolve(it, signals.viewportAspect) }
         if (explicitTemplate != null && manualTemplateId == null) {
             manualTemplateId = explicitTemplate.id
             fixedBaseTemplate = explicitTemplate
+            fixedSource = if (referenceTemplate != null && explicitTemplate.id == referenceTemplate.id) {
+                LayoutSource.REFERENCE
+            } else {
+                LayoutSource.MANUAL
+            }
             layoutState = GuideLayoutState.Fixed(
                 GenericLayoutSynthesizer.transform(explicitTemplate, styleTarget, templateSafetyMargin),
-                LayoutSource.MANUAL,
+                fixedSource ?: LayoutSource.MANUAL,
             )
         }
         val baseTemplate = when (val current = layoutState) {
@@ -139,6 +152,7 @@ class SceneGuideCoordinator(
         manualTemplateId = templateId
         autoLayoutResolver.reset()
         fixedBaseTemplate = template
+        fixedSource = LayoutSource.MANUAL
         layoutState = GuideLayoutState.Fixed(
             GenericLayoutSynthesizer.transform(template, styleTarget, templateSafetyMargin),
             LayoutSource.MANUAL,
@@ -149,13 +163,14 @@ class SceneGuideCoordinator(
     fun rescan() {
         manualTemplateId = null
         fixedBaseTemplate = null
+        fixedSource = null
         layoutState = GuideLayoutState.Searching
         autoLayoutResolver.reset()
     }
 
     fun updateStyle(styleTarget: StyleTarget) {
         val base = fixedBaseTemplate ?: return
-        val source = if (manualTemplateId == null) LayoutSource.AUTO else LayoutSource.MANUAL
+        val source = fixedSource ?: if (manualTemplateId == null) LayoutSource.AUTO else LayoutSource.MANUAL
         layoutState = GuideLayoutState.Fixed(GenericLayoutSynthesizer.transform(base, styleTarget, templateSafetyMargin), source)
     }
 
@@ -165,6 +180,7 @@ class SceneGuideCoordinator(
         autoLayoutResolver.reset()
         manualTemplateId = null
         fixedBaseTemplate = null
+        fixedSource = null
         layoutState = GuideLayoutState.Searching
     }
 }

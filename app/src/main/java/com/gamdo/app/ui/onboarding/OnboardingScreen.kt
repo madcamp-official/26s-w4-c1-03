@@ -141,6 +141,7 @@ fun OnboardingScreen(container: AppContainer, onFinished: () -> Unit) {
                         cardIds = selectedIds,
                         recommendedPresetId = profile?.recommendedPresetIds?.firstOrNull()
                             ?: "clean_social",
+                        recommendedPresetIds = profile?.recommendedPresetIds.orEmpty(),
                     )
                     onFinished()
                 }

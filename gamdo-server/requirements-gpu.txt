@@ -1,3 +1,6 @@
 # Optional CAMP-2 runtime dependencies. Keep the default server lightweight.
 insightface>=1,<2
 onnxruntime-gpu>=1.23,<2
+# AI 2 reference-analysis runtime. The default server remains CPU-only.
+ultralytics>=8.3,<9
+opencv-python-headless>=4.10,<5

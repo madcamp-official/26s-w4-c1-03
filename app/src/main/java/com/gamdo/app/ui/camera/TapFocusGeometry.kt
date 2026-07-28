@@ -34,6 +34,9 @@ package com.gamdo.app.ui.camera
  */
 data class FocusPoint(val x: Float, val y: Float)
 
+/** Normalized point consumed by the scene-interest ROI after a focus tap. */
+data class SceneAnchorPoint(val x: Float, val y: Float)
+
 /**
  * Resolves a tap on the preview pane to the point focus should be driven to, or
  * `null` if the tap must not move focus.
@@ -78,4 +81,34 @@ fun resolveTapFocusPoint(
     if (tapY < barHeight || tapY >= barHeight + windowHeight) return null
 
     return FocusPoint(tapX, tapY)
+}
+
+fun resolveTapSceneAnchor(
+    tapX: Float,
+    tapY: Float,
+    paneWidth: Float,
+    paneHeight: Float,
+    ratioWtoH: Float,
+): SceneAnchorPoint? {
+    val point = resolveTapPointInPreview(tapX, tapY, paneWidth, paneHeight, ratioWtoH) ?: return null
+    return SceneAnchorPoint(
+        x = (point.x / paneWidth).coerceIn(0f, 1f),
+        y = (point.y / point.windowHeight).coerceIn(0f, 1f),
+    )
+}
+
+private data class PreviewPoint(val x: Float, val y: Float, val windowHeight: Float)
+
+private fun resolveTapPointInPreview(
+    tapX: Float,
+    tapY: Float,
+    paneWidth: Float,
+    paneHeight: Float,
+    ratioWtoH: Float,
+): PreviewPoint? {
+    if (!tapX.isFinite() || !tapY.isFinite() || paneWidth <= 0f || paneHeight <= 0f || ratioWtoH <= 0f) return null
+    val windowHeight = (paneWidth / ratioWtoH).coerceAtMost(paneHeight)
+    val barHeight = (paneHeight - windowHeight) / 2f
+    if (tapX !in 0f..paneWidth || tapY < barHeight || tapY >= barHeight + windowHeight) return null
+    return PreviewPoint(tapX, tapY - barHeight, windowHeight)
 }

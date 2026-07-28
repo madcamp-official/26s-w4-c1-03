@@ -101,7 +101,7 @@ class EfficientDetSceneDetector(
         }.getOrNull() ?: return empty()
 
         val primary = try {
-            detectBitmap(full)
+            filterRawCandidates(detectBitmap(full))
         } finally {
             if (!full.isRecycled) full.recycle()
         }
@@ -115,7 +115,7 @@ class EfficientDetSceneDetector(
                 try {
                     MultiScaleObjectDetection.mergeDistinct(
                         primary = primary,
-                        secondary = detectBitmap(cropped).map { it.remapFrom(crop) },
+                        secondary = filterRawCandidates(detectBitmap(cropped)).map { it.remapFrom(crop) },
                         duplicateIou = config.fallback.duplicateIou,
                     )
                 } finally {
@@ -200,13 +200,28 @@ class EfficientDetSceneDetector(
 
     private fun shouldRunCenterCrop(primary: List<ObjectObservation>): Boolean {
         if (frameCount % config.centerCropEveryFrames != 0) return false
-        val central = primary.count { candidate ->
-            val dx = candidate.box.centerX - 0.5f
-            val dy = candidate.box.centerY - 0.5f
-            dx * dx + dy * dy <= 0.36f * 0.36f
-        }
-        return central < 3
+        // Crops are a recovery path for a genuinely sparse full-frame result.
+        // Running them for a 2-object scene was the source of the 7~11-box
+        // inflation seen on the device. The tracker performs the final ROI and
+        // duplicate policy; this cheap gate only decides whether to spend time
+        // on a second inference.
+        val centralCandidates = primary.count { SceneInterestRegion.Default.contains(it.box) }
+        return centralCandidates <= 1
     }
+
+    private fun filterRawCandidates(objects: List<ObjectObservation>): List<ObjectObservation> =
+        objects.filter { candidate ->
+            val box = candidate.box
+            val area = box.width * box.height
+            val touches = listOf(
+                box.left <= 0.02f, box.top <= 0.02f,
+                box.right >= 0.98f, box.bottom >= 0.98f,
+            ).count { it }
+            val aspect = maxOf(box.width, box.height) / minOf(box.width, box.height).coerceAtLeast(0.0001f)
+            area in 0.01f..0.85f &&
+                !(touches >= 2 && area >= 0.08f) &&
+                !(candidate.category == GuideObjectCategory.UNKNOWN && aspect > 3.5f)
+        }
 
     /**
      * Some Samsung GPU drivers can initialise the delegate successfully and

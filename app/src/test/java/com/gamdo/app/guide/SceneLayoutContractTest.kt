@@ -46,4 +46,25 @@ class SceneLayoutContractTest {
         coordinator.rescan()
         assertEquals(GuideLayoutState.Searching, coordinator.currentLayoutState)
     }
+
+    @Test
+    fun `reference slots fix immediately and do not wait for live object detection`() {
+        val coordinator = SceneGuideCoordinator()
+        val state = coordinator.update(
+            detection = com.gamdo.app.detect.DetectionResult(emptyList(), null),
+            styleTarget = StyleTarget(
+                referenceSlots = listOf(
+                    ReferenceTargetSlot(SlotRole.OBJECT, SlotVisualKind.GENERIC_OBJECT, RectN(0.10f, 0.20f, 0.40f, 0.60f)),
+                    ReferenceTargetSlot(SlotRole.OBJECT, SlotVisualKind.PLATE, RectN(0.55f, 0.50f, 0.80f, 0.70f)),
+                ),
+            ),
+        )
+
+        assertEquals(LayoutSource.REFERENCE, (state.layoutState as GuideLayoutState.Fixed).source)
+        assertEquals(2, state.fixedLayout!!.template.slots.size)
+        // The shared style transformer is allowed to apply its documented
+        // size/spacing micro-adjustment. The reference slot must remain a
+        // fixed, safe-area-clamped slot rather than preserving raw pixels.
+        assertTrue(state.fixedLayout.template.slots.first().bounds.left in 0.05f..0.95f)
+    }
 }

@@ -95,6 +95,13 @@ data class ReferenceAnalysisResponse(
     val analysis: JsonObject,
     val targetComposition: JsonObject,
     val colorTarget: JsonObject,
+    val capabilities: ReferenceCapabilities = ReferenceCapabilities(),
+)
+
+@Serializable
+data class ReferenceCapabilities(
+    val composition: Boolean = false,
+    val color: Boolean = true,
 )
 
 /**
@@ -150,12 +157,6 @@ class GamdoApiClient(
         service.getPresets(deviceIdStore.getOrCreate())
     }
 
-    @Deprecated(
-        message = "레퍼런스 따라 찍기(§5-1/§5-2)는 remain_plan O-1로 컷됐다. 이 엔드포인트를 " +
-            "다시 부르려면 진입점·업로드 고지·EXIF 위치 제거 가드가 함께 살아나야 하므로 " +
-            "오너 결정이 선행이다. 배선 전에 remain_plan §1을 읽을 것.",
-        level = DeprecationLevel.ERROR,
-    )
     suspend fun analyzeReference(image: File): ReferenceAnalysisResponse = callApi {
         service.analyzeReference(deviceIdStore.getOrCreate(), imagePart(image))
     }

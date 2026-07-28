@@ -116,6 +116,13 @@ class SceneGuideSessionController(
         _layoutState.value = GuideLayoutState.Searching
     }
 
+    /** Resets automatic search around a normalized preview anchor. */
+    fun rescanAt(anchorX: Float, anchorY: Float) {
+        tracker.rescanAt(anchorX, anchorY)
+        coordinator.rescan()
+        _layoutState.value = GuideLayoutState.Searching
+    }
+
     fun updateStyle(style: StyleTarget) {
         coordinator.updateStyle(style)
         _layoutState.value = coordinator.currentLayoutState
