@@ -73,6 +73,53 @@ class ThrottledObjectSceneDetector(
     }
 }
 
+/**
+ * Halves how often the pose model runs.
+ *
+ * Measured on SM-G970N: pose cost **89.8ms of a 263ms frame** and ran on every
+ * analysed frame. Like every other model here it does not get cheaper when the
+ * frame is empty — it scans for a person and then reports none — so the only
+ * lever is cadence (owner decision, 2026-07-28). `OverlayStabilizer` already
+ * smooths the guide between updates, so the silhouette and foot marker do not
+ * visibly step at half rate.
+ *
+ * **A null result clears the cache.** This is the deliberate difference from
+ * [ThrottledSubjectSceneSegmenter], which writes `?.let { lastResult = it }` and
+ * therefore never forgets — once a subject has been seen it keeps being reported
+ * after they leave (review_report #15). A pose cache behaving that way would hold
+ * a person silhouette over an empty wall. Between refreshes the *last decision* is
+ * reused, including a decision of "nobody there".
+ */
+class ThrottledPoseDetector(
+    private val delegate: PoseDetector,
+    private val refreshEveryFrames: Int = 2,
+) : PoseDetector {
+    init {
+        require(refreshEveryFrames >= 1) { "refreshEveryFrames must be >= 1, was $refreshEveryFrames" }
+    }
+
+    private var frameCount = 0
+    private var lastResult: PoseObservation? = null
+
+    override fun detect(frame: AnalysisFrame): PoseObservation? {
+        frameCount++
+        // The explicit first-frame case matters: without it the guide has no pose
+        // at all until frame N, which is visible as a late-arriving silhouette on
+        // every camera open.
+        if (frameCount == 1 || frameCount % refreshEveryFrames == 0) {
+            lastResult = delegate.detect(frame)
+        }
+        return lastResult
+    }
+
+    override fun close() = delegate.close()
+
+    fun reset() {
+        frameCount = 0
+        lastResult = null
+    }
+}
+
 class ThrottledSubjectSceneSegmenter(
     private val delegate: SubjectSceneSegmenter,
     // Segmentation is the expensive generic-object fallback. Refresh it less

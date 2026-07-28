@@ -84,6 +84,7 @@ import com.gamdo.app.data.preset.StylePreset
 import com.gamdo.app.detect.DetectionResult
 import com.gamdo.app.detect.MlKitFaceDetector
 import com.gamdo.app.detect.MlKitPoseDetector
+import com.gamdo.app.detect.ThrottledPoseDetector
 import com.gamdo.app.detect.MlKitObjectDetector
 import com.gamdo.app.detect.ThrottledObjectSceneDetector
 import com.gamdo.app.detect.MlKitSubjectSegmenter
@@ -167,7 +168,7 @@ fun CameraScreen(
     val scene = remember {
         SceneDetector(
             faceDetector = MlKitFaceDetector(),
-            poseDetector = MlKitPoseDetector(),
+            poseDetector = ThrottledPoseDetector(MlKitPoseDetector()),
             objectDetector = ThrottledObjectSceneDetector(MlKitObjectDetector()),
             subjectSegmenter = ThrottledSubjectSceneSegmenter(MlKitSubjectSegmenter()),
             // Per-stage cost, debug builds only. Every ML Kit model here blocks the
