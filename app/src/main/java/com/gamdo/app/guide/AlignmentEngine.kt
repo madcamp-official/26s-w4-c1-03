@@ -154,9 +154,14 @@ class AlignmentEngine {
         )
     }
 
+    // B 모듈 리드 승인 수정(오너 결정 O-7, 2026-07-28): 브래킷 폭 단위 오류.
+    // `targetAspectRatio`는 픽셀 비인데 정규화 폭에 그대로 곱하고 있었다. 프레임
+    // 종횡비로 나누지 않아 4:3 분석 스트림에서 모든 브래킷이 선언된 폭의 정확히
+    // 75%로 그려졌다 — 4:5 목표가 대략 3:5로 나왔다. 계산은 SceneLayoutGuide와
+    // 공유하도록 CompositionFrame으로 뽑았다(두 곳에 같은 버그가 복제돼 있었다).
     private fun targetFrame(target: StyleTarget): RectN {
-        val height = target.subjectScaleRange.midpoint().coerceIn(0.12f, 0.92f)
-        val width = (height * target.targetAspectRatio).coerceIn(0.12f, 0.92f)
+        val height = CompositionFrame.height(target)
+        val width = CompositionFrame.width(target, height)
         val centerX = target.subjectAnchorX.coerceIn(width / 2f, 1f - width / 2f)
         val headroom = target.headroomRange.midpoint().coerceIn(0f, 0.8f)
         val centerY = (headroom + height / 2f).coerceIn(height / 2f, 1f - height / 2f)

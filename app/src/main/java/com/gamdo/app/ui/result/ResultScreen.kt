@@ -134,7 +134,7 @@ fun ResultScreen(
         // save button below.
         value = withContext(Dispatchers.Default) {
             val file = File(captureValue.filePath)
-            val preview = EditSourceLoader.decode(file, PREVIEW_MAX_SIDE)
+            val preview = EditSourceLoader.decode(file, EDITOR_DECODE_MAX_SIDE)
                 ?: return@withContext null
             // Every failure below falls back to the untouched decode. An
             // auto-correction the user never asked for must never be the reason a
@@ -157,7 +157,7 @@ fun ResultScreen(
                     sample = sample,
                     preset = null,
                     subject = conditions.subject,
-                    requestedMaxSide = PREVIEW_MAX_SIDE,
+                    requestedMaxSide = EDITOR_DECODE_MAX_SIDE,
                 )
                 AutoCorrected(editor.render(preview, plan).bitmap, plan)
             }.getOrElse {
@@ -366,7 +366,7 @@ fun ResultScreen(
                             // Which is what this used to do. The chain ended in
                             // `?: edited ?: source`, so a full decode that came back
                             // null — missing file, truncated JPEG — silently wrote the
-                            // PREVIEW_MAX_SIDE bitmap instead and still reported
+                            // editor-resolution bitmap instead and still reported
                             // 갤러리에 저장됨. `renderForSave` has nowhere to put a
                             // preview, so the fallback cannot come back by accident.
                             val plan = corrected?.plan
@@ -466,7 +466,16 @@ private fun FilterThumb(label: String, asset: String, selected: Boolean, onClick
  * limits quality on screen, and it is roughly 1/7 the pixels of a capture — which
  * is what the filter re-render costs on every tap and every slider frame.
  */
-private const val PREVIEW_MAX_SIDE = 1440
+/**
+ * Longest side the editor decodes at.
+ *
+ * Named for what it is rather than `PREVIEW_MAX_SIDE`, which is also a public
+ * constant in `edit/GeometryPlan.kt` with a **different** value (2000) feeding the
+ * render-budget ladder. Two same-named constants in one feature area is how a
+ * "raise the preview quality" edit lands on the wrong one; the values are both
+ * correct for their own job, so the fix is the name, not the number.
+ */
+private const val EDITOR_DECODE_MAX_SIDE = 1440
 
 /**
  * Longest edge the save pass renders at. §4-1's target is 4000px; captures come

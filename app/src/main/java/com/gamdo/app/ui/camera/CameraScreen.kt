@@ -108,7 +108,6 @@ import com.gamdo.app.ui.theme.Sage
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
@@ -215,11 +214,9 @@ fun CameraScreen(
 
     // The guide target comes from preset data (assets/presets.json = GET /presets),
     // never from values copied into this file.
-    val presets = remember {
+    val catalogue = remember {
         runCatching { container.presetRepository.loadBundledPresets() }.getOrDefault(emptyList())
     }
-    val presetIds = remember(presets) { presets.map { it.id } }
-    val presetNames = remember(presets) { presets.map { it.displayName } }
     // §6-2 onboarding → camera: the style picked during onboarding selects the
     // initial preset. A failed read degrades to "nothing stored" rather than to
     // "still reading" — the latter would leave the guide target unpublished for
@@ -229,13 +226,36 @@ fun CameraScreen(
             runCatching { container.settingsRepository.getStylePresetId() }.getOrNull(),
         )
     }
+    // §6-2: the strip is ordered by the profile's recommendation rank.
+    //
+    // **This is one id long, and it should not stay that way.** `ProfileEngine`
+    // computes a full ranked `recommendedPresetIds` during onboarding and it is
+    // thrown away at the door: `style_profile` has no column for it, so
+    // `ProfileRepository.saveInitialProfile` never writes it and
+    // `StyleProfileDao.get()` has no caller in main. The one value that survives
+    // the trip is `app_settings.style_preset_id`, which is
+    // `recommendedPresetIds.first()` — so top-1 is the entire ranking the camera
+    // screen can see today.
+    //
+    // Reading the real list needs a `data/**` change (see the report accompanying
+    // this commit); when it lands, only this line changes and `orderByRank` and
+    // its tests carry over unaltered.
+    val rankedPresetIds = remember(onboardingStyle) { listOfNotNull(onboardingStyle?.id) }
+    val presets = remember(catalogue, rankedPresetIds) {
+        orderByRank(catalogue, rankedPresetIds) { it.id }
+    }
+    val presetIds = remember(presets) { presets.map { it.id } }
     // §3-2 top bar. The in-session pick is deliberately *not* written back to
     // app_settings (TEAM.md §8): that key is the D4 personalisation profile, so
     // a relaunch must return to the onboarding style. It is held as an id, not
-    // an index, because §6-2 will reorder `presets` by recommendation rank.
+    // an index, because §6-2 reorders `presets` by recommendation rank — a stored
+    // index would come to point at a style the user never chose.
     var sessionStyleId by rememberSaveable { mutableStateOf<String?>(null) }
     var stylePickerOpen by rememberSaveable { mutableStateOf(false) }
     var guideVisible by rememberSaveable { mutableStateOf(true) }
+    // Both id lists below are derived from the *reordered* `presets`, which is what
+    // keeps the selection on the same style across a reorder. See
+    // `StyleSelectionTest.재정렬해도 선택된 스타일은 그대로 선택되어 있다`.
     val styleIndex = resolveStyleIndex(
         presetIds = presetIds,
         onboardingId = onboardingStyle?.id,
@@ -884,6 +904,7 @@ private fun CameraPreviewPane(
         // The single pointer surface (see this function's KDoc). Both gestures are
         // hosted by one pointerInput node and run as sibling coroutines inside it;
         // a second Box for the tap would sit above this one and swallow the pinch.
+        // How those siblings are started is load-bearing — see installPreviewGestures.
         //
         // Keyed on `controller` only — see `currentAspect` above for why `aspect`
         // must not be a key.
@@ -891,17 +912,17 @@ private fun CameraPreviewPane(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(controller) {
-                    coroutineScope {
-                        // KNOWN GAP — the first preview gesture after a cold start is
-                        // lost, every launch, on SM-G970N. Instrumented: on gesture #1
-                        // this node sees a Release with no Press; on #2 it sees both.
-                        // Compose starts a pointerInput coroutine lazily on the first
-                        // event, so the DOWN that starts it is never observed and
-                        // `awaitFirstDown` below never completes. Costs one tap per
-                        // app launch; a fix means changing how PreviewView is bound
-                        // (surfaceProvider instead of a CameraController), which is
-                        // its own piece of work — not an improvised patch here.
-                        launch {
+                    // Both gestures are installed *undispatched*, and that is the whole
+                    // fix for "the first preview gesture after a cold start is lost".
+                    // Compose already starts this handler undispatched and only then
+                    // delivers the event that started it; the two `launch`es that used
+                    // to be here were dispatched, so neither had reached
+                    // `awaitPointerEventScope` in time and the first DOWN was dropped —
+                    // which is why gesture #1 was instrumented as a Release with no
+                    // Press. See installPreviewGestures for the bytecode this is read
+                    // off. Nothing is replayed: a lost tap beats a phantom one.
+                    installPreviewGestures(
+                        tap = {
                             detectTapGestures { offset ->
                                 val factory = previewView?.meteringPointFactory
                                 val point = resolveTapFocusPoint(
@@ -933,20 +954,20 @@ private fun CameraPreviewPane(
                                 if (factory == null || point == null) return@detectTapGestures
                                 controller.focusAt(factory, point.x, point.y)
                             }
-                        }
+                        },
                         // Keep zoom interaction on the preview itself, like the
                         // stock Galaxy camera. CameraX receives the continuous
                         // gesture value, while the controller rounds the applied
                         // ratio to 0.1x and clamps to the lens bounds. The readout
                         // below observes CameraX's actual ZoomState.
-                        launch {
+                        pinch = {
                             detectTransformGestures { _, _, zoomChange, _ ->
                                 if (zoomChange.isFinite() && zoomChange > 0f && zoomChange != 1f) {
                                     controller.setZoom(controller.zoomRatio.value * zoomChange)
                                 }
                             }
-                        }
-                    }
+                        },
+                    )
                 },
         )
 
