@@ -41,10 +41,18 @@ interface SubjectSceneSegmenter {
 class ThrottledObjectSceneDetector(
     private val delegate: ObjectSceneDetector,
     private val refreshEveryFrames: Int = 3,
-) : ObjectSceneDetector {
+) : ObjectSceneDetector, AcceleratorReporting {
     init {
         require(refreshEveryFrames >= 1)
     }
+
+    /**
+     * Pass-through. The throttle picks a cadence, not a processor, so it has
+     * nothing of its own to report — but it is what the host holds, so without
+     * this forward the accelerator record would be unreachable from outside.
+     */
+    override val acceleratorReport: DetectorAcceleratorReport?
+        get() = (delegate as? AcceleratorReporting)?.acceleratorReport
 
     private var frameCount = 0
     private var lastResult: List<ObjectObservation> = emptyList()
@@ -213,6 +221,21 @@ class SceneDetector(
     private val customObjectDetector: CustomSceneDetector? = null,
     private val stageSink: ((DetectStageTimings) -> Unit)? = null,
 ) {
+    /**
+     * Which processor the object stage is actually running on, or `null` when no
+     * wired detector can say.
+     *
+     * The object stage is the heaviest per-frame cost in this class, and whether
+     * it is on GPU or CPU changes that cost by an order of magnitude. That fact
+     * was previously only inferable from a third-party TFLite log line about node
+     * counts; [DetectStageTimings] reports how long the stage took but never what
+     * ran it. A debug HUD reading `objectMs` without this is reading a number
+     * whose scale it cannot explain.
+     */
+    val objectAcceleratorReport: DetectorAcceleratorReport?
+        get() = (customObjectDetector as? AcceleratorReporting)?.acceleratorReport
+            ?: (objectDetector as? AcceleratorReporting)?.acceleratorReport
+
     fun detect(frame: AnalysisFrame): DetectionResult {
         val t0 = System.nanoTime()
         val faces = faceDetector.detect(frame)
