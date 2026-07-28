@@ -1,3 +1,9 @@
+// 이 파일 전체가 remain_plan O-1로 컷된 §5-1 경로다. 같은 컷으로 폐기된 ExifSanitizer를
+// import·호출하는 것은 옳다 — 레퍼런스 경로가 부활하면 D8-5 가드도 함께 부활해야 하므로
+// 둘의 결합은 끊지 않고 통째로 폐기 상태에 둔다. 파일 수준 suppress인 이유는 클래스 수준
+// 어노테이션이 import 문까지는 덮지 못하기 때문이다.
+@file:Suppress("DEPRECATION_ERROR")
+
 package com.gamdo.app.data
 
 import android.content.Context
@@ -77,6 +83,12 @@ data class ReferenceResolution(
  * stored. [resolveBytes] is the Context-free core where the orchestration (and
  * the tests) actually live.
  */
+@Deprecated(
+    message = "§5-1 레퍼런스 따라 찍기는 remain_plan O-1로 컷됐다. AppContainer에서 배선을 " +
+        "걷어냈으므로 프로덕션 생성자 호출이 0이다. 되살리려면 카메라 진입점·업로드 고지 " +
+        "문구·D8-5 가드가 함께 필요하고, 그건 오너 결정 사항이다. remain_plan §1 참조.",
+    level = DeprecationLevel.ERROR,
+)
 class ReferenceRepository(
     private val cachedReferencesDao: CachedReferencesDao,
     private val analysisClient: ReferenceAnalysisClient,

@@ -6,7 +6,6 @@ import com.gamdo.app.BuildConfig
 import com.gamdo.app.core.DeviceIdStore
 import com.gamdo.app.data.local.GamdoDatabase
 import com.gamdo.app.data.network.GamdoApiClient
-import java.io.File
 import kotlinx.serialization.json.Json
 
 /**
@@ -71,14 +70,10 @@ class AppContainer(context: Context) {
         json = json,
     )
 
-    // §5-1: content-hash cache + /references/analyze upload. Every upload this
-    // client makes goes through ExifSanitizer inside ReferenceRepository (D8-5).
-    val referenceRepository: ReferenceRepository = ReferenceRepository(
-        cachedReferencesDao = database.cachedReferencesDao(),
-        analysisClient = ReferenceAnalysisClient { file -> apiClient.analyzeReference(file) },
-        json = json,
-        cacheDir = File(appContext.cacheDir, "reference_uploads"),
-    )
+    // §5-1 레퍼런스 배선은 remain_plan O-1(컷)로 걷어냈다. 컨테이너 프로퍼티는 그 자체가
+    // "이 경로는 살아 있다"는 선언이라, 폐기 표시만 붙이고 생성은 남겨 두면 신호가 엇갈린다.
+    // ReferenceRepository·ExifSanitizer는 @Deprecated(ERROR)로 남아 있으니 되살릴 때 여기에
+    // 다시 붙이면 된다.
 
     val settingsRepository: SettingsRepository = SettingsRepository(database.appSettingsDao())
 

@@ -11,6 +11,12 @@ import kotlin.time.Duration.Companion.minutes
  * dependency-free so the 5-minute budget itself is locked down and tested well
  * before the polling loop that will consume it.
  */
+@Deprecated(
+    message = "생성 job(§5-3)은 remain_plan O-1로 컷됐고, 남은 서버 호출은 GET /presets " +
+        "하나뿐이라 폴링 루프가 생길 일이 없다. 5분 예산 자체는 맞으니 §5-3이 부활하면 " +
+        "이 폐기만 걷어내면 된다. remain_plan §1 참조.",
+    level = DeprecationLevel.ERROR,
+)
 object JobTimeoutPolicy {
 
     /** The fixed budget from `P1_Plan_1.md` §6-1 — not configurable per job. */
