@@ -1,8 +1,10 @@
 package com.gamdo.app.ui.camera
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Test
 
 /**
@@ -192,5 +194,97 @@ class StyleSelectionTest {
                 loaded = true,
             ),
         )
+    }
+
+    // ---- §6-2 스타일 스트립 재정렬 (orderByRank) ----
+
+    private fun order(ranked: List<String>) = orderByRank(presets, ranked) { it }
+
+    @Test
+    fun `추천 순위가 스트립 앞으로 온다`() {
+        assertEquals(
+            listOf("soft_film", "night_street", "clean_social", "candid_feed", "bright_review", "casual_portrait"),
+            order(listOf("soft_film", "night_street")),
+        )
+    }
+
+    @Test
+    fun `추천이 비면 순서를 건드리지 않는다`() {
+        // The profile read has not landed, or the user skipped onboarding. The
+        // catalogue order is the answer, and it must be the *same list* so the
+        // strip does not recompose for nothing.
+        assertEquals(presets, order(emptyList()))
+        assertSame(presets, order(emptyList()))
+    }
+
+    @Test
+    fun `모르는 id는 무시한다`() {
+        // presets.json is the offline fallback for GET /presets, so a ranking can
+        // outlive the catalogue it was computed against — the same way a stored
+        // style_preset_id can. Skip the dead ids, honour the live ones.
+        assertEquals(
+            listOf("night_street", "clean_social", "candid_feed", "bright_review", "soft_film", "casual_portrait"),
+            order(listOf("retired_preset", "night_street", "also_gone")),
+        )
+        // Entirely stale: degrade to no reordering, not to an empty strip.
+        assertEquals(presets, order(listOf("retired_preset", "also_gone")))
+    }
+
+    @Test
+    fun `순위에 없는 프리셋은 원래 상대 순서를 유지한다`() {
+        // A ranking is a preference, not a filter. Hoisting the two ranked styles
+        // must not disturb how the remaining four sit relative to each other.
+        val result = order(listOf("casual_portrait", "bright_review"))
+        assertEquals(listOf("casual_portrait", "bright_review"), result.take(2))
+        assertEquals(listOf("clean_social", "candid_feed", "soft_film", "night_street"), result.drop(2))
+    }
+
+    @Test
+    fun `중복된 추천 id가 있어도 프리셋은 정확히 한 번씩 나온다`() {
+        // ProfileEngine.recommend cannot emit duplicates today, but the ranking is
+        // about to arrive from persistence and eventually from the server. A list
+        // that loses or clones a style is a far worse failure than a mis-ordered
+        // one, so it is closed off here rather than trusted upstream.
+        val result = order(listOf("soft_film", "soft_film", "night_street"))
+        assertEquals(presets.size, result.size)
+        assertEquals(presets.toSet(), result.toSet())
+        assertEquals(listOf("soft_film", "night_street"), result.take(2))
+    }
+
+    @Test
+    fun `재정렬해도 선택된 스타일은 그대로 선택되어 있다`() {
+        // THE trap. An index-based selection silently jumps to a different style
+        // the moment the list moves: the user is on `bright_review` at index 2,
+        // the profile read lands, and index 2 is now `candid_feed` — a style they
+        // never chose, driving a guide target they never asked for.
+        //
+        // The contract that prevents it: derive the ids from the *reordered* list
+        // and let resolveStyleIndex recompute the index from the id. This test is
+        // the wiring in CameraScreen, spelled out.
+        val chosen = "bright_review"
+        val before = resolveStyleIndex(presets, onboardingId = null, sessionId = chosen, loaded = true)
+        assertEquals(2, before)
+
+        val reordered = order(listOf("soft_film", "night_street"))
+        val after = resolveStyleIndex(reordered, onboardingId = null, sessionId = chosen, loaded = true)
+
+        // The index moved...
+        assertNotEquals(before, after)
+        // ...and the style under it did not, which is the only thing the user sees.
+        assertEquals(chosen, presets[before])
+        assertEquals(chosen, reordered[after])
+    }
+
+    @Test
+    fun `추천 1순위는 스트립 첫 칸이자 초기 선택이 된다`() {
+        // What the camera screen actually opens with once the profile is honoured:
+        // the top recommendation leads the strip, and the id-based resolve lands
+        // on it without anyone passing an index around.
+        val ranked = listOf("night_street", "soft_film")
+        val reordered = order(ranked)
+        val index = resolveStyleIndex(reordered, onboardingId = "night_street", sessionId = null, loaded = true)
+
+        assertEquals(0, index)
+        assertEquals("night_street", reordered[index])
     }
 }
