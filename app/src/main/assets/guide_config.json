@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "alignment": {
     "smoothingWindow": 5,
     "alignedIouThreshold": 0.7,
@@ -29,5 +29,21 @@
     "minStableFrames": 6,
     "maxFrameDeltaNorm": 0.01,
     "minVisibleRatio": 0.95
+  },
+  "objectGuide": {
+    "objectRefreshEveryFrames": 1,
+    "segmentationRefreshEveryFrames": 12,
+    "confirmationWindow": 5,
+    "confirmationsRequired": 3,
+    "maxObjects": 4,
+    "minimumIou": 0.30,
+    "maxCenterDistance": 0.16,
+    "minimumAreaRatio": 0.01,
+    "maximumAreaRatio": 0.85,
+    "duplicateIou": 0.75,
+    "semanticMinConfidence": 0.80,
+    "semanticConfirmationsRequired": 3,
+    "templateSafetyMargin": 0.05,
+    "performanceTargetFps": 8
   }
 }

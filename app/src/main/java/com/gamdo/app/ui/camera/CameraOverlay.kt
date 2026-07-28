@@ -3,8 +3,8 @@ package com.gamdo.app.ui.camera
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -23,7 +23,7 @@ import com.gamdo.app.guide.OverlayProjection
 import com.gamdo.app.guide.RectN
 import com.gamdo.app.guide.LayoutGuideLevel
 import com.gamdo.app.guide.SceneLayoutGuide
-import com.gamdo.app.guide.SlotMatchStatus
+import com.gamdo.app.guide.GuideLayoutState
 import com.gamdo.app.ui.theme.Sage
 import kotlin.math.abs
 import kotlin.math.max
@@ -46,6 +46,7 @@ data class OverlayData(
     val mirror: Boolean,
     val guide: OverlayProjection? = null,
     val layoutGuide: SceneLayoutGuide? = null,
+    val layoutState: GuideLayoutState = GuideLayoutState.Searching,
 )
 
 /**
@@ -59,9 +60,9 @@ data class OverlayData(
  * 3. **horizon** — a line that tilts with device roll, red while tilted and
  *    straight + sage once level.
  *
- * The colour change remains the framing feedback. A short confidence prompt is
- * rendered only for the explicit scene-layout-guide flow; there is still no
- * arrow, match gauge, or auto-capture.
+ * Scene discovery has no user-facing text or occupancy feedback. While it is
+ * searching the camera remains visually clear except for a small spinner; after
+ * confirmation only the fixed composition brackets remain.
  *
  * Flicker damping lives upstream in `OverlayStabilizer`, not here: this composable
  * renders whatever state it is handed, so the §0.4 harness measuring the state
@@ -116,28 +117,20 @@ fun CameraOverlay(
         // slots stay on screen while the user moves the camera or the objects.
         data.layoutGuide?.fixedLayout?.let { fixed ->
             fixed.template.slots.forEach { slot ->
-                val match = fixed.matches.firstOrNull { it.slotId == slot.id }
                 val slotRect = mapRect(slot.bounds, data, vw, vh)
-                val color = when (match?.status) {
-                    SlotMatchStatus.FILLED -> Sage
-                    SlotMatchStatus.DETECTING -> Color.White.copy(alpha = 0.72f)
-                    SlotMatchStatus.EMPTY, null -> Color.White.copy(alpha = 0.9f)
-                }
                 drawRoundRect(
-                    color = color.copy(alpha = fixed.template.opacity),
+                    color = Color.White.copy(alpha = fixed.template.opacity * 0.32f),
                     topLeft = Offset(slotRect.left, slotRect.top),
                     size = Size(slotRect.width, slotRect.height),
+                    cornerRadius = CornerRadius(18.dp.toPx(), 18.dp.toPx()),
                 )
-                drawRoundRect(
-                    color = color,
-                    topLeft = Offset(slotRect.left, slotRect.top),
-                    size = Size(slotRect.width, slotRect.height),
-                    cornerRadius = CornerRadius(22.dp.toPx(), 22.dp.toPx()),
-                    style = Stroke(width = 2.dp.toPx()),
-                )
+                drawLayoutSlotBracket(slotRect, Color.White.copy(alpha = 0.86f))
             }
         }
 
+        // A layout is either a fixed scene proposal or still being searched.
+        // The legacy moving object frame is intentionally not rendered here.
+        /*
         data.guide
             ?.takeIf { it.visible && data.layoutGuide?.fixedLayout == null }
             ?.let { guide ->
@@ -184,6 +177,7 @@ fun CameraOverlay(
                 drawTargetBracket(frame, guideColor)
             }
         }
+        */
 
         if (!showDetections) return@Canvas
 
@@ -208,18 +202,32 @@ fun CameraOverlay(
         }
         }
 
-        overlay?.layoutGuide?.prompt?.let { prompt ->
-            val message = when (prompt) {
-                com.gamdo.app.guide.LayoutGuidePrompt.FIND_SUBJECT -> "피사체를 화면에 보여주세요"
-                com.gamdo.app.guide.LayoutGuidePrompt.HOLD_STEADY -> "피사체를 잠시 유지해주세요"
-            }
-            Text(
-                text = message,
-                color = Color.White.copy(alpha = 0.92f),
+        if (overlay?.layoutState is GuideLayoutState.Searching) {
+            CircularProgressIndicator(
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 18.dp),
+                    .align(Alignment.Center)
+                    .size(18.dp),
+                color = Color.White.copy(alpha = 0.72f),
+                strokeWidth = 2.dp,
             )
+        }
+    }
+}
+
+/** Thin open corners read as a composition target rather than a filled checklist box. */
+private fun DrawScope.drawLayoutSlotBracket(frame: RectN, color: Color) {
+    val arm = (min(frame.width, frame.height) * 0.18f)
+        .coerceIn(10.dp.toPx(), 26.dp.toPx())
+        .coerceAtMost(min(frame.width, frame.height) / 2f)
+    val stroke = 1.5.dp.toPx()
+    for (right in listOf(false, true)) {
+        for (bottom in listOf(false, true)) {
+            val x = if (right) frame.right else frame.left
+            val y = if (bottom) frame.bottom else frame.top
+            val dx = if (right) -arm else arm
+            val dy = if (bottom) -arm else arm
+            drawLine(color, Offset(x, y), Offset(x + dx, y), stroke, StrokeCap.Round)
+            drawLine(color, Offset(x, y), Offset(x, y + dy), stroke, StrokeCap.Round)
         }
     }
 }

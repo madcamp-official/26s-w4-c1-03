@@ -154,6 +154,7 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
                             else -> SlotVisualKind.GENERIC_OBJECT
                         },
                         semanticConfidence = detectedObject.classificationConfidence,
+                        semanticConfirmed = detectedObject.semanticConfirmed,
                         outline = detectedObject.mask?.outline
                             ?.map { LayoutGuidePoint(it.x, it.y) }
                             .orEmpty(),

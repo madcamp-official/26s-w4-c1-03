@@ -2,6 +2,7 @@ package com.gamdo.app.guide
 
 import com.gamdo.app.detect.DiagnoserConfig
 import com.gamdo.app.detect.FrameFeatureCalculator
+import com.gamdo.app.detect.ObjectTrackerConfig
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -26,12 +27,13 @@ import kotlinx.serialization.json.jsonObject
  */
 @Serializable
 data class GuideConfigBundle(
-    val version: Int = 2,
+    val version: Int = 3,
     val alignment: AlignmentConfigJson = AlignmentConfigJson(),
     val features: FeaturesConfigJson = FeaturesConfigJson(),
     val diagnoser: DiagnoserConfigJson = DiagnoserConfigJson(),
     val scoring: ScoringConfigJson = ScoringConfigJson(),
     val stability: StabilityConfigJson = StabilityConfigJson(),
+    val objectGuide: ObjectGuideConfigJson = ObjectGuideConfigJson(),
 ) {
     fun toGuideConfig(): GuideConfig = alignment.toGuideConfig()
 
@@ -40,6 +42,50 @@ data class GuideConfigBundle(
     fun toFrameFeatureCalculator(): FrameFeatureCalculator = features.toCalculator()
 
     fun toDiagnoserConfig(): DiagnoserConfig = diagnoser.toConfig()
+
+    fun toObjectTrackerConfig(): ObjectTrackerConfig = objectGuide.toTrackerConfig()
+}
+
+/**
+ * `objectGuide` owns all scene-layout thresholds. Values are intentionally
+ * separate from camera UI code so field tuning never changes guide policy.
+ */
+@Serializable
+data class ObjectGuideConfigJson(
+    val objectRefreshEveryFrames: Int = 1,
+    val segmentationRefreshEveryFrames: Int = 12,
+    val confirmationWindow: Int = 5,
+    val confirmationsRequired: Int = 3,
+    val maxObjects: Int = 4,
+    val minimumIou: Float = 0.30f,
+    val maxCenterDistance: Float = 0.16f,
+    val minimumAreaRatio: Float = 0.01f,
+    val maximumAreaRatio: Float = 0.85f,
+    val duplicateIou: Float = 0.75f,
+    val semanticMinConfidence: Float = 0.80f,
+    val semanticConfirmationsRequired: Int = 3,
+    val templateSafetyMargin: Float = 0.05f,
+    val performanceTargetFps: Int = 8,
+) {
+    init {
+        require(objectRefreshEveryFrames >= 1)
+        require(segmentationRefreshEveryFrames >= 1)
+        require(templateSafetyMargin in 0f..0.20f)
+        require(performanceTargetFps >= 1)
+    }
+
+    fun toTrackerConfig(): ObjectTrackerConfig = ObjectTrackerConfig(
+        windowSize = confirmationWindow,
+        confirmationsRequired = confirmationsRequired,
+        maxObjects = maxObjects,
+        minimumIoU = minimumIou,
+        maxCenterDistance = maxCenterDistance,
+        minimumAreaRatio = minimumAreaRatio,
+        maximumAreaRatio = maximumAreaRatio,
+        duplicateIou = duplicateIou,
+        semanticMinConfidence = semanticMinConfidence,
+        semanticConfirmationsRequired = semanticConfirmationsRequired,
+    )
 }
 
 /**

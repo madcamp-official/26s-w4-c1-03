@@ -94,7 +94,7 @@ class GuideConfigJsonTest {
         // rather than silently fall back to code defaults on a device.
         val bundle = parseGuideConfigBundle(readAsset("guide_config.json"))
 
-        assertEquals(2, bundle.version)
+        assertEquals(3, bundle.version)
         val engine = bundle.toGuideConfig() // constructor `require`s the ranges
         assertTrue(engine.smoothingWindow > 0)
         assertTrue(engine.alignedIouThreshold in 0f..1f)
@@ -102,6 +102,11 @@ class GuideConfigJsonTest {
         assertTrue(bundle.features.analysisBudgetMs > 0.0)
         assertTrue(bundle.stability.sequenceFrames > 0)
         assertTrue(bundle.stability.minVisibleRatio in 0f..1f)
+        val objectGuide = bundle.toObjectTrackerConfig()
+        assertEquals(5, objectGuide.windowSize)
+        assertEquals(3, objectGuide.confirmationsRequired)
+        assertEquals(4, objectGuide.maxObjects)
+        assertEquals(0.80f, objectGuide.semanticMinConfidence, 0.0001f)
     }
 
     @Test
