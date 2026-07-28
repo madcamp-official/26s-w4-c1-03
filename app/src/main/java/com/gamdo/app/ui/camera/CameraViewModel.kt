@@ -75,6 +75,17 @@ data class ShutterFrame(
     /** Raw overlay visibility. The show/hide KPI measures exactly this. */
     val visible: Boolean,
     val fixedLayout: FixedLayoutGuide? = null,
+    /**
+     * Where the scene's dominant horizontal line actually sat, or null if none was
+     * detected with enough confidence.
+     *
+     * `MatchScoreCalculator` weights the horizon at 15% of the §4.2 score and takes
+     * this as a parameter — but no caller ever passed one, so the parameter kept its
+     * `0.5f` default and 15% of every score was a function of the *preset alone*,
+     * identical for every photo. Carrying it here is what makes that term a
+     * measurement (review_report M2).
+     */
+    val observedHorizonPosition: Float? = null,
 )
 
 /**
@@ -176,7 +187,22 @@ class CameraViewModel(
      * the cost for the same one number.
      */
     fun matchScoreOf(frame: ShutterFrame): Float =
-        matchScoreCalculator.calculate(frame.features, frame.target)
+        matchScoreCalculator.calculate(
+            frame.features,
+            frame.target,
+            // Falling back to the target's own horizon makes the term score 1.0,
+            // i.e. no penalty. That is the honest reading: the term asks "did the
+            // user place the horizon where this style wants it", and when no
+            // horizon is visible the question does not apply. It also matches what
+            // `SceneProposalEngine` already does with an undetected horizon
+            // (`scene.horizonPosition ?: return style.horizonPosition`).
+            //
+            // The previous behaviour — leaving the parameter at its 0.5f default —
+            // was worse than either: it compared the preset against a number no one
+            // measured, so a style wanting a horizon at 0.55 was permanently docked
+            // for a scene that may well have had it exactly there.
+            observedHorizonPosition = frame.observedHorizonPosition ?: frame.target.horizonPosition,
+        )
 
     private val _featureBudget = MutableStateFlow<FeatureBudgetStats?>(null)
     val featureBudget: StateFlow<FeatureBudgetStats?> = _featureBudget.asStateFlow()
@@ -335,6 +361,7 @@ class CameraViewModel(
             aligned = alignedForKpi,
             visible = projection.visible,
             fixedLayout = fixedLayout,
+            observedHorizonPosition = sceneGuide.observation.horizonPosition,
         )
 
         if (collectDebugSignals) {
@@ -346,7 +373,12 @@ class CameraViewModel(
                 // **not** the §4.2 weighted matchScore. Same name, different
                 // quantity — only the `matchScore` field below is loggable (§3-3).
                 iou = alignmentEngine.metrics().matchScore,
-                matchScore = matchScoreCalculator.calculate(features, resolvedTarget),
+                matchScore = matchScoreCalculator.calculate(
+                    features,
+                    resolvedTarget,
+                    observedHorizonPosition = sceneGuide.observation.horizonPosition
+                        ?: resolvedTarget.horizonPosition,
+                ),
                 fixedLayoutId = fixedLayout?.template?.id,
             )
         }
