@@ -107,11 +107,17 @@ class GuideConfigJsonTest {
         assertEquals(3, objectGuide.confirmationsRequired)
         assertEquals(4, objectGuide.maxObjects)
         assertEquals(0.80f, objectGuide.semanticMinConfidence, 0.0001f)
+        assertEquals(0.70f, objectGuide.focusRegionWidth, 0.0001f)
+        assertEquals(0.68f, objectGuide.focusRegionHeight, 0.0001f)
         val shape = bundle.objectGuide.toDetectedSlotShapeConfig()
         assertEquals(0.55f, shape.aspectRatioMin, 0.0001f)
         assertEquals(1.80f, shape.aspectRatioMax, 0.0001f)
         assertEquals(0.70f, shape.scaleMin, 0.0001f)
         assertEquals(1.16f, shape.scaleMax, 0.0001f)
+        val multiScale = bundle.objectGuide.toMultiScaleObjectDetectionConfig()
+        assertTrue(multiScale.enabled)
+        assertEquals(6, multiScale.fallbackEveryFrames)
+        assertEquals(1.60f, multiScale.cropScale, 0.0001f)
     }
 
     @Test
