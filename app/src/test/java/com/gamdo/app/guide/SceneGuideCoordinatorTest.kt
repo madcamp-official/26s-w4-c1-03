@@ -75,7 +75,14 @@ class SceneGuideCoordinatorTest {
         val state = coordinator.update(detection, StyleTarget(), SceneFrameSignals(layoutTemplate = template))
 
         assertTrue(state.layoutState is GuideLayoutState.Fixed)
-        assertTrue(state.fixedLayout!!.matches.isEmpty())
+        // This used to assert `matches.isEmpty()` — "the coordinator produces no
+        // occupancy state". That is now guaranteed by the type: `SlotMatch` and
+        // `SlotMatchStatus` were deleted (D2). What is still worth pinning is that
+        // the correspondence pass runs once per slot and does not invent or drop one.
+        assertEquals(
+            state.fixedLayout!!.template.slots.map { it.id },
+            state.fixedLayout!!.assignments.map { it.slotId },
+        )
         val fixedBounds = state.layoutGuide.fixedLayout!!.template.slots.single().bounds
         assertTrue(fixedBounds.left in 0f..1f && fixedBounds.right in 0f..1f)
     }

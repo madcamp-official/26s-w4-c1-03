@@ -32,6 +32,15 @@ data class GuideDebug(
     val visible: Boolean,
     val iou: Float,
     val matchScore: Float,
+    /**
+     * Which layout template the auto resolver has latched, or null for none.
+     *
+     * Distinct from the HUD's `layout=` field, which is the *outline confidence
+     * level*. The two were indistinguishable on device and lead to opposite
+     * conclusions about whether the preset guide should be on screen, which made
+     * "did the coexistence fix work?" unanswerable from a screenshot.
+     */
+    val fixedLayoutId: String? = null,
 )
 
 /**
@@ -232,6 +241,7 @@ class CameraViewModel(
                 // quantity — only the `matchScore` field below is loggable (§3-3).
                 iou = alignmentEngine.metrics().matchScore,
                 matchScore = matchScoreCalculator.calculate(features, resolvedTarget),
+                fixedLayoutId = fixedLayout?.template?.id,
             )
         }
 

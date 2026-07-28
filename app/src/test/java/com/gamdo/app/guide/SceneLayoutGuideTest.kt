@@ -6,17 +6,23 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * The `prompt` assertions that used to sit alongside each level check are gone:
+ * `LayoutGuidePrompt` was removed because its only renderer drew D2-banned
+ * instruction copy ("피사체를 화면에 보여주세요"). The **levels** are what the
+ * overlay actually branches on, and those are still pinned here.
+ */
 class SceneLayoutGuideTest {
     private val style = StyleTarget(subjectAnchorX = 0.5f, horizonPosition = 0.5f)
 
     @Test
-    fun `missing subject asks for a subject and keeps static guide`() {
+    fun `missing subject falls back to the static guide and draws nothing`() {
         val proposal = SceneProposalEngine().propose(SceneObservation(), style)
         val guide = SceneLayoutGuideEngine().build(SceneObservation(), proposal)
 
         assertEquals(LayoutGuideLevel.STATIC, guide.level)
-        assertEquals(LayoutGuidePrompt.FIND_SUBJECT, guide.prompt)
         assertTrue(guide.outline.isEmpty())
+        assertEquals(null, guide.bounds)
     }
 
     @Test
@@ -30,7 +36,6 @@ class SceneLayoutGuideTest {
         val guide = SceneLayoutGuideEngine().build(observation, proposal)
 
         assertEquals(LayoutGuideLevel.DETECTING, guide.level)
-        assertEquals(LayoutGuidePrompt.HOLD_STEADY, guide.prompt)
         assertEquals(4, guide.outline.size)
         assertEquals(observation.subjectBox, guide.bounds)
     }
@@ -53,7 +58,6 @@ class SceneLayoutGuideTest {
         val guide = SceneLayoutGuideEngine().build(observation, proposal)
 
         assertEquals(LayoutGuideLevel.CONFIDENT, guide.level)
-        assertEquals(null, guide.prompt)
         assertTrue(guide.outline.size >= 3)
         assertTrue(guide.outline.all { it.x in 0f..1f && it.y in 0f..1f })
         assertFalse(guide.bounds == observation.subjectBox)
