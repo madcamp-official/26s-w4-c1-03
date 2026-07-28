@@ -136,7 +136,22 @@ class ThrottledSubjectSceneSegmenter(
     override fun detect(frame: AnalysisFrame): SegmentationObservation? {
         frameCount++
         if (frameCount == 1 || frameCount % refreshEveryFrames == 0) {
-            delegate.detect(frame)?.let { lastResult = it }
+            // Assign unconditionally. This used to be `?.let { lastResult = it }`,
+            // so a null never cleared the cache and the last mask survived for the
+            // rest of the session (review_report #15).
+            //
+            // Null is not an exotic case here. `SegmentationMaskReducer` returns it
+            // when the foreground covers too few cells — which is literally the
+            // subject leaving the frame — and `subjectBox` in the proposal engine
+            // prefers `segmented?.bounds` over live detection, so a stale mask
+            // outranks the truth. Panning from a person to a blank wall kept
+            // drawing an outline over nothing and kept reporting a confident
+            // subject.
+            //
+            // Between refreshes the last *decision* is still reused, including a
+            // decision of "nothing there" — that is the throttle working, not the
+            // cache going stale.
+            lastResult = delegate.detect(frame)
         }
         return lastResult
     }
