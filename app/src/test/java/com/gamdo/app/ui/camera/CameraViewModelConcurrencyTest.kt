@@ -149,6 +149,16 @@ class CameraViewModelConcurrencyTest {
         stress(rounds = 40_000) { viewModel, _ -> viewModel.rescanLayout() }
     }
 
+    @Test
+    fun `tap anchored rescan while frames are analysed does not break the analysis thread`() {
+        stress(rounds = 40_000) { viewModel, round ->
+            viewModel.rescanLayoutAt(
+                anchorX = 0.25f + (round % 5) * 0.12f,
+                anchorY = 0.30f + (round % 4) * 0.10f,
+            )
+        }
+    }
+
     /**
      * The realistic worst case: a user changing style and tapping 재탐색 while the
      * camera keeps running. Both main-thread paths reset overlapping state.

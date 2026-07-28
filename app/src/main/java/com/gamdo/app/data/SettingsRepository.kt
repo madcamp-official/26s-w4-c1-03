@@ -22,7 +22,19 @@ class SettingsRepository(private val appSettingsDao: AppSettingsDao) {
     suspend fun saveStylePreference(
         cardIds: Set<String>,
         recommendedPresetId: String = recommendPresetId(cardIds),
+        recommendedPresetIds: List<String> = listOf(recommendedPresetId),
     ) {
+        // A profile is a ranking, not only its first answer. `style_preset_id`
+        // remains the single initial selection for backward compatibility, while
+        // the whole ordering lets the camera place every recommended style first.
+        // Preset IDs are app-controlled snake_case values, so the existing compact
+        // app_settings string format is sufficient and needs no schema change.
+        val ranking = recommendedPresetIds.asSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
+            .toList()
+            .ifEmpty { listOf(recommendedPresetId) }
         appSettingsDao.put(
             AppSettings(
                 key = KEY_SELECTED_CARD_IDS,
@@ -33,7 +45,14 @@ class SettingsRepository(private val appSettingsDao: AppSettingsDao) {
         appSettingsDao.put(
             AppSettings(
                 key = KEY_STYLE_PRESET_ID,
-                value = recommendedPresetId,
+                value = ranking.first(),
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
+        appSettingsDao.put(
+            AppSettings(
+                key = KEY_RECOMMENDED_PRESET_IDS,
+                value = ranking.joinToString(","),
                 updatedAt = System.currentTimeMillis(),
             ),
         )
@@ -41,6 +60,15 @@ class SettingsRepository(private val appSettingsDao: AppSettingsDao) {
 
     suspend fun getStylePresetId(): String? =
         appSettingsDao.get(KEY_STYLE_PRESET_ID)
+
+    /** Full onboarding recommendation order for the camera style strip. */
+    suspend fun getRecommendedPresetIds(): List<String> =
+        appSettingsDao.get(KEY_RECOMMENDED_PRESET_IDS)
+            .orEmpty()
+            .split(',')
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
 
     suspend fun saveActiveReference(hash: String, scope: String, strength: Double) {
         put(KEY_ACTIVE_REFERENCE_HASH, hash)
@@ -79,6 +107,7 @@ class SettingsRepository(private val appSettingsDao: AppSettingsDao) {
         const val KEY_ONBOARDING_DONE = "onboarding_done"
         const val KEY_SELECTED_CARD_IDS = "selected_card_ids"
         const val KEY_STYLE_PRESET_ID = "style_preset_id"
+        const val KEY_RECOMMENDED_PRESET_IDS = "recommended_preset_ids"
         const val KEY_ACTIVE_REFERENCE_HASH = "active_reference_hash"
         const val KEY_ACTIVE_REFERENCE_SCOPE = "active_reference_scope"
         const val KEY_ACTIVE_REFERENCE_STRENGTH = "active_reference_strength"

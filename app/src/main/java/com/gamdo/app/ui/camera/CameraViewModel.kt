@@ -464,15 +464,22 @@ class CameraViewModel(
         }
     }
 
-    /** P1 calls this after CameraX focus succeeds; coordinates are normalized. */
+    /**
+     * Valid camera taps restart automatic search around their normalized preview
+     * point. Like every other UI-originated guide mutation, this must run on the
+     * analysis thread; calling the controller directly here would reintroduce the
+     * stabilizer/tracker race that [rescanLayout] already avoids.
+     */
     fun rescanLayoutAt(anchorX: Float, anchorY: Float) {
-        alignmentEngine.reset()
-        stabilizer.reset()
-        sceneGuideSessionController.rescanAt(anchorX, anchorY)
-        firstFixedNs = null
-        sceneStartedNs = System.nanoTime()
-        freshObjectFrames = 0L
-        _sceneGuideMetrics.value = SceneGuideMetrics()
+        pendingGuideWork.add {
+            alignmentEngine.reset()
+            stabilizer.reset()
+            sceneGuideSessionController.rescanAt(anchorX, anchorY)
+            firstFixedNs = null
+            sceneStartedNs = System.nanoTime()
+            freshObjectFrames = 0L
+            _sceneGuideMetrics.value = SceneGuideMetrics()
+        }
     }
 
     private fun updateSceneMetrics(sceneGuide: com.gamdo.app.guide.SceneGuideState) {

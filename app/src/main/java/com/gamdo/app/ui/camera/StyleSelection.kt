@@ -9,8 +9,11 @@ package com.gamdo.app.ui.camera
  * host holds a nullable *wrapper* — `null` = not read yet — and the inner
  * [id] carries the stored value, which may itself be null.
  */
-@JvmInline
-value class OnboardingStyle(val id: String?)
+data class OnboardingStyle(
+    val id: String?,
+    /** Best-first profile ordering. Empty keeps catalogue order for old installs. */
+    val recommendedPresetIds: List<String> = emptyList(),
+)
 
 /**
  * §3-2 상단 바 — the single decision behind "which style is active right now",

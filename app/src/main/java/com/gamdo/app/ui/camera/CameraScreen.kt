@@ -223,23 +223,17 @@ fun CameraScreen(
     val onboardingStyle by produceState<OnboardingStyle?>(initialValue = null, container) {
         value = OnboardingStyle(
             runCatching { container.settingsRepository.getStylePresetId() }.getOrNull(),
+            runCatching { container.settingsRepository.getRecommendedPresetIds() }.getOrDefault(emptyList()),
         )
     }
     // §6-2: the strip is ordered by the profile's recommendation rank.
     //
-    // **This is one id long, and it should not stay that way.** `ProfileEngine`
-    // computes a full ranked `recommendedPresetIds` during onboarding and it is
-    // thrown away at the door: `style_profile` has no column for it, so
-    // `ProfileRepository.saveInitialProfile` never writes it and
-    // `StyleProfileDao.get()` has no caller in main. The one value that survives
-    // the trip is `app_settings.style_preset_id`, which is
-    // `recommendedPresetIds.first()` — so top-1 is the entire ranking the camera
-    // screen can see today.
-    //
-    // Reading the real list needs a `data/**` change (see the report accompanying
-    // this commit); when it lands, only this line changes and `orderByRank` and
-    // its tests carry over unaltered.
-    val rankedPresetIds = remember(onboardingStyle) { listOfNotNull(onboardingStyle?.id) }
+    // `style_preset_id` remains the first-run selection. The companion rank list
+    // carries the rest of the profile recommendation without adding a Room column;
+    // old installs simply return an empty list and keep catalogue order.
+    val rankedPresetIds = remember(onboardingStyle) {
+        onboardingStyle?.recommendedPresetIds.orEmpty()
+    }
     val presets = remember(catalogue, rankedPresetIds) {
         orderByRank(catalogue, rankedPresetIds) { it.id }
     }
@@ -467,6 +461,7 @@ fun CameraScreen(
             zoomBounds = zoomBounds,
             onSelectZoom = { controller.setZoom(it) },
             onRescan = { viewModel.rescanLayout() },
+            onRescanAt = { anchorX, anchorY -> viewModel.rescanLayoutAt(anchorX, anchorY) },
             onPaneRatio = { paneRatioWtoH = it },
             referenceLayer = referenceLayer,
             hud = {
@@ -834,6 +829,7 @@ private fun CameraPreviewPane(
     zoomBounds: ZoomBounds,
     onSelectZoom: (Float) -> Unit,
     onRescan: () -> Unit,
+    onRescanAt: (Float, Float) -> Unit,
     onPaneRatio: (Float) -> Unit,
     referenceLayer: @Composable BoxScope.() -> Unit,
     hud: @Composable BoxScope.() -> Unit,
@@ -943,6 +939,13 @@ private fun CameraPreviewPane(
                                     paneHeight = size.height.toFloat(),
                                     ratioWtoH = currentAspect.ratioWtoH,
                                 )
+                                val sceneAnchor = resolveTapSceneAnchor(
+                                    tapX = offset.x,
+                                    tapY = offset.y,
+                                    paneWidth = size.width.toFloat(),
+                                    paneHeight = size.height.toFloat(),
+                                    ratioWtoH = currentAspect.ratioWtoH,
+                                )
                                 // On-device verification needs a signal of its own:
                                 // a successful focus request logs nothing, and
                                 // CameraX's own capture-request lines also fire for
@@ -962,8 +965,12 @@ private fun CameraPreviewPane(
                                             },
                                     )
                                 }
-                                if (factory == null || point == null) return@detectTapGestures
+                                if (factory == null || point == null || sceneAnchor == null) return@detectTapGestures
                                 controller.focusAt(factory, point.x, point.y)
+                                // A focus tap says where the photographer's subject
+                                // is. It does not force-select one object; it restarts
+                                // the same automatic group search inside that area.
+                                onRescanAt(sceneAnchor.x, sceneAnchor.y)
                             }
                         },
                         // Keep zoom interaction on the preview itself, like the
