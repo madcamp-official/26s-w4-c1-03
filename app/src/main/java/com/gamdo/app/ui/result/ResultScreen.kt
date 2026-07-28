@@ -30,7 +30,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,6 +54,10 @@ import com.gamdo.app.edit.FilterEngine
 import com.gamdo.app.edit.QuickFilterEditor
 import com.gamdo.app.edit.LocalEditor
 import com.gamdo.app.edit.LocalFilter
+import com.gamdo.app.edit.SaveRender
+import com.gamdo.app.edit.pixelBuffer
+import com.gamdo.app.edit.renderForSave
+import com.gamdo.app.edit.renderLatest
 import com.gamdo.app.ui.components.PrimaryPillButton
 import com.gamdo.app.ui.theme.Charcoal700
 import com.gamdo.app.ui.theme.Charcoal900
@@ -76,6 +82,21 @@ private const val TAG = "ResultScreen"
  * untouched decode.
  */
 private data class AutoCorrected(val bitmap: Bitmap, val plan: EditPlan?)
+
+/**
+ * Everything the preview render depends on, in one value so the render loop has a
+ * single thing to watch and a single thing to compare.
+ *
+ * Equality is what decides whether a render happens at all: [FilterEngine.Adjustments]
+ * is a data class, so a ruler pushed against the end of its range produces an equal
+ * request and no work, and [Bitmap] compares by identity, which is what "a different
+ * photo" means here.
+ */
+private data class PreviewRequest(
+    val source: Bitmap?,
+    val filter: LocalFilter,
+    val adjustments: FilterEngine.Adjustments,
+)
 
 @Composable
 fun ResultScreen(
@@ -184,12 +205,37 @@ fun ResultScreen(
     // hear about it. 2f has no status line, so this stays empty except on failure.
     var saveError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val edited by produceState<Bitmap?>(source, source, selectedFilter, adjustments) {
-        value = source?.let {
-            withContext(Dispatchers.Default) {
-                QuickFilterEditor.apply(it, selectedFilter, adjustments)
-            }
-        }
+
+    // The interactive preview. This used to be a `produceState` keyed on
+    // `adjustments`, which meant one full-frame filter pass **per ruler tick** — up
+    // to sixty a second, running concurrently on every core of `Dispatchers.Default`,
+    // most of them already superseded before they finished and then dropped at the
+    // `withContext` boundary because the pixel loop has no suspension point for
+    // cancellation to land on. `renderLatest` is the rule that replaces it: one
+    // render in flight, and the ticks that pile up behind it collapse to the newest.
+    // See `edit/PreviewRenderLoop.kt`.
+    var edited by remember { mutableStateOf<Bitmap?>(null) }
+    // Not `by`: the effect below has to read this *inside* `snapshotFlow` for the
+    // flow to observe it. A captured value would pin the loop to whatever the first
+    // composition happened to hold.
+    val request = rememberUpdatedState(PreviewRequest(source, selectedFilter, adjustments))
+    LaunchedEffect(Unit) {
+        // Owned by this loop and handed to nothing else. Safe only because
+        // `renderLatest` serialises the renders — see `QuickFilterEditor.apply`.
+        var scratch: IntArray? = null
+        renderLatest(
+            requests = snapshotFlow { request.value },
+            render = { pending ->
+                pending.source?.let { bitmap ->
+                    withContext(Dispatchers.Default) {
+                        val buffer = pixelBuffer(scratch, bitmap.width, bitmap.height)
+                        scratch = buffer
+                        QuickFilterEditor.apply(bitmap, pending.filter, pending.adjustments, buffer)
+                    }
+                }
+            },
+            publish = { _, rendered -> edited = rendered },
+        )
     }
 
     Column(modifier = Modifier.fillMaxSize().background(Charcoal900)) {
@@ -307,34 +353,56 @@ fun ResultScreen(
                     if (saving) return@PrimaryPillButton
                     val captureValue = capture ?: return@PrimaryPillButton
                     saving = true
+                    // A retry starts clean, or the complaint from the attempt that
+                    // failed stays on screen underneath one that worked.
+                    saveError = null
                     scope.launch {
                         try {
                             // Re-render at full resolution rather than saving the
                             // preview: `edited` is a downsampled bitmap now, and
                             // writing it out would quietly ship a low-resolution
                             // photo to the gallery.
+                            //
+                            // Which is what this used to do. The chain ended in
+                            // `?: edited ?: source`, so a full decode that came back
+                            // null — missing file, truncated JPEG — silently wrote the
+                            // PREVIEW_MAX_SIDE bitmap instead and still reported
+                            // 갤러리에 저장됨. `renderForSave` has nowhere to put a
+                            // preview, so the fallback cannot come back by accident.
                             val plan = corrected?.plan
-                            val result = withContext(Dispatchers.Default) {
-                                EditSourceLoader.decode(File(captureValue.filePath), SAVE_MAX_SIDE)
-                                    ?.let { full ->
-                                        // The **same** plan the preview used, only at
-                                        // save resolution. Re-planning here from a
-                                        // larger decode would let the saved crop drift
-                                        // from the one the user approved.
-                                        val levelled = plan?.let { p ->
-                                            runCatching {
-                                                LocalEditor().render(full, p.withProcessingMaxSide(SAVE_MAX_SIDE)).bitmap
-                                            }.getOrElse {
-                                                Log.w(TAG, "save-time auto-correction failed; saving uncorrected", it)
-                                                full
-                                            }
+                            val rendered = withContext(Dispatchers.Default) {
+                                renderForSave(
+                                    decodeFullResolution = {
+                                        EditSourceLoader.decode(File(captureValue.filePath), SAVE_MAX_SIDE)
+                                    },
+                                    // The **same** plan the preview used, only at save
+                                    // resolution. Re-planning here from a larger decode
+                                    // would let the saved crop drift from the one the
+                                    // user approved.
+                                    correct = { full ->
+                                        plan?.let { p ->
+                                            LocalEditor().render(full, p.withProcessingMaxSide(SAVE_MAX_SIDE)).bitmap
                                         } ?: full
+                                    },
+                                    style = { levelled ->
                                         QuickFilterEditor.apply(levelled, selectedFilter, adjustments)
-                                    }
-                            } ?: edited ?: source ?: return@launch
+                                    },
+                                    onCorrectionFailed = {
+                                        Log.w(TAG, "save-time auto-correction failed; saving uncorrected", it)
+                                    },
+                                )
+                            }
+                            if (rendered !is SaveRender.Ready) {
+                                // R7-1: what happened, in the words someone would use
+                                // about their own photo. The path and the resolution go
+                                // to the log, where they are useful.
+                                Log.w(TAG, "save refused: could not decode ${captureValue.filePath} at ${SAVE_MAX_SIDE}px")
+                                saveError = "원본 사진을 열지 못했어요. 저장하지 않았습니다"
+                                return@launch
+                            }
                             val written = container.captureRepository.saveEditedCapture(
                                 captureId = captureValue.id,
-                                bitmap = result,
+                                bitmap = rendered.image,
                                 // §4-1 비파괴: the record has to hold every control,
                                 // not the three the old panel happened to show, or a
                                 // saved edit cannot be reopened as what it was.
