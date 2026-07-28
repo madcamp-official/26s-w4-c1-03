@@ -56,6 +56,26 @@ class SceneGuideSessionController(
         return state
     }
 
+    /**
+     * Preferred camera integration path. [DetectionResult] already preserves
+     * pose, segmentation, stable object batches and analysis freshness from the
+     * on-device pipeline, so P1 does not need to rebuild those facts for the
+     * layout controller.
+     */
+    fun updateScene(
+        detection: DetectionResult,
+        style: StyleTarget,
+        signals: SceneFrameSignals = SceneFrameSignals(),
+    ): SceneGuideState {
+        val state = coordinator.update(
+            detection = detection,
+            styleTarget = style,
+            signals = signals,
+        )
+        _layoutState.value = state.layoutState
+        return state
+    }
+
     fun selectManualLayout(templateId: String, style: StyleTarget = StyleTarget()): Boolean {
         val selected = coordinator.selectManualLayout(templateId, style)
         if (selected) _layoutState.value = coordinator.currentLayoutState
