@@ -75,3 +75,10 @@
 - InsightFace·무결성 검증을 통과한 후보는 히스토그램 변화량이 작은 순서로 결과 rank를 부여한다. 이는 미적 품질 점수가 아니라 원본 장면 보존을 위한 전달 순서 신호이며, 검증 실패 후보를 통과시키지는 않는다.
 - 필수 서버 테스트 `31 passed`를 확인했다. 실제 인물 사진의 육안 품질 평가는 사용자 제공 사진 확보 후 별도로 진행한다.
 - 변경사항을 CAMP-2에 반영한 뒤 InsightFace 패키지의 `t1.jpg`에서 얼굴과 떨어진 하단 마스크로 재검증했다. `queued → processing → validating → done`, 후보 2개, 두 후보 모두 `validation=passed`, 결과 다운로드 HTTP 200(`image/png`)을 확인했다. 얼굴을 덮는 기존 테스트 마스크는 `face_mask_protected`로 안전하게 폴백했다.
+# AI3 rescue implementation update (2026-07-28)
+
+- `POST /api/v1/rescue/analyze` now returns up to three CAMP-2-backed recommendations without creating a job.
+- Explicit user confirmation is required before `/edit-jobs` upload.
+- Face count, identity similarity, and histogram distance are quality signals; only file integrity, dimensions, input alias, and bounded operation geometry are hard gates.
+- FLUX outpaint preparation and original-interior restoration are implemented in the ComfyUI adapter, but the operation stays unavailable until the CAMP-2 workflow/model is configured.
+- P1 owns the visible rescue cards, direct-edit controls, candidate comparison, and save gestures.
