@@ -48,6 +48,16 @@ interface GamdoApiService {
     ): ReferenceAnalysisResponse
 
     @Multipart
+    @POST("rescue/analyze")
+    suspend fun analyzeRescue(
+        @Header("X-Device-Id") deviceId: String,
+        @Part("captureRef") captureRef: okhttp3.RequestBody,
+        @Part("styleParams") styleParams: okhttp3.RequestBody,
+        @Part("referenceComposition") referenceComposition: okhttp3.RequestBody,
+        @Part image: MultipartBody.Part,
+    ): RescueAnalysisResponse
+
+    @Multipart
     @POST("edit-jobs")
     suspend fun createEditJob(
         @Header("X-Device-Id") deviceId: String,
@@ -102,6 +112,36 @@ data class ReferenceAnalysisResponse(
 data class ReferenceCapabilities(
     val composition: Boolean = false,
     val color: Boolean = true,
+)
+
+@Serializable
+data class RescueAnalysisResponse(
+    val analysisVersion: Int = 1,
+    val captureRef: String = "",
+    val image: RescueImageInfo = RescueImageInfo(),
+    val analysis: JsonObject = JsonObject(emptyMap()),
+    val recommendations: List<RescueRecommendation> = emptyList(),
+    val capabilities: RescueCapabilities = RescueCapabilities(),
+)
+
+@Serializable
+data class RescueImageInfo(val width: Int = 0, val height: Int = 0)
+
+@Serializable
+data class RescueRecommendation(
+    val id: String,
+    val kind: String,
+    val title: String,
+    val reason: String,
+    val operation: JsonObject? = null,
+    val confidence: Double = 0.0,
+)
+
+@Serializable
+data class RescueCapabilities(
+    val localStyle: Boolean = true,
+    val removeObjects: Boolean = false,
+    val outpaint: Boolean = false,
 )
 
 /**
@@ -161,11 +201,6 @@ class GamdoApiClient(
         service.analyzeReference(deviceIdStore.getOrCreate(), imagePart(image))
     }
 
-    @Deprecated(
-        message = "생성 복구/사진 살리기(§5-3)는 remain_plan O-1로 컷됐다. 앱에서 나가는 " +
-            "업로드 경로이므로 되살리려면 오너 결정이 선행이다. remain_plan §1 참조.",
-        level = DeprecationLevel.ERROR,
-    )
     suspend fun createEditJob(
         jobId: String,
         captureRef: String,
@@ -186,19 +221,11 @@ class GamdoApiClient(
         )
     }
 
-    @Deprecated(
-        message = "생성 복구 폴링(§5-3)은 remain_plan O-1로 컷됐다. remain_plan §1 참조.",
-        level = DeprecationLevel.ERROR,
-    )
     suspend fun getEditJob(jobId: String): EditJobStatus = callApi {
         service.getEditJob(deviceIdStore.getOrCreate(), jobId)
     }
 
     /** Downloads a result path returned by the job endpoint into app-private storage. */
-    @Deprecated(
-        message = "생성 결과 다운로드(§5-3)는 remain_plan O-1로 컷됐다. remain_plan §1 참조.",
-        level = DeprecationLevel.ERROR,
-    )
     suspend fun downloadResult(resultUrl: String, destination: File) =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val url = if (resultUrl.startsWith("http://") || resultUrl.startsWith("https://")) {
@@ -218,6 +245,22 @@ class GamdoApiClient(
     private fun imagePart(image: File): MultipartBody.Part {
         val body = image.asRequestBody("application/octet-stream".toMediaType())
         return MultipartBody.Part.createFormData("image", image.name, body)
+    }
+
+    suspend fun analyzeRescue(
+        image: File,
+        captureRef: String,
+        styleParams: JsonObject = JsonObject(emptyMap()),
+        referenceComposition: JsonObject = JsonObject(emptyMap()),
+    ): RescueAnalysisResponse = callApi {
+        val text = "text/plain".toMediaType()
+        service.analyzeRescue(
+            deviceIdStore.getOrCreate(),
+            captureRef.toRequestBody(text),
+            json.encodeToString(JsonObject.serializer(), styleParams).toRequestBody(text),
+            json.encodeToString(JsonObject.serializer(), referenceComposition).toRequestBody(text),
+            imagePart(image),
+        )
     }
 
     /** Runs [block], converting a raw [HttpException] into a parsed [GamdoApiException]. */
