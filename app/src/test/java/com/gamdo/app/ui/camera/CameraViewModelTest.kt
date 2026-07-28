@@ -104,6 +104,66 @@ class CameraViewModelTest {
         assertNotNull(viewModel.lastFrame.value!!.fixedLayout)
     }
 
+    // ---------------------------------------- matchScore 수평선 (review_report M2)
+
+    /**
+     * 15% of the §4.2 match score is the horizon term, and it was a constant.
+     *
+     * `MatchScoreCalculator.calculate` has taken `observedHorizonPosition` since it
+     * was written, but **no caller ever passed one**, so it kept its `0.5f` default.
+     * The term reduced to `1 - |0.5 - target.horizonPosition| / 0.5`, a function of
+     * the preset alone: with the shipped presets (0.50 / 0.52 / 0.55) it evaluated
+     * to a fixed number per style and was identical for every photo taken with it.
+     *
+     * A score that cannot move is not a measurement, and this one is what
+     * `sessions.final_match_score` records.
+     */
+    @Test
+    fun `the match score responds to where the horizon actually was`() {
+        val viewModel = CameraViewModel(config = bundle, collectDebugSignals = false)
+        feed(viewModel, personBox(0.32f, 0.25f, 0.68f, 0.85f), confidence = 0.9f)
+        val frame = viewModel.lastFrame.value!!
+
+        val onTarget = viewModel.matchScoreOf(
+            frame.copy(observedHorizonPosition = frame.target.horizonPosition),
+        )
+        val wayOff = viewModel.matchScoreOf(
+            frame.copy(observedHorizonPosition = frame.target.horizonPosition + 0.45f),
+        )
+
+        assertTrue(
+            "a horizon far from where the style wants it must score lower " +
+                "(on-target $onTarget vs off $wayOff)",
+            onTarget > wayOff,
+        )
+    }
+
+    /**
+     * When no horizon was detected the term must not invent a comparison. Falling
+     * back to the target's own position scores it 1.0 — "the question does not
+     * apply" — which is also what `SceneProposalEngine` does with an undetected
+     * horizon. The old `0.5f` default silently docked every style that wanted a
+     * horizon anywhere else.
+     */
+    @Test
+    fun `an undetected horizon is not penalised`() {
+        val viewModel = CameraViewModel(config = bundle, collectDebugSignals = false)
+        feed(viewModel, personBox(0.32f, 0.25f, 0.68f, 0.85f), confidence = 0.9f)
+        val frame = viewModel.lastFrame.value!!.copy(
+            target = StyleTarget(horizonPosition = 0.7f),
+        )
+
+        val undetected = viewModel.matchScoreOf(frame.copy(observedHorizonPosition = null))
+        val exactlyThere = viewModel.matchScoreOf(frame.copy(observedHorizonPosition = 0.7f))
+
+        assertEquals(
+            "an undetected horizon must score the same as a perfectly placed one",
+            exactlyThere,
+            undetected,
+            0.0001f,
+        )
+    }
+
     // -------------------------------------------------- KPI (review_report #19)
 
     /**

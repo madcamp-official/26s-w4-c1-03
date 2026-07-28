@@ -151,7 +151,7 @@
 - [x] 📱 **W1-H. 분석 스레드 안전성** (구 W1-9 / 리뷰 #18) — 메인 스레드 변경을 커맨드 큐로 분석 스레드에 위임. **JVM 스트레스 테스트가 수정 전 3/3 재현**(`ConcurrentModificationException`, 그리고 오버레이 `RectN(NaN,NaN,NaN,NaN)`), 수정 후 5/5 통과
 - [ ] **W1-I. 전면 카메라 가이드 미러** (구 W1-5 / 리뷰 #9) — 전면 렌즈 실기기 확인이 필요해 별도 단위
 - [ ] **W1-J. 브래킷 폭 25% 축소** (구 W1-7 / 리뷰 M1) — B 모듈 수정 승인 필요. 프레임 종횡비를 `guide/`로 배관해야 해서 시그니처 변경
-- [ ] **W1-K. matchScore의 15%가 상수** (리뷰 M2) — `observedHorizonPosition = 0.5f`를 `SceneStructureAnalyzer` 실측값으로. `ShutterFrame`에 필드 추가 필요
+- [x] 📱 **W1-K. matchScore의 15%가 상수** (리뷰 M2) — `ShutterFrame.observedHorizonPosition` 신설 후 두 호출부에 배선. **`MatchScoreCalculator.kt`(B 인접 파일)는 무접촉** — 파라미터를 이미 받고 있어 호출부만 고치면 됐다. 미검출 시 타깃 값으로 폴백해 감점하지 않는다(`SceneProposalEngine`의 기존 관례와 동일). 결함 재주입으로 가드 검증. 기기: 촬영·`final_match_score` 기록 정상 — 다만 빈 벽이라 수평선 미검출이어서 **이 수정의 효과는 기기에서 분리 관측되지 않았다**
 - ~~구 W1-3의 `choose()`/`match()` 자격 모순 (리뷰 #16)~~ — **이미 해소**. 재확인 결과 상류가 양쪽을 같은 술어로 통일했고 반박 에이전트도 확인
 - ~~구 W1-6의 마스크 필수·레이블 화이트리스트 (리뷰 #11 후반)~~ — **이미 해소**. 상류가 `isValidBox`/`isSemanticMatch`로 분리
 - ~~구 W1-4의 D17 로딩 표시 (L-2)~~ — **미착수**. 아래 부록 C 참조
