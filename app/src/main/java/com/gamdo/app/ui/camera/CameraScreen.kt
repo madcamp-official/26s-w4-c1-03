@@ -165,23 +165,6 @@ fun CameraScreen(
 
     val controller = remember { CameraController(context) }
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
-    val scene = remember {
-        SceneDetector(
-            faceDetector = MlKitFaceDetector(),
-            poseDetector = ThrottledPoseDetector(MlKitPoseDetector()),
-            objectDetector = ThrottledObjectSceneDetector(MlKitObjectDetector()),
-            subjectSegmenter = ThrottledSubjectSceneSegmenter(MlKitSubjectSegmenter()),
-            // Per-stage cost, debug builds only. Every ML Kit model here blocks the
-            // single analysis thread in turn and none of them gets cheaper on an
-            // empty frame, so "which one" is not answerable from the HUD's
-            // whole-lambda number.
-            stageSink = if (BuildConfig.DEBUG) {
-                { timings -> Log.d(STAGE_TAG, timings.format()) }
-            } else {
-                null
-            },
-        )
-    }
     // Thresholds come from assets only (CFG-1); the data-class defaults are the
     // fallback for a missing/!unparseable file.
     val guideConfig = remember {
@@ -190,6 +173,37 @@ fun CameraScreen(
                 parseGuideConfigBundle(reader.readText())
             }
         }.getOrDefault(GuideConfigBundle())
+    }
+    val scene = remember(guideConfig) {
+        SceneDetector(
+            faceDetector = MlKitFaceDetector(),
+            // Pose cost 89.8ms of a measured 263ms frame and ran on every frame.
+            // Like every model here it does not get cheaper on an empty frame, so
+            // cadence is the only lever (owner decision, 2026-07-28). Unlike the
+            // object/segmentation divisors this one is still a code default —
+            // externalizing it means adding a key to 담당 B's ObjectGuideConfigJson.
+            poseDetector = ThrottledPoseDetector(MlKitPoseDetector()),
+            // CameraX already keeps only the newest frame. Refreshing objects on
+            // every processed frame gives the 3/5 tracker enough real evidence
+            // to meet the two-second first-layout target without a queue.
+            objectDetector = ThrottledObjectSceneDetector(
+                MlKitObjectDetector(),
+                refreshEveryFrames = guideConfig.objectGuide.objectRefreshEveryFrames,
+            ),
+            subjectSegmenter = ThrottledSubjectSceneSegmenter(
+                MlKitSubjectSegmenter(),
+                refreshEveryFrames = guideConfig.objectGuide.segmentationRefreshEveryFrames,
+            ),
+            // Per-stage cost, debug builds only. Every ML Kit model here blocks the
+            // single analysis thread in turn and none gets cheaper on an empty
+            // frame, so "which one" is not answerable from the HUD's whole-lambda
+            // number.
+            stageSink = if (BuildConfig.DEBUG) {
+                { timings -> Log.d(STAGE_TAG, timings.format()) }
+            } else {
+                null
+            },
+        )
     }
     val viewModel = remember {
         // The §2-4 stopwatch writes through this sink; the ViewModel itself stays
@@ -245,9 +259,8 @@ fun CameraScreen(
     val hudAvailable = BuildConfig.DEBUG
     var showHud by rememberSaveable { mutableStateOf(BuildConfig.DEBUG) }
 
-    // A preset switch invalidates the smoothing window and the last stable target
-    // (handled inside setStyleTarget), so this is keyed on the preset *value*:
-    // a recomposition that resolves to the same style must not reset the guide.
+    // A preset adjusts the fixed template's spacing/scale without triggering a
+    // fresh scene search, so this is keyed on the preset value only.
     // `styleIndex = -1` (still reading / no presets) leaves the target
     // unpublished rather than publishing preset 0 and swapping it a frame later.
     LaunchedEffect(activePreset) {
@@ -342,7 +355,13 @@ fun CameraScreen(
                                     it.box.width * it.box.height
                                 }?.box,
                             ),
-                            sceneSignals = imageProxy.sceneFrameSignals(subjectBox),
+                            sceneSignals = imageProxy.sceneFrameSignals(subjectBox).copy(
+                                viewportAspect = if (aspect == CaptureAspect.RATIO_1_1) {
+                                    com.gamdo.app.guide.GuideViewportAspect.ONE_TO_ONE
+                                } else {
+                                    com.gamdo.app.guide.GuideViewportAspect.FOUR_TO_FIVE
+                                },
+                            ),
                             shake = shakeMeter.shake.value,
                             frameWidth = frame.width,
                             frameHeight = frame.height,
@@ -604,6 +623,13 @@ private fun CameraTopBar(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             AspectChip(selected = aspect, onSelect = onSelectAspect)
+            // 재탐색은 프리뷰 우측 하단 버튼 하나로 일원화했다(오너 지정 위치,
+            // 2026-07-28). 같은 동작을 상단 드롭다운에도 두면 두 곳이 갈라진다.
+            //
+            // ⚠️ 그 드롭다운이 D13의 **수동 레이아웃 선택**도 담고 있었으므로
+            // 지금은 그 기능이 없다. `CameraViewModel.selectManualLayout`과
+            // `availableManualLayouts`는 완성된 채 호출자 0으로 남아 있다 —
+            // D13 미충족 상태이며 remain_plan 부록 C에 기록한다.
             referenceEntry()
             demoControls()
         }

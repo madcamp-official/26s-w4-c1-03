@@ -198,17 +198,16 @@ class SceneDetector(
     private val customObjectDetector: CustomSceneDetector? = null,
     private val stageSink: ((DetectStageTimings) -> Unit)? = null,
 ) {
-    private val stableSceneTracker = StableSceneTracker()
-
     fun detect(frame: AnalysisFrame): DetectionResult {
         val t0 = System.nanoTime()
         val faces = faceDetector.detect(frame)
         val t1 = System.nanoTime()
         val pose = poseDetector.detect(frame)
         val t2 = System.nanoTime()
-        // Subject segmentation is the generic foreground path. ML Kit's
-        // classifier intentionally returns no item for many ordinary objects;
-        // that must not make the camera behave as if the scene were empty.
+        // Segmentation refines an already-detected foreground outline. It must
+        // never invent a single generic object when object detection is empty:
+        // a merged foreground mask would turn two adjacent drinks into a false
+        // one-slot scene.
         val segmentation = subjectSegmenter?.detect(frame)
         val t3 = System.nanoTime()
         val objectBatch = when {
@@ -217,24 +216,6 @@ class SceneDetector(
             else -> ObjectDetectionBatch(emptyList(), isFresh = true, sequenceId = 0L)
         }
         val t4 = System.nanoTime()
-        val genericBatch = if (objectBatch.objects.isEmpty() && segmentation != null) {
-            objectBatch.copy(
-                objects = listOf(
-                    ObjectObservation(
-                        box = segmentation.bounds,
-                        detectionConfidence = segmentation.confidence,
-                        labels = emptyList(),
-                        classificationConfidence = null,
-                        category = GuideObjectCategory.UNKNOWN,
-                        mask = segmentation,
-                    ),
-                ),
-            )
-        } else {
-            objectBatch
-        }
-        val stableObjects = stableSceneTracker.accept(genericBatch)
-        val t5 = System.nanoTime()
 
         stageSink?.let { sink ->
             fun ms(from: Long, to: Long) = (to - from) / 1_000_000.0
@@ -244,11 +225,14 @@ class SceneDetector(
                     poseMs = ms(t1, t2),
                     segMs = ms(t2, t3),
                     objectMs = ms(t3, t4),
-                    postMs = ms(t4, t5),
-                    totalMs = ms(t0, t5),
-                    // A cached return costs microseconds; the model run costs tens
-                    // to hundreds of ms. 1ms separates them by two orders of
-                    // magnitude, so no plumbing into the throttle wrapper is needed.
+                    // Upstream removed the phantom-object synthesis and the
+                    // StableSceneTracker pass that used to sit here, so there is
+                    // no post-stage left to measure. Kept at 0 rather than dropped
+                    // from the record: a reader comparing today's numbers with the
+                    // 2026-07-28 baseline needs to see that the column went to
+                    // zero rather than wonder where it went.
+                    postMs = 0.0,
+                    totalMs = ms(t0, t4),
                     segRefreshed = ms(t2, t3) > 1.0,
                     objectsFresh = objectBatch.isFresh,
                     segNonNull = segmentation != null,
@@ -259,10 +243,10 @@ class SceneDetector(
         return DetectionResult(
             faces = faces,
             pose = pose,
-            objects = stableObjects,
+            objects = objectBatch.objects,
             segmentation = segmentation,
-            objectsFresh = genericBatch.isFresh,
-            objectSequenceId = genericBatch.sequenceId,
+            objectsFresh = objectBatch.isFresh,
+            objectSequenceId = objectBatch.sequenceId,
         )
     }
 
@@ -274,5 +258,5 @@ class SceneDetector(
         customObjectDetector?.close()
     }
 
-    fun reset() = stableSceneTracker.reset()
+    fun reset() = Unit
 }

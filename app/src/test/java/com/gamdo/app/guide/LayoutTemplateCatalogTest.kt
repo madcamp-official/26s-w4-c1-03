@@ -21,7 +21,7 @@ class LayoutTemplateCatalogTest {
     }
 
     @Test
-    fun `first stable scene automatically selects three-drink layout`() {
+    fun `semantically confirmed drinks select the specialised three-drink layout`() {
         val resolver = AutoLayoutTemplateResolver()
         val drinks = (1..3).map { index ->
             SlotDetection(
@@ -31,10 +31,10 @@ class LayoutTemplateCatalogTest {
                 confidence = 0.9f,
                 isReliable = true,
                 semanticConfidence = 0.9f,
+                semanticConfirmed = true,
             )
         }
 
-        repeat(2) { assertNull(resolver.resolve(drinks)) }
         assertEquals(LayoutTemplateCatalog.DRINK_TRIO, resolver.resolve(drinks)!!.id)
         assertEquals(LayoutTemplateCatalog.DRINK_TRIO, resolver.resolve(emptyList())!!.id)
     }
@@ -43,11 +43,11 @@ class LayoutTemplateCatalogTest {
     fun `two drinks and food automatically select cafe layout`() {
         val resolver = AutoLayoutTemplateResolver()
         val scene = listOf(
-            SlotDetection("a", GuideObjectCategory.DRINKWARE, NormalizedBox(0.1f, 0.3f, 0.3f, 0.7f), 0.9f, true, semanticConfidence = 0.9f),
-            SlotDetection("b", GuideObjectCategory.DRINKWARE, NormalizedBox(0.7f, 0.3f, 0.9f, 0.7f), 0.9f, true, semanticConfidence = 0.9f),
-            SlotDetection("cake", GuideObjectCategory.FOOD_TABLEWARE, NormalizedBox(0.4f, 0.5f, 0.6f, 0.8f), 0.9f, true, semanticConfidence = 0.9f),
+            SlotDetection("a", GuideObjectCategory.DRINKWARE, NormalizedBox(0.1f, 0.3f, 0.3f, 0.7f), 0.9f, true, semanticConfidence = 0.9f, semanticConfirmed = true),
+            SlotDetection("b", GuideObjectCategory.DRINKWARE, NormalizedBox(0.7f, 0.3f, 0.9f, 0.7f), 0.9f, true, semanticConfidence = 0.9f, semanticConfirmed = true),
+            SlotDetection("cake", GuideObjectCategory.FOOD_TABLEWARE, NormalizedBox(0.4f, 0.5f, 0.6f, 0.8f), 0.9f, true, semanticConfidence = 0.9f, semanticConfirmed = true),
         )
-        repeat(3) { resolver.resolve(scene) }
+        resolver.resolve(scene)
 
         assertEquals(LayoutTemplateCatalog.CAFE_TABLE, resolver.resolve(emptyList())!!.id)
     }

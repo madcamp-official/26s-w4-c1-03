@@ -230,7 +230,7 @@ onboarding-polish:
 ## 부록 C. 알려진 위험 (이번 범위 밖 — 수정하지 않음)
 
 - **서버**: edit-job 조회 IDOR(`edit_jobs.py:333`) · 워커 `UnboundLocalError` 영구 종료(`comfyui_provider.py:166`) · 클린 체크아웃 기동 실패(`main.py:24`) · 보존 기간 3종(`worker.py:124` 외) · `/references/analyze` 무제한 업로드 — 전부 `review_report.md` §1 기준. 서버를 실기동할 일이 생기면 이 목록을 먼저 볼 것
-- **앱(수용된 위반·갭)**: D13 레이아웃 버튼 미구현(O-3) · 기동 후 첫 프리뷰 제스처 유실(W3-6에서 재판정) · `captures.problems_json` 항상 `"[]"`(§1-5 컷 귀결) · FK 미선언·인덱스 DESC 미지정(스키마 동결 유지 — 시연 후 마이그레이션 과제로 이월) · §7-1 안내 갱신 250ms vs 목표 200ms(`alignedEnterFrames`×fps 산술 — W3-1 외부화 후 값 튜닝으로 해소 시도)
+- **앱(수용된 위반·갭)**: **D13 수동 레이아웃 선택 미제공** — 2026-07-28 상류 병합에서 담당 B가 만든 상단 `구도` 드롭다운(재탐색 + 레이아웃 목록)을 제거하고 재탐색만 프리뷰 버튼으로 일원화했다(오너 결정). `CameraViewModel.selectManualLayout`과 `availableManualLayouts`는 완성된 채 호출자 0으로 남아 있으므로, 되살릴 때는 UI만 붙이면 된다 · 기동 후 첫 프리뷰 제스처 유실(W3-6에서 재판정) · `captures.problems_json` 항상 `"[]"`(§1-5 컷 귀결) · FK 미선언·인덱스 DESC 미지정(스키마 동결 유지 — 시연 후 마이그레이션 과제로 이월) · §7-1 안내 갱신 250ms vs 목표 200ms(`alignedEnterFrames`×fps 산술 — W3-1 외부화 후 값 튜닝으로 해소 시도)
 
 ## 부록 D. 시연 후 과제 (이 플랜이 끝나도 남는 것)
 

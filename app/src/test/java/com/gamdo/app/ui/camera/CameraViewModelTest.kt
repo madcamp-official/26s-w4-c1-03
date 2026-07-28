@@ -94,19 +94,18 @@ class CameraViewModelTest {
     }
 
     @Test
-    fun `switching style target restarts the guide from cold`() {
+    fun `switching style target preserves a fixed scene layout`() {
         val viewModel = CameraViewModel(config = bundle, collectDebugSignals = false)
         viewModel.setStyleTarget(StyleTarget())
         repeat(10) { feed(viewModel, personBox(0.32f, 0.085f, 0.68f, 0.535f), confidence = 0.9f) }
         assertTrue(viewModel.overlay.value?.guide?.visible == true)
 
-        // A preset switch invalidates both the engine's smoothing window and the
-        // display damping; if either survived, the new bracket would crawl out of
-        // the old one instead of appearing where the new preset asks.
+        // Style changes only adjust a confirmed template's spacing/anchor. They
+        // must not make the user wait through a second scene search.
         viewModel.setStyleTarget(StyleTarget(subjectAnchorX = 1f / 3f))
         feed(viewModel, null, confidence = 0.05f)
 
-        assertFalse("리셋 직후 저신뢰 프레임은 숨김", viewModel.overlay.value?.guide?.visible == true)
+        assertTrue("스타일 변경 뒤에도 고정 레이아웃은 유지", viewModel.lastFrame.value?.fixedLayout != null)
     }
 
     // ---------------------------------------------------------- D2 / release

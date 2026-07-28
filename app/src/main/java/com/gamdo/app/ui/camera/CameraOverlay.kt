@@ -3,8 +3,11 @@ package com.gamdo.app.ui.camera
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -20,6 +23,7 @@ import com.gamdo.app.guide.OverlayProjection
 import com.gamdo.app.guide.RectN
 import com.gamdo.app.guide.LayoutGuideLevel
 import com.gamdo.app.guide.SceneLayoutGuide
+import com.gamdo.app.guide.GuideLayoutState
 import com.gamdo.app.ui.theme.Sage
 import kotlin.math.abs
 import kotlin.math.max
@@ -42,6 +46,7 @@ data class OverlayData(
     val mirror: Boolean,
     val guide: OverlayProjection? = null,
     val layoutGuide: SceneLayoutGuide? = null,
+    val layoutState: GuideLayoutState = GuideLayoutState.Searching,
 )
 
 /**
@@ -55,11 +60,9 @@ data class OverlayData(
  * 3. **horizon** — a line that tilts with device roll, red while tilted and
  *    straight + sage once level.
  *
- * When the scene resolver has latched a fixed layout, its template slots are
- * drawn **as well** — one flat colour, no occupancy state (D2).
- *
- * The colour change on the bracket is the entire framing feedback. There is no
- * arrow, no match gauge, no auto-capture, and no text instruction of any kind.
+ * Scene discovery has no user-facing text or occupancy feedback. While it is
+ * searching the camera remains visually clear except for a small spinner; after
+ * confirmation only the fixed composition brackets remain.
  *
  * Flicker damping lives upstream in `OverlayStabilizer`, not here: this composable
  * renders whatever state it is handed, so the §0.4 harness measuring the state
@@ -112,43 +115,32 @@ fun CameraOverlay(
 
         // Fixed-layout mode is intentionally independent from detections: the
         // slots stay on screen while the user moves the camera or the objects.
-        //
-        // D2: slots carry no occupancy state. One colour, always — a slot that
-        // turns sage when "filled" is a match gauge with a different shape, and
-        // the occupancy machinery that used to feed one is gone (see the commit
-        // that removed FixedLayoutSlotMatcher).
         data.layoutGuide?.fixedLayout?.let { fixed ->
-            val slotRadius = CornerRadius(22.dp.toPx(), 22.dp.toPx())
             fixed.template.slots.forEach { slot ->
                 val slotRect = mapRect(slot.bounds, data, vw, vh)
                 drawRoundRect(
-                    color = Color.White.copy(alpha = fixed.template.opacity),
+                    color = Color.White.copy(alpha = fixed.template.opacity * 0.32f),
                     topLeft = Offset(slotRect.left, slotRect.top),
                     size = Size(slotRect.width, slotRect.height),
-                    // Without this the fill squares off and pokes out past the
-                    // rounded stroke below.
-                    cornerRadius = slotRadius,
+                    cornerRadius = CornerRadius(18.dp.toPx(), 18.dp.toPx()),
                 )
-                drawRoundRect(
-                    color = Color.White.copy(alpha = 0.9f),
-                    topLeft = Offset(slotRect.left, slotRect.top),
-                    size = Size(slotRect.width, slotRect.height),
-                    cornerRadius = slotRadius,
-                    style = Stroke(width = 2.dp.toPx()),
-                )
+                drawLayoutSlotBracket(slotRect, Color.White.copy(alpha = 0.86f))
             }
         }
 
-        // The preset guide draws **alongside** any fixed layout, not instead of it.
+        // The style-preset guide: bracket + silhouette + foot marker + outline.
         //
-        // These three sites used to be gated on `fixedLayout == null`. Because the
-        // auto resolver latches a template within ~3 frames of almost any scene and
-        // never un-latches inside a session, that gate silently deleted the bracket,
-        // silhouette, foot marker and outline for the rest of the session — the six
-        // style presets all collapsed to the same rectangle. Owner decision
-        // (remain_plan, 2026-07-28): the two vocabularies coexist.
+        // This block was commented out wholesale on the AI-1 branch. 부록 A names
+        // "목표 프레임·실루엣·수평선 오버레이" as one of the things this project
+        // keeps to the end, and §3-2's completion criterion is exactly this
+        // vocabulary, so commenting it out made that criterion unreachable. Owner
+        // decision 2026-07-28: restore it, keep the fixed-layout gate below.
+        //
+        // The gate means the preset guide yields to a latched scene layout rather
+        // than drawing over it. The way out of a latch is the 재탐색 button on the
+        // preview, not a second set of marks on screen.
         data.guide
-            ?.takeIf { it.visible }
+            ?.takeIf { it.visible && data.layoutGuide?.fixedLayout == null }
             ?.let { guide ->
             val frame = mapRect(guide.targetFrame, data, vw, vh)
             // D2-3: the colour swap is the entire success feedback.
@@ -166,7 +158,7 @@ fun CameraOverlay(
                 drawFootMarker(ghost, guideColor)
             }
 
-            data.layoutGuide?.takeIf { it.level != LayoutGuideLevel.STATIC }?.let { layout ->
+            data.layoutGuide?.takeIf { it.level != LayoutGuideLevel.STATIC && it.fixedLayout == null }?.let { layout ->
                 if (layout.outline.size >= 3) {
                     val points = layout.outline.map { point ->
                         mapNormalized(point.x, point.y, data, vw, vh)
@@ -189,7 +181,9 @@ fun CameraOverlay(
                 }
             }
 
-            drawTargetBracket(frame, guideColor)
+            if (data.layoutGuide?.fixedLayout == null) {
+                drawTargetBracket(frame, guideColor)
+            }
         }
 
         if (!showDetections) return@Canvas
@@ -215,11 +209,33 @@ fun CameraOverlay(
         }
         }
 
-        // D2: no instruction copy. Two Text() prompts ("피사체를 화면에 보여주세요",
-        // "피사체를 잠시 유지해주세요") used to render here with no debug gate. D2
-        // bans text instructions outright and AGENTS.md 규칙 3 makes D2 재론 불가,
-        // so they are gone rather than gated. `LayoutGuidePrompt` is retired with
-        // them — a field nobody reads is how they come back.
+        if (overlay?.layoutState is GuideLayoutState.Searching) {
+            CircularProgressIndicator(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(18.dp),
+                color = Color.White.copy(alpha = 0.72f),
+                strokeWidth = 2.dp,
+            )
+        }
+    }
+}
+
+/** Thin open corners read as a composition target rather than a filled checklist box. */
+private fun DrawScope.drawLayoutSlotBracket(frame: RectN, color: Color) {
+    val arm = (min(frame.width, frame.height) * 0.18f)
+        .coerceIn(10.dp.toPx(), 26.dp.toPx())
+        .coerceAtMost(min(frame.width, frame.height) / 2f)
+    val stroke = 1.5.dp.toPx()
+    for (right in listOf(false, true)) {
+        for (bottom in listOf(false, true)) {
+            val x = if (right) frame.right else frame.left
+            val y = if (bottom) frame.bottom else frame.top
+            val dx = if (right) -arm else arm
+            val dy = if (bottom) -arm else arm
+            drawLine(color, Offset(x, y), Offset(x + dx, y), stroke, StrokeCap.Round)
+            drawLine(color, Offset(x, y), Offset(x, y + dy), stroke, StrokeCap.Round)
+        }
     }
 }
 

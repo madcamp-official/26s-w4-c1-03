@@ -9,6 +9,7 @@ data class SceneFrameSignals(
     /** Optional fixed multi-slot template supplied by the camera owner. */
     val layoutTemplate: LayoutTemplate? = null,
     val layoutTemplateId: String? = null,
+    val viewportAspect: GuideViewportAspect = GuideViewportAspect.FOUR_TO_FIVE,
 )
 
 data class SceneGuideState(
@@ -17,6 +18,7 @@ data class SceneGuideState(
     val layoutGuide: SceneLayoutGuide,
     val fixedLayout: FixedLayoutGuide? = null,
     val layoutState: GuideLayoutState = GuideLayoutState.Searching,
+    val sceneSignature: SceneSignature? = null,
 )
 
 /**
@@ -28,6 +30,8 @@ class SceneGuideCoordinator(
     private val proposalEngine: SceneProposalEngine = SceneProposalEngine(),
     private val layoutGuideEngine: SceneLayoutGuideEngine = SceneLayoutGuideEngine(),
     private val autoLayoutResolver: AutoLayoutTemplateResolver = AutoLayoutTemplateResolver(),
+    private val templateSafetyMargin: Float = 0.05f,
+    private val detectedSlotShapeConfig: DetectedSlotShapeConfig = DetectedSlotShapeConfig(),
 ) {
     private var layoutState: GuideLayoutState = GuideLayoutState.Searching
     private var manualTemplateId: String? = null
@@ -63,13 +67,13 @@ class SceneGuideCoordinator(
         )
         val proposal = proposalEngine.propose(observation, styleTarget)
         val explicitTemplate = signals.layoutTemplate
-            ?: signals.layoutTemplateId?.let(LayoutTemplateCatalog::resolve)
-            ?: styleTarget.layoutTemplateId?.let(LayoutTemplateCatalog::resolve)
+            ?: signals.layoutTemplateId?.let { LayoutTemplateCatalog.resolve(it, signals.viewportAspect) }
+            ?: styleTarget.layoutTemplateId?.let { LayoutTemplateCatalog.resolve(it, signals.viewportAspect) }
         if (explicitTemplate != null && manualTemplateId == null) {
             manualTemplateId = explicitTemplate.id
             fixedBaseTemplate = explicitTemplate
             layoutState = GuideLayoutState.Fixed(
-                GenericLayoutSynthesizer.transform(explicitTemplate, styleTarget),
+                GenericLayoutSynthesizer.transform(explicitTemplate, styleTarget, templateSafetyMargin),
                 LayoutSource.MANUAL,
             )
         }
@@ -79,12 +83,26 @@ class SceneGuideCoordinator(
                 detections = observation.slotDetections,
                 objectsFresh = observation.objectsFresh,
                 styleTarget = styleTarget,
-            )?.also {
-                fixedBaseTemplate = it
-                layoutState = GuideLayoutState.Fixed(GenericLayoutSynthesizer.transform(it, styleTarget), LayoutSource.AUTO)
+                viewportAspect = signals.viewportAspect,
+            )?.let { selected ->
+                // Capture only the confirmed scene's relative object shapes.
+                // Subsequent frames use fixedBaseTemplate and cannot move or resize
+                // the brackets until the user explicitly rescans.
+                GenericLayoutSynthesizer.snapshotObjectShapes(
+                    template = selected,
+                    detections = observation.slotDetections,
+                    config = detectedSlotShapeConfig,
+                    safetyMargin = templateSafetyMargin,
+                ).also { snapshot ->
+                    fixedBaseTemplate = snapshot
+                    layoutState = GuideLayoutState.Fixed(
+                        GenericLayoutSynthesizer.transform(snapshot, styleTarget, templateSafetyMargin),
+                        LayoutSource.AUTO,
+                    )
+                }
             }
         }
-        val template = baseTemplate?.let { GenericLayoutSynthesizer.transform(it, styleTarget) }
+        val template = baseTemplate?.let { GenericLayoutSynthesizer.transform(it, styleTarget, templateSafetyMargin) }
         val fixedLayout = template?.let {
             FixedLayoutGuide(
                 template = it,
@@ -100,6 +118,19 @@ class SceneGuideCoordinator(
             layoutGuide = layoutGuide,
             fixedLayout = fixedLayout,
             layoutState = layoutState,
+            sceneSignature = observation.slotDetections.takeIf { it.isNotEmpty() }?.let { detections ->
+                SceneSignature(
+                    objectCount = detections.count { it.role == SlotRole.OBJECT },
+                    hasPerson = detections.any { it.role == SlotRole.PERSON },
+                    arrangement = GenericLayoutSynthesizer.chooseArrangement(
+                        detections.filter { it.role == SlotRole.OBJECT },
+                    ),
+                    specialisedTemplateId = fixedBaseTemplate
+                        ?.id
+                        ?.takeIf { id -> id in setOf(LayoutTemplateCatalog.CAFE_TABLE, LayoutTemplateCatalog.DRINK_PAIR, LayoutTemplateCatalog.DRINK_TRIO, LayoutTemplateCatalog.STILL_LIFE) },
+                    viewportAspect = signals.viewportAspect,
+                )
+            },
         )
     }
 
@@ -109,7 +140,7 @@ class SceneGuideCoordinator(
         autoLayoutResolver.reset()
         fixedBaseTemplate = template
         layoutState = GuideLayoutState.Fixed(
-            GenericLayoutSynthesizer.transform(template, styleTarget),
+            GenericLayoutSynthesizer.transform(template, styleTarget, templateSafetyMargin),
             LayoutSource.MANUAL,
         )
         return true
@@ -120,6 +151,12 @@ class SceneGuideCoordinator(
         fixedBaseTemplate = null
         layoutState = GuideLayoutState.Searching
         autoLayoutResolver.reset()
+    }
+
+    fun updateStyle(styleTarget: StyleTarget) {
+        val base = fixedBaseTemplate ?: return
+        val source = if (manualTemplateId == null) LayoutSource.AUTO else LayoutSource.MANUAL
+        layoutState = GuideLayoutState.Fixed(GenericLayoutSynthesizer.transform(base, styleTarget, templateSafetyMargin), source)
     }
 
     fun reset() {

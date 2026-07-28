@@ -91,28 +91,39 @@ class CameraOverlayD2Test {
     }
 
     /**
-     * The coexistence fix, stated as a property.
+     * The style-preset guide must actually be drawn.
      *
-     * The auto resolver latches a layout within ~3 frames of almost any scene and
-     * never un-latches inside a session. While the preset-guide block was gated on
-     * `fixedLayout == null`, that latch silently deleted the bracket, silhouette,
-     * foot marker and outline for the rest of the session — all six style presets
-     * rendered identically. The gate is gone; this fails if it comes back.
+     * 부록 A names "목표 프레임·실루엣·수평선 오버레이" as one of the things this
+     * project keeps to the end, and §3-2's completion criterion is stated in that
+     * exact vocabulary — a bracket that turns sage when the subject is inside it.
+     *
+     * This test exists because the block was once **commented out wholesale** on a
+     * parallel branch, and the merge that brought it in was green. Nothing else
+     * noticed: the code still compiled, every other test still passed, and the
+     * camera screen simply drew fewer marks.
+     *
+     * Note it asserts on the **raw source**, not on [code]. The earlier version of
+     * this class checked a stripped copy, and stripping is precisely what hid the
+     * problem — commenting the block out moved it into a comment, the stripper
+     * removed it, and the check reported success for a disabled feature. A guard
+     * that passes when its subject is deleted is not a guard.
      */
     @Test
-    fun `the preset guide is not gated on the absence of a fixed layout`() {
-        val offenders = code().lines()
-            .withIndex()
-            .filter { (_, line) -> line.contains("fixedLayout == null") }
-            .map { (i, line) -> "line ${i + 1}: ${line.trim()}" }
-
-        assertEquals(
-            "The style-preset guide must draw alongside a latched fixed layout, not " +
-                "instead of it (owner decision, remain_plan 2026-07-28). A " +
-                "`fixedLayout == null` guard here re-hides it for the whole session.\n" +
-                offenders.joinToString("\n"),
-            emptyList<String>(),
-            offenders,
+    fun `the preset guide bracket and silhouette are drawn, not commented out`() {
+        val raw = overlaySource.readText()
+        for (call in listOf("drawTargetBracket(", "drawFootMarker(")) {
+            val live = raw.lines().count { line ->
+                line.contains(call) && !line.trimStart().startsWith("*") && !line.trimStart().startsWith("//")
+            }
+            assertTrue(
+                "`$call` must be reachable in CameraOverlay, not commented out. " +
+                    "부록 A keeps the bracket + silhouette to the end.",
+                live > 0,
+            )
+        }
+        assertFalse(
+            "the preset-guide block is inside a block comment — see this test's KDoc",
+            Regex("""/\*(?!\*).*?drawTargetBracket\(.*?\*/""", RegexOption.DOT_MATCHES_ALL).containsMatchIn(raw),
         )
     }
 

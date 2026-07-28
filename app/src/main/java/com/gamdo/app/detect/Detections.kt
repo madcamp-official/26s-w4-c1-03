@@ -53,6 +53,13 @@ data class ObjectObservation(
     val classificationConfidence: Float? = null,
     val category: GuideObjectCategory = GuideObjectCategory.UNKNOWN,
     val mask: SegmentationObservation? = null,
+    /**
+     * True only after the same semantic category was observed with sufficient
+     * confidence across the tracker confirmation window. Generic layout
+     * selection never depends on this flag; it is only allowed to unlock a
+     * specialised template such as a drink pair.
+     */
+    val semanticConfirmed: Boolean = false,
     @Deprecated("Guide eligibility is derived by the scene policy.")
     val isGuideEligible: Boolean = false,
 )
