@@ -1,6 +1,5 @@
 package com.gamdo.app.ui.album
 
-import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -10,7 +9,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -22,9 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -34,9 +30,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.result.PickVisualMediaRequest
 import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.local.entity.Captures
@@ -46,9 +39,6 @@ import com.gamdo.app.ui.theme.OnDarkHigh
 import com.gamdo.app.ui.theme.OnDarkMedium
 import com.gamdo.app.ui.theme.OnDarkMuted
 import java.io.File
-import kotlinx.coroutines.launch
-
-private const val TAG = "AlbumScreen"
 
 /**
  * Album (t2 2e) — loads real captures from the DB (§1-5). Tapping a photo opens
@@ -60,29 +50,7 @@ fun AlbumScreen(
     onBack: () -> Unit,
     onOpenPhoto: (captureId: String) -> Unit,
 ) {
-    var refreshToken by remember { mutableIntStateOf(0) }
-    var importing by remember { mutableStateOf(false) }
-    var importError by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) {
-            importing = true
-            importError = null
-            scope.launch {
-                // `onSuccess` alone left every failure completely silent: an
-                // unreadable URI, a revoked grant or a full disk all produced a
-                // picker that closed and an album that did not change, with nothing
-                // to tell the user whether the photo had been imported.
-                runCatching { container.captureRepository.importGalleryPhoto(uri) }
-                    .onSuccess { refreshToken++ }
-                    .onFailure {
-                        Log.w(TAG, "gallery import failed", it)
-                        importError = "사진을 가져오지 못했어요"
-                    }
-                importing = false
-            }
-        }
-    }
+    val refreshToken by remember { mutableIntStateOf(0) }
     val captures by produceState(initialValue = emptyList<Captures>(), container, refreshToken) {
         value = container.database.capturesDao().getRecent(60)
     }
@@ -96,9 +64,10 @@ fun AlbumScreen(
         // target through padding rather than a larger box, so it still sits where
         // the design puts it.
         //
-        // 가져오기 is not in 2e. It is §4-3's rescue entry point and predates this
-        // design pass, so it stays — but as a quiet third item on the same row
-        // rather than the right-aligned action I had made of it.
+        // 2e has `‹ 앨범` and nothing else on this row. A 가져오기 chip used to sit
+        // here as §4-3's rescue entry point; §4-3 was cut (O-1) and the owner has
+        // decided the album will read the device library directly instead of
+        // importing one photo at a time (2026-07-28) — see remain_plan W4-1.
         Row(
             modifier = Modifier.padding(start = 8.dp, end = 20.dp, top = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -114,33 +83,6 @@ fun AlbumScreen(
                 Text(text = "‹", color = OnDarkMedium, fontSize = 18.sp)
             }
             Text(text = "앨범", color = OnDarkHigh, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
-            Box(
-                modifier = Modifier
-                    .heightIn(min = 44.dp)
-                    .clip(RoundedCornerShape(22.dp))
-                    .clickable(enabled = !importing) {
-                        picker.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                        )
-                    }
-                    .padding(horizontal = 8.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = if (importing) "가져오는 중…" else "가져오기",
-                    color = if (importing) OnDarkMuted else OnDarkMedium,
-                    fontSize = 12.sp,
-                )
-            }
-        }
-
-        importError?.let { message ->
-            Text(
-                text = message,
-                color = OnDarkMedium,
-                fontSize = 12.5.sp,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
-            )
         }
 
         if (captures.isEmpty()) {
