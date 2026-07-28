@@ -15,10 +15,11 @@ data class ObjectTrackerConfig(
     val semanticMinConfidence: Float = 0.80f,
     val semanticConfirmationsRequired: Int = 3,
     /**
-     * Candidate selection is deliberately centred on the viewfinder. The user
-     * normally composes the intended subject around the focus point, while
-     * edge detections are usually background clutter that should not create a
-     * layout on their own.
+     * Non-person candidate selection is deliberately centred on the
+     * viewfinder. The user normally composes the intended subject around the
+     * focus point, while edge detections are usually background clutter that
+     * should not create a layout on their own. Faces keep the D12 person-path:
+     * portrait framing naturally places a face above the viewfinder centre.
      */
     val focusRegionWidth: Float = 0.70f,
     val focusRegionHeight: Float = 0.68f,
@@ -132,7 +133,9 @@ class StableSceneTracker(
                 val fullHeightBackground = candidate.box.height >= 0.92f && area >= 0.45f
                 candidate.mask != null || (!fullWidthBackground && !fullHeightBackground)
             }
-            .filter(::isInsideFocusRegion)
+            .filter { candidate ->
+                candidate.category == GuideObjectCategory.PERSON || isInsideFocusRegion(candidate)
+            }
             .sortedByDescending(::rankingScore)
             .forEach { candidate ->
                 val duplicate = selected.any { existing ->

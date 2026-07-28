@@ -88,4 +88,27 @@ class StableSceneTrackerTest {
         )
         assertEquals(listOf(central.box), stable.map { it.box })
     }
+
+    @Test
+    fun `person candidate keeps portrait framing even when face is above centre`() {
+        val tracker = StableSceneTracker(
+            ObjectTrackerConfig(focusRegionWidth = 0.70f, focusRegionHeight = 0.68f),
+        )
+        val face = ObjectObservation(
+            box = NormalizedBox(0.40f, 0.08f, 0.60f, 0.18f),
+            category = GuideObjectCategory.PERSON,
+            trackingId = 10,
+        )
+
+        repeat(3) { sequence ->
+            tracker.accept(
+                ObjectDetectionBatch(listOf(face), isFresh = true, sequenceId = sequence.toLong()),
+            )
+        }
+
+        val stable = tracker.accept(
+            ObjectDetectionBatch(listOf(face), isFresh = true, sequenceId = 3),
+        )
+        assertEquals(listOf(GuideObjectCategory.PERSON), stable.map { it.category })
+    }
 }
