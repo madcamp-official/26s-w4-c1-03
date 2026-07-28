@@ -2,11 +2,14 @@ package com.gamdo.app.detect
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.util.Log
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetector
+
+private const val TAG = "EfficientDet"
 
 /** Runtime knobs for the bundled mobile object detector. */
 data class EfficientDetSceneDetectorConfig(
@@ -47,9 +50,24 @@ class EfficientDetSceneDetector(
     override val modelId: String = "efficientdet-lite0-coco-int8"
 
     private val appContext = context.applicationContext
-    private val fallback = MlKitObjectDetector(config.fallback)
+
+    // B 모듈 리드 승인 수정(오너 결정 O-6, 2026-07-28): ML Kit 폴백 제거.
+    //
+    // 이 클래스는 EfficientDet이 아무것도 찾지 못하거나 찾은 것이 화면 중앙에
+    // 없을 때 MlKitObjectDetector를 **추가로** 돌렸다. 빈 벽·천장·책상처럼
+    // 중앙에 물체가 없는 장면에서는 그 조건이 항상 참이라, 두 검출기가 매 프레임
+    // 모두 실행됐다. 기기 로그로 확정: 분석 프레임 39개에 ML Kit 호출도 39회.
+    //
+    // 대가는 프레임당 431.9ms(객체 단계)와 527ms(전체) — 가이드가 초당 1.9회만
+    // 갱신됐다. 게다가 폴백 호출마다 cropBitmapProvider가 YUV→RGB 변환·회전·복사로
+    // 3.5MB를 새로 만든다.
+    //
+    // EfficientDet은 1회당 ML Kit의 약 3배 빠르다. 문제는 느린 검출기를 **교체한**
+    // 것이 아니라 **조건부로 덧붙인** 것이었다.
     private var detector: DetectorHandle? = if (config.enabled) {
-        runCatching { createDetector(appContext) }.getOrNull()
+        runCatching { createDetector(appContext) }
+            .onFailure { Log.w(TAG, "EfficientDet unavailable — object detection is off this session", it) }
+            .getOrNull()
     } else {
         null
     }
@@ -57,13 +75,16 @@ class EfficientDetSceneDetector(
     private var sequenceId = 0L
 
     override fun detectBatch(frame: AnalysisFrame): ObjectDetectionBatch {
-        if (detector == null) return fallback.detectBatch(frame)
+        // Every "cannot run" path now reports **no objects** rather than reaching for
+        // a second detector. An empty batch is the honest answer, and the guide
+        // degrades to the person/preset path rather than to a 527ms frame.
+        if (detector == null) return empty()
         frameCount++
         sequenceId++
-        val provider = frame.cropBitmapProvider ?: return fallback.detectBatch(frame)
+        val provider = frame.cropBitmapProvider ?: return empty()
         val full = runCatching {
             provider(ObjectDetectionCrop(0f, 0f, 1f, 1f))
-        }.getOrNull() ?: return fallback.detectBatch(frame)
+        }.getOrNull() ?: return empty()
 
         val primary = try {
             detectBitmap(full)
@@ -91,18 +112,15 @@ class EfficientDetSceneDetector(
             primary
         }
 
-        return if (merged.isEmpty() || merged.none(::isCentralCandidate)) {
-            fallback.detectBatch(frame).copy(isFresh = true, sequenceId = sequenceId)
-        } else {
-            ObjectDetectionBatch(merged, isFresh = true, sequenceId = sequenceId)
-        }
+        return ObjectDetectionBatch(merged, isFresh = true, sequenceId = sequenceId)
     }
+
+    private fun empty() = ObjectDetectionBatch(emptyList(), isFresh = true, sequenceId = sequenceId)
 
     override fun detect(frame: AnalysisFrame): List<ObjectObservation> = detectBatch(frame).objects
 
     override fun close() {
         detector?.detector?.close()
-        fallback.close()
     }
 
     private fun createDetector(context: Context): DetectorHandle {
@@ -143,8 +161,8 @@ class EfficientDetSceneDetector(
     /**
      * Some Samsung GPU drivers can initialise the delegate successfully and
      * still fail on a later GL buffer map. Keep that native failure inside the
-     * detector seam: retry once on CPU, then let the regular ML Kit fallback
-     * handle this frame rather than crashing the CameraX analyzer thread.
+     * detector seam: retry once on CPU, then report no objects for this frame
+     * rather than crashing the CameraX analyzer thread.
      */
     private fun detectBitmap(bitmap: Bitmap): List<ObjectObservation> {
         val current = detector ?: return emptyList()
@@ -187,11 +205,6 @@ class EfficientDetSceneDetector(
         }
     }
 
-    private fun isCentralCandidate(candidate: ObjectObservation): Boolean {
-        val dx = candidate.box.centerX - 0.5f
-        val dy = candidate.box.centerY - 0.5f
-        return dx * dx + dy * dy <= 0.36f * 0.36f
-    }
 
     private fun ObjectObservation.remapFrom(crop: ObjectDetectionCrop): ObjectObservation = copy(
         box = NormalizedBox(
