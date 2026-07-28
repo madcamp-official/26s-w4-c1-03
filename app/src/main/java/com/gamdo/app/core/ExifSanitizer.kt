@@ -28,6 +28,13 @@ import java.io.File
  * untested Android adapter; verifying it against a real photo with a GPS tag is
  * a DONE-DEVICE item, not DONE-JVM.
  */
+@Deprecated(
+    message = "이 가드가 지키던 두 업로드 경로(§5-1 레퍼런스 분석, §5-3 생성 복구)가 " +
+        "remain_plan O-1로 모두 컷됐다. 앱에서 나가는 사진 업로드가 0개이므로 D8-5 GPS " +
+        "제거는 '미실행 위험'이 아니라 '비적용'이다. 새 업로드 경로를 만들 때 이 폐기를 " +
+        "지우는 것이 그 경로가 D8-5를 통과했다는 표시가 된다. remain_plan §1 참조.",
+    level = DeprecationLevel.ERROR,
+)
 object ExifSanitizer {
 
     /**

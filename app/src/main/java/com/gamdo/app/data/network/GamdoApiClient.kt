@@ -150,10 +150,21 @@ class GamdoApiClient(
         service.getPresets(deviceIdStore.getOrCreate())
     }
 
+    @Deprecated(
+        message = "레퍼런스 따라 찍기(§5-1/§5-2)는 remain_plan O-1로 컷됐다. 이 엔드포인트를 " +
+            "다시 부르려면 진입점·업로드 고지·EXIF 위치 제거 가드가 함께 살아나야 하므로 " +
+            "오너 결정이 선행이다. 배선 전에 remain_plan §1을 읽을 것.",
+        level = DeprecationLevel.ERROR,
+    )
     suspend fun analyzeReference(image: File): ReferenceAnalysisResponse = callApi {
         service.analyzeReference(deviceIdStore.getOrCreate(), imagePart(image))
     }
 
+    @Deprecated(
+        message = "생성 복구/사진 살리기(§5-3)는 remain_plan O-1로 컷됐다. 앱에서 나가는 " +
+            "업로드 경로이므로 되살리려면 오너 결정이 선행이다. remain_plan §1 참조.",
+        level = DeprecationLevel.ERROR,
+    )
     suspend fun createEditJob(
         jobId: String,
         captureRef: String,
@@ -174,11 +185,19 @@ class GamdoApiClient(
         )
     }
 
+    @Deprecated(
+        message = "생성 복구 폴링(§5-3)은 remain_plan O-1로 컷됐다. remain_plan §1 참조.",
+        level = DeprecationLevel.ERROR,
+    )
     suspend fun getEditJob(jobId: String): EditJobStatus = callApi {
         service.getEditJob(deviceIdStore.getOrCreate(), jobId)
     }
 
     /** Downloads a result path returned by the job endpoint into app-private storage. */
+    @Deprecated(
+        message = "생성 결과 다운로드(§5-3)는 remain_plan O-1로 컷됐다. remain_plan §1 참조.",
+        level = DeprecationLevel.ERROR,
+    )
     suspend fun downloadResult(resultUrl: String, destination: File) =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val url = if (resultUrl.startsWith("http://") || resultUrl.startsWith("https://")) {
