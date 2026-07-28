@@ -110,6 +110,38 @@ def test_reference_analysis_rejects_unsupported_content_type() -> None:
     assert response.json()["code"] == "unsupported_image_type"
 
 
+def test_rescue_analysis_returns_recommendations_without_creating_job() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/rescue/analyze",
+            headers={"X-Device-Id": "rescue-device"},
+            data={
+                "captureRef": "cap_rescue_1",
+                "styleParams": json.dumps({"composition": {"backgroundRatioRange": [0.5, 0.8]}}),
+                "referenceComposition": "{}",
+            },
+            files={"image": ("photo.png", image_bytes(), "image/png")},
+        )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["analysisVersion"] == 1
+    assert payload["captureRef"] == "cap_rescue_1"
+    assert payload["recommendations"][0]["kind"] == "local_style"
+    assert payload["capabilities"]["localStyle"] is True
+
+
+def test_rescue_analysis_rejects_invalid_parameters() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/rescue/analyze",
+            headers={"X-Device-Id": "rescue-device"},
+            data={"styleParams": "not-json"},
+            files={"image": ("photo.png", image_bytes(), "image/png")},
+        )
+    assert response.status_code == 422
+    assert response.json()["code"] == "invalid_rescue_parameters"
+
+
 def test_edit_job_rejects_large_edit_area() -> None:
     form = {
         "jobId": "job_area_limit",

@@ -7,6 +7,8 @@ import com.gamdo.app.core.DeviceIdStore
 import com.gamdo.app.core.AndroidReferenceImagePreprocessor
 import com.gamdo.app.data.local.GamdoDatabase
 import com.gamdo.app.data.network.GamdoApiClient
+import com.gamdo.app.data.rescue.RescueController
+import com.gamdo.app.data.rescue.RescueRepository
 import java.io.File
 import kotlinx.serialization.json.Json
 
@@ -115,4 +117,14 @@ class AppContainer(context: Context) {
         // p1 (§4-1/§4-2): saveEditedResult, markSavedToGallery
         editStackRecorder = RoomEditStackRecorder(captureEditStackDao),
     )
+
+    /** AI 3 state and transport are wired here; P1 owns the result-screen rendering. */
+    val rescueRepository: RescueRepository = RescueRepository(
+        api = apiClient,
+        captureRepository = captureRepository,
+        cacheDir = File(appContext.cacheDir, "rescue-results"),
+        json = json,
+    )
+
+    val rescueController: RescueController = RescueController(rescueRepository)
 }

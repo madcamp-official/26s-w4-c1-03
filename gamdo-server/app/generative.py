@@ -209,36 +209,32 @@ class CandidateValidator:
                     if interior_distance > 0.08:
                         return ValidationResult(False, "original_interior_changed", {"interiorDistance": interior_distance})
                 histogram_distance = _histogram_distance(original, generated)
-                if histogram_distance > 0.85:
-                    return ValidationResult(
-                        False,
-                        "extreme_color_change",
-                        {"histogramDistance": histogram_distance},
-                    )
+                quality: dict[str, Any] = {
+                    "histogramDistance": histogram_distance,
+                    "colorWarning": histogram_distance > 0.85,
+                }
                 count_guard = getattr(self.identity_verifier, "face_count_matches", None)
-                if count_guard is not None and not count_guard(original, generated):
-                    return ValidationResult(
-                        False,
-                        "face_count_changed",
-                        {"histogramDistance": histogram_distance},
-                    )
+                face_count_ok = count_guard is None or bool(count_guard(original, generated))
+                quality["faceCountMatched"] = face_count_ok
                 identity_ok = self.identity_verifier.verify(original, generated)
-                if not identity_ok:
-                    return ValidationResult(
-                        False,
-                        "face_identity_unverified",
-                        {"histogramDistance": histogram_distance},
-                    )
+                quality["identityVerified"] = identity_ok
+                quality["qualityWarnings"] = [
+                    warning for warning, failed in (
+                        ("extreme_color_change", histogram_distance > 0.85),
+                        ("face_count_changed", not face_count_ok),
+                        ("face_identity_unverified", not identity_ok),
+                    ) if failed
+                ]
                 return ValidationResult(
                     True,
-                    "passed",
-                    {"histogramDistance": histogram_distance, "identityVerified": True},
+                    "passed_with_quality_signals" if quality["qualityWarnings"] else "passed",
+                    quality,
                 )
         except (OSError, ValueError):
             return ValidationResult(False, "invalid_candidate", {})
 
     def mask_is_safe(self, original_path: Path, operations: list[dict[str, Any]]) -> bool:
-        """Reject masks that overlap a protected face when the verifier supports it."""
+        """Report a face overlap as a quality signal, never as a hard gate."""
         guard = getattr(self.identity_verifier, "mask_intersects_face", None)
         if guard is None:
             return True

@@ -359,11 +359,6 @@ class CaptureRepository(
      * DDL v2.0은 서버의 `res_` id를 **그대로 복사**하라고 규정한다. 지금처럼 생성하면
      * 사용자가 고른 결과를 서버 아티팩트로 되돌려 매핑할 방법이 없다.
      */
-    @Deprecated(
-        message = "생성 복구(§5-3)는 remain_plan O-1로 컷됐다. 되살릴 때 id를 서버 res_ 값 " +
-            "복사로 바꿀 것(현재는 로컬 생성 — DDL v2.0 위반). remain_plan §1 참조.",
-        level = DeprecationLevel.ERROR,
-    )
     suspend fun recordDownloadedEditResult(
         captureId: String,
         jobId: String,

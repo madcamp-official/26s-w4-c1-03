@@ -74,18 +74,26 @@ class ComfyUiProvider(GenerativeEditProvider):
         if not self.base_url or workflow_path is None or not workflow_path.exists():
             raise ProviderNotReady("ComfyUI outpaint workflow is not configured")
         workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
-        input_name = self._upload_image(image_path)
-        candidates: list[GeneratedCandidate] = []
-        for seed in range(max(1, result_count)):
-            seeded = _inject_workflow_inputs(workflow, input_name, operations, 1, seed)
-            prompt = self._request_json("/prompt", {"prompt": seeded})
-            prompt_id = prompt.get("prompt_id")
-            if not prompt_id:
-                raise ProviderNotReady("ComfyUI did not return an outpaint prompt id")
-            item = self._wait_for_history(str(prompt_id))
-            for candidate in self._download_outputs(item["outputs"], str(prompt_id), 1, seed):
-                candidates.append(GeneratedCandidate(candidate.path, candidate.seed, "outpaint"))
-        return candidates
+        operation = operations[0] if operations else {}
+        prepared = _outpaint_upload_path(image_path, operation)
+        try:
+            input_name = self._upload_image(prepared)
+            candidates: list[GeneratedCandidate] = []
+            # AI3 deliberately keeps one candidate: outpaint is the slower,
+            # optional path and must never multiply queue time.
+            for seed in range(1):
+                seeded = _inject_workflow_inputs(workflow, input_name, operations, 1, seed)
+                prompt = self._request_json("/prompt", {"prompt": seeded})
+                prompt_id = prompt.get("prompt_id")
+                if not prompt_id:
+                    raise ProviderNotReady("ComfyUI did not return an outpaint prompt id")
+                item = self._wait_for_history(str(prompt_id))
+                for candidate in self._download_outputs(item["outputs"], str(prompt_id), 1, seed):
+                    _restore_outpaint_interior(candidate.path, image_path, operation)
+                    candidates.append(GeneratedCandidate(candidate.path, candidate.seed, "outpaint"))
+            return candidates
+        finally:
+            prepared.unlink(missing_ok=True)
 
     def _wait_for_history(self, prompt_id: str) -> dict[str, Any]:
         deadline = time.monotonic() + self.timeout_seconds
@@ -213,6 +221,40 @@ def _inject_workflow_inputs(
 
 def _has_masks(operations: list[dict[str, Any]]) -> bool:
     return any(operation.get("masks") for operation in operations if isinstance(operation, dict))
+
+
+def _outpaint_upload_path(image_path: Path, operation: dict[str, Any]) -> Path:
+    """Prepare an expanded canvas; the workflow fills only the new edge."""
+    direction = operation.get("direction")
+    ratio = float(operation.get("ratio", 0.0))
+    with Image.open(image_path) as source:
+        source = source.convert("RGB")
+        width, height = source.size
+        extra_width = round(width * ratio) if direction in {"left", "right"} else 0
+        extra_height = round(height * ratio) if direction in {"top", "bottom"} else 0
+        canvas = Image.new("RGB", (width + extra_width, height + extra_height), (128, 128, 128))
+        offset_x = extra_width if direction == "left" else 0
+        offset_y = extra_height if direction == "top" else 0
+        canvas.paste(source, (offset_x, offset_y))
+    handle = tempfile.NamedTemporaryFile(prefix="gamdo-outpaint-", suffix=".png", delete=False)
+    path = Path(handle.name)
+    handle.close()
+    canvas.save(path, format="PNG")
+    return path
+
+
+def _restore_outpaint_interior(candidate_path: Path, original_path: Path, operation: dict[str, Any]) -> None:
+    """Restore original pixels after generation so the source is non-destructive."""
+    with Image.open(original_path) as source, Image.open(candidate_path) as generated:
+        source = source.convert("RGB")
+        generated = generated.convert("RGB")
+        direction = operation.get("direction")
+        extra_x = generated.width - source.width if direction in {"left", "right"} else 0
+        extra_y = generated.height - source.height if direction in {"top", "bottom"} else 0
+        offset_x = extra_x if direction == "left" else 0
+        offset_y = extra_y if direction == "top" else 0
+        generated.paste(source, (offset_x, offset_y))
+        generated.save(candidate_path, format="PNG")
 
 
 def _masked_upload_path(image_path: Path, operations: list[dict[str, Any]]) -> Path:
