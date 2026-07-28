@@ -1,6 +1,7 @@
 package com.gamdo.app.guide
 
 import com.gamdo.app.detect.DiagnoserConfig
+import com.gamdo.app.detect.EfficientDetSceneDetectorConfig
 import com.gamdo.app.detect.FrameFeatureCalculator
 import com.gamdo.app.detect.ObjectTrackerConfig
 import kotlinx.serialization.Serializable
@@ -44,6 +45,8 @@ data class GuideConfigBundle(
     fun toDiagnoserConfig(): DiagnoserConfig = diagnoser.toConfig()
 
     fun toObjectTrackerConfig(): ObjectTrackerConfig = objectGuide.toTrackerConfig()
+
+    fun toEfficientDetConfig(): EfficientDetSceneDetectorConfig = objectGuide.toEfficientDetConfig()
 }
 
 /**
@@ -52,6 +55,13 @@ data class GuideConfigBundle(
  */
 @Serializable
 data class ObjectGuideConfigJson(
+    val sceneModelEnabled: Boolean = true,
+    val sceneModelAsset: String = "models/efficientdet_lite0_coco_int8.tflite",
+    val sceneModelMinimumConfidence: Float = 0.25f,
+    val sceneModelMaxResults: Int = 8,
+    val sceneModelPreferGpu: Boolean = true,
+    val sceneModelCenterCropEveryFrames: Int = 4,
+    val sceneModelCenterCropScale: Float = 1.60f,
     val objectRefreshEveryFrames: Int = 1,
     val segmentationRefreshEveryFrames: Int = 12,
     val confirmationWindow: Int = 5,
@@ -68,6 +78,7 @@ data class ObjectGuideConfigJson(
     val focusRegionHeight: Float = 0.68f,
     val subjectClusterRadius: Float = 0.38f,
     val subjectClusterMinimumRelativeArea: Float = 0.16f,
+    val sceneAnchorMaxDistance: Float = 0.36f,
     val maximumUnknownAspectRatio: Float = 3.50f,
     val nestedDuplicateCenterDistance: Float = 0.08f,
     val nestedDuplicateContainment: Float = 0.78f,
@@ -85,6 +96,11 @@ data class ObjectGuideConfigJson(
     val performanceTargetFps: Int = 8,
 ) {
     init {
+        require(sceneModelAsset.isNotBlank())
+        require(sceneModelMinimumConfidence in 0f..1f)
+        require(sceneModelMaxResults in 1..25)
+        require(sceneModelCenterCropEveryFrames >= 1)
+        require(sceneModelCenterCropScale in 1.10f..2.0f)
         require(objectRefreshEveryFrames >= 1)
         require(segmentationRefreshEveryFrames >= 1)
         require(templateSafetyMargin in 0f..0.20f)
@@ -99,6 +115,7 @@ data class ObjectGuideConfigJson(
         require(focusRegionHeight in 0.20f..1f)
         require(subjectClusterRadius in 0.05f..0.80f)
         require(subjectClusterMinimumRelativeArea in 0f..1f)
+        require(sceneAnchorMaxDistance in 0.10f..0.70f)
         require(maximumUnknownAspectRatio >= 1f)
         require(nestedDuplicateCenterDistance in 0f..1f)
         require(nestedDuplicateContainment in 0f..1f)
@@ -120,6 +137,7 @@ data class ObjectGuideConfigJson(
         focusRegionHeight = focusRegionHeight,
         subjectClusterRadius = subjectClusterRadius,
         subjectClusterMinimumRelativeArea = subjectClusterMinimumRelativeArea,
+        sceneAnchorMaxDistance = sceneAnchorMaxDistance,
         maximumUnknownAspectRatio = maximumUnknownAspectRatio,
         nestedDuplicateCenterDistance = nestedDuplicateCenterDistance,
         nestedDuplicateContainment = nestedDuplicateContainment,
@@ -141,6 +159,17 @@ data class ObjectGuideConfigJson(
             smallObjectAreaRatio = multiScaleSmallObjectAreaRatio,
             duplicateIou = multiScaleDuplicateIou,
         )
+
+    fun toEfficientDetConfig(): EfficientDetSceneDetectorConfig = EfficientDetSceneDetectorConfig(
+        enabled = sceneModelEnabled,
+        modelAsset = sceneModelAsset,
+        minimumConfidence = sceneModelMinimumConfidence,
+        maxResults = sceneModelMaxResults,
+        preferGpu = sceneModelPreferGpu,
+        centerCropEveryFrames = sceneModelCenterCropEveryFrames,
+        centerCropScale = sceneModelCenterCropScale,
+        fallback = toMultiScaleObjectDetectionConfig(),
+    )
 }
 
 /**

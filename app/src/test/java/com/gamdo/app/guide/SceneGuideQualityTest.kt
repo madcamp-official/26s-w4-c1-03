@@ -31,7 +31,9 @@ class SceneGuideQualityTest {
 
         assertEquals(GuideLayoutState.Searching, controller.updateScene(detection.copy(objectSequenceId = 1), StyleTarget()).layoutState)
         assertEquals(GuideLayoutState.Searching, controller.updateScene(detection.copy(objectSequenceId = 2), StyleTarget()).layoutState)
-        val fixed = controller.updateScene(detection.copy(objectSequenceId = 3), StyleTarget())
+        assertEquals(GuideLayoutState.Searching, controller.updateScene(detection.copy(objectSequenceId = 3), StyleTarget()).layoutState)
+        assertEquals(GuideLayoutState.Searching, controller.updateScene(detection.copy(objectSequenceId = 4), StyleTarget()).layoutState)
+        val fixed = controller.updateScene(detection.copy(objectSequenceId = 5), StyleTarget())
 
         val layout = fixed.layoutState as GuideLayoutState.Fixed
         assertEquals(LayoutSource.AUTO, layout.source)
@@ -120,8 +122,8 @@ class SceneGuideQualityTest {
             ),
             objectsFresh = true,
         )
-        repeat(2) { index -> controller.updateScene(initial.copy(objectSequenceId = (index + 1).toLong()), StyleTarget()) }
-        val fixed = controller.updateScene(initial.copy(objectSequenceId = 3), StyleTarget())
+        repeat(4) { index -> controller.updateScene(initial.copy(objectSequenceId = (index + 1).toLong()), StyleTarget()) }
+        val fixed = controller.updateScene(initial.copy(objectSequenceId = 5), StyleTarget())
         val before = (fixed.layoutState as GuideLayoutState.Fixed).template.slots.map { it.bounds }
 
         val later = controller.updateScene(

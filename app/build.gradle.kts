@@ -110,6 +110,7 @@ dependencies {
 
     // ML Kit (face + pose streaming; accurate pose kept out until perf-checked — see Day 1 plan)
     implementation(libs.bundles.mlkit)
+    implementation(libs.mediapipe.tasks.vision)
 
     // Room
     implementation(libs.androidx.room.runtime)

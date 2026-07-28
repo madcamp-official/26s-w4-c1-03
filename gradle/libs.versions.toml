@@ -21,6 +21,7 @@ mlkitFace = "16.1.7"
 mlkitPose = "18.0.0-beta5"
 mlkitObject = "17.0.2"
 mlkitSubjectSegmentation = "16.0.0-beta1"
+mediapipeTasksVision = "0.10.26"
 
 # Room
 room = "2.6.1"
@@ -77,6 +78,7 @@ mlkit-pose-detection = { group = "com.google.mlkit", name = "pose-detection", ve
 mlkit-pose-detection-accurate = { group = "com.google.mlkit", name = "pose-detection-accurate", version.ref = "mlkitPose" }
 mlkit-object-detection = { group = "com.google.mlkit", name = "object-detection", version.ref = "mlkitObject" }
 mlkit-subject-segmentation = { group = "com.google.android.gms", name = "play-services-mlkit-subject-segmentation", version.ref = "mlkitSubjectSegmentation" }
+mediapipe-tasks-vision = { group = "com.google.mediapipe", name = "tasks-vision", version.ref = "mediapipeTasksVision" }
 
 # Room
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }

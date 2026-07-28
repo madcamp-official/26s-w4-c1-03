@@ -85,7 +85,7 @@ import com.gamdo.app.data.preset.StylePreset
 import com.gamdo.app.detect.DetectionResult
 import com.gamdo.app.detect.MlKitFaceDetector
 import com.gamdo.app.detect.MlKitPoseDetector
-import com.gamdo.app.detect.MlKitObjectDetector
+import com.gamdo.app.detect.EfficientDetSceneDetector
 import com.gamdo.app.detect.ThrottledObjectSceneDetector
 import com.gamdo.app.detect.MlKitSubjectSegmenter
 import com.gamdo.app.detect.ThrottledSubjectSceneSegmenter
@@ -179,7 +179,7 @@ fun CameraScreen(
             // every processed frame gives the 3/5 tracker enough real evidence
             // to meet the two-second first-layout target without a queue.
             objectDetector = ThrottledObjectSceneDetector(
-                MlKitObjectDetector(guideConfig.objectGuide.toMultiScaleObjectDetectionConfig()),
+                EfficientDetSceneDetector(context, guideConfig.toEfficientDetConfig()),
                 refreshEveryFrames = guideConfig.objectGuide.objectRefreshEveryFrames,
             ),
             subjectSegmenter = ThrottledSubjectSceneSegmenter(

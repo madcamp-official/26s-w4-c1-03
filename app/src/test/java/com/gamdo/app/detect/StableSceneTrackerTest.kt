@@ -21,9 +21,8 @@ class StableSceneTrackerTest {
             ObjectDetectionBatch(listOf(objectAt(0)), isFresh = true, sequenceId = sequence)
         }
 
-        assertTrue(tracker.accept(batch(1)).isEmpty())
-        assertTrue(tracker.accept(batch(2)).isEmpty())
-        assertEquals(1, tracker.accept(batch(3)).size)
+        repeat(4) { sequence -> assertTrue(tracker.accept(batch((sequence + 1).toLong())).isEmpty()) }
+        assertEquals(1, tracker.accept(batch(5)).size)
     }
 
     @Test
@@ -32,16 +31,18 @@ class StableSceneTrackerTest {
         tracker.accept(ObjectDetectionBatch(listOf(objectAt(0)), true, 1))
         repeat(3) { tracker.accept(ObjectDetectionBatch(listOf(objectAt(0)), false, 1)) }
         assertTrue(tracker.accept(ObjectDetectionBatch(listOf(objectAt(0)), true, 2)).isEmpty())
-        assertEquals(1, tracker.accept(ObjectDetectionBatch(listOf(objectAt(0)), true, 3)).size)
+        assertTrue(tracker.accept(ObjectDetectionBatch(listOf(objectAt(0)), true, 3)).isEmpty())
+        assertTrue(tracker.accept(ObjectDetectionBatch(listOf(objectAt(0)), true, 4)).isEmpty())
+        assertEquals(1, tracker.accept(ObjectDetectionBatch(listOf(objectAt(0)), true, 5)).size)
     }
 
     @Test
     fun `five candidates are ranked down to four`() {
         val tracker = StableSceneTracker()
-        repeat(3) { sequence ->
+        repeat(5) { sequence ->
             tracker.accept(ObjectDetectionBatch((0 until 5).map(::objectAt), true, sequence.toLong()))
         }
-        assertEquals(4, tracker.accept(ObjectDetectionBatch(emptyList(), false, 3)).size)
+        assertEquals(4, tracker.accept(ObjectDetectionBatch(emptyList(), false, 4)).size)
     }
 
     @Test
@@ -77,14 +78,14 @@ class StableSceneTrackerTest {
             trackingId = 2,
         )
 
-        repeat(3) { sequence ->
+        repeat(5) { sequence ->
             tracker.accept(
                 ObjectDetectionBatch(listOf(central, edge), isFresh = true, sequenceId = sequence.toLong()),
             )
         }
 
         val stable = tracker.accept(
-            ObjectDetectionBatch(listOf(central, edge), isFresh = true, sequenceId = 3),
+            ObjectDetectionBatch(listOf(central, edge), isFresh = true, sequenceId = 5),
         )
         assertEquals(listOf(central.box), stable.map { it.box })
     }
@@ -100,14 +101,14 @@ class StableSceneTrackerTest {
             trackingId = 10,
         )
 
-        repeat(3) { sequence ->
+        repeat(5) { sequence ->
             tracker.accept(
                 ObjectDetectionBatch(listOf(face), isFresh = true, sequenceId = sequence.toLong()),
             )
         }
 
         val stable = tracker.accept(
-            ObjectDetectionBatch(listOf(face), isFresh = true, sequenceId = 3),
+            ObjectDetectionBatch(listOf(face), isFresh = true, sequenceId = 5),
         )
         assertEquals(listOf(GuideObjectCategory.PERSON), stable.map { it.category })
     }
@@ -145,11 +146,59 @@ class StableSceneTrackerTest {
         )
         val scene = listOf(can, blackDevice, bluePackage, cable, canDuplicate)
 
-        repeat(3) { sequence ->
+        repeat(5) { sequence ->
             tracker.accept(ObjectDetectionBatch(scene, isFresh = true, sequenceId = sequence.toLong()))
         }
 
-        val stable = tracker.accept(ObjectDetectionBatch(scene, isFresh = true, sequenceId = 3))
+        val stable = tracker.accept(ObjectDetectionBatch(scene, isFresh = true, sequenceId = 5))
+        assertEquals(setOf(1, 2, 3), stable.mapNotNull { it.trackingId }.toSet())
+    }
+
+    @Test
+    fun `early single detection does not freeze before the later three-object scene`() {
+        val tracker = StableSceneTracker()
+        val can = ObjectObservation(
+            box = NormalizedBox(0.35f, 0.28f, 0.56f, 0.54f),
+            trackingId = 1,
+            category = GuideObjectCategory.FOOD_TABLEWARE,
+        )
+        val blackDevice = ObjectObservation(
+            box = NormalizedBox(0.17f, 0.51f, 0.43f, 0.69f),
+            trackingId = 2,
+        )
+        val bluePackage = ObjectObservation(
+            box = NormalizedBox(0.43f, 0.53f, 0.59f, 0.71f),
+            trackingId = 3,
+        )
+        val clippedLaptop = ObjectObservation(
+            box = NormalizedBox(0.66f, 0.66f, 1.00f, 1.00f),
+            trackingId = 4,
+        )
+        val cable = ObjectObservation(
+            box = NormalizedBox(0.10f, 0.64f, 0.70f, 0.69f),
+            trackingId = 5,
+        )
+
+        assertTrue(tracker.accept(ObjectDetectionBatch(listOf(can), true, 1)).isEmpty())
+        repeat(3) { sequence ->
+            assertTrue(
+                tracker.accept(
+                    ObjectDetectionBatch(
+                        listOf(can, blackDevice, bluePackage, clippedLaptop, cable),
+                        true,
+                        (sequence + 2).toLong(),
+                    ),
+                ).isEmpty(),
+            )
+        }
+        val stable = tracker.accept(
+            ObjectDetectionBatch(
+                listOf(can, blackDevice, bluePackage, clippedLaptop, cable),
+                true,
+                5,
+            ),
+        )
+
         assertEquals(setOf(1, 2, 3), stable.mapNotNull { it.trackingId }.toSet())
     }
 }
