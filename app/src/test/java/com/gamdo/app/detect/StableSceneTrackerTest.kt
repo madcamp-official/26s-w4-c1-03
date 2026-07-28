@@ -111,4 +111,45 @@ class StableSceneTrackerTest {
         )
         assertEquals(listOf(GuideObjectCategory.PERSON), stable.map { it.category })
     }
+
+    @Test
+    fun `central three-subject cluster excludes a thin cable and nested duplicate`() {
+        val tracker = StableSceneTracker(
+            ObjectTrackerConfig(
+                subjectClusterRadius = 0.38f,
+                subjectClusterMinimumRelativeArea = 0.16f,
+                maximumUnknownAspectRatio = 3.5f,
+            ),
+        )
+        val can = ObjectObservation(
+            box = NormalizedBox(0.45f, 0.30f, 0.55f, 0.60f),
+            trackingId = 1,
+            category = GuideObjectCategory.FOOD_TABLEWARE,
+        )
+        val blackDevice = ObjectObservation(
+            box = NormalizedBox(0.25f, 0.50f, 0.43f, 0.70f),
+            trackingId = 2,
+        )
+        val bluePackage = ObjectObservation(
+            box = NormalizedBox(0.58f, 0.52f, 0.72f, 0.72f),
+            trackingId = 3,
+        )
+        val cable = ObjectObservation(
+            box = NormalizedBox(0.20f, 0.64f, 0.62f, 0.69f),
+            trackingId = 4,
+        )
+        val canDuplicate = ObjectObservation(
+            box = NormalizedBox(0.46f, 0.31f, 0.54f, 0.58f),
+            trackingId = 5,
+            category = GuideObjectCategory.FOOD_TABLEWARE,
+        )
+        val scene = listOf(can, blackDevice, bluePackage, cable, canDuplicate)
+
+        repeat(3) { sequence ->
+            tracker.accept(ObjectDetectionBatch(scene, isFresh = true, sequenceId = sequence.toLong()))
+        }
+
+        val stable = tracker.accept(ObjectDetectionBatch(scene, isFresh = true, sequenceId = 3))
+        assertEquals(setOf(1, 2, 3), stable.mapNotNull { it.trackingId }.toSet())
+    }
 }

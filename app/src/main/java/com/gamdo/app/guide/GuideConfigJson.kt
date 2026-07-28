@@ -66,6 +66,11 @@ data class ObjectGuideConfigJson(
     val semanticConfirmationsRequired: Int = 3,
     val focusRegionWidth: Float = 0.70f,
     val focusRegionHeight: Float = 0.68f,
+    val subjectClusterRadius: Float = 0.38f,
+    val subjectClusterMinimumRelativeArea: Float = 0.16f,
+    val maximumUnknownAspectRatio: Float = 3.50f,
+    val nestedDuplicateCenterDistance: Float = 0.08f,
+    val nestedDuplicateContainment: Float = 0.78f,
     val templateSafetyMargin: Float = 0.05f,
     val detectedSlotAspectMin: Float = 0.55f,
     val detectedSlotAspectMax: Float = 1.80f,
@@ -92,6 +97,11 @@ data class ObjectGuideConfigJson(
         require(multiScaleDuplicateIou in 0f..1f)
         require(focusRegionWidth in 0.20f..1f)
         require(focusRegionHeight in 0.20f..1f)
+        require(subjectClusterRadius in 0.05f..0.80f)
+        require(subjectClusterMinimumRelativeArea in 0f..1f)
+        require(maximumUnknownAspectRatio >= 1f)
+        require(nestedDuplicateCenterDistance in 0f..1f)
+        require(nestedDuplicateContainment in 0f..1f)
         require(performanceTargetFps >= 1)
     }
 
@@ -108,6 +118,11 @@ data class ObjectGuideConfigJson(
         semanticConfirmationsRequired = semanticConfirmationsRequired,
         focusRegionWidth = focusRegionWidth,
         focusRegionHeight = focusRegionHeight,
+        subjectClusterRadius = subjectClusterRadius,
+        subjectClusterMinimumRelativeArea = subjectClusterMinimumRelativeArea,
+        maximumUnknownAspectRatio = maximumUnknownAspectRatio,
+        nestedDuplicateCenterDistance = nestedDuplicateCenterDistance,
+        nestedDuplicateContainment = nestedDuplicateContainment,
     )
 
     fun toDetectedSlotShapeConfig(): DetectedSlotShapeConfig = DetectedSlotShapeConfig(

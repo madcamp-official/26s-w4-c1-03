@@ -23,6 +23,15 @@ data class ObjectTrackerConfig(
      */
     val focusRegionWidth: Float = 0.70f,
     val focusRegionHeight: Float = 0.68f,
+    /** Maximum distance from the central main subject for its companion objects. */
+    val subjectClusterRadius: Float = 0.38f,
+    /** Reject tiny unknown clutter relative to the central main subject. */
+    val subjectClusterMinimumRelativeArea: Float = 0.16f,
+    /** Cables and long edges are not promoted as unknown composition subjects. */
+    val maximumUnknownAspectRatio: Float = 3.50f,
+    /** Nested boxes with nearly the same centre are detector duplicates, not two subjects. */
+    val nestedDuplicateCenterDistance: Float = 0.08f,
+    val nestedDuplicateContainment: Float = 0.78f,
 ) {
     init {
         require(windowSize >= 1)
@@ -34,6 +43,11 @@ data class ObjectTrackerConfig(
         require(semanticConfirmationsRequired in 1..windowSize)
         require(focusRegionWidth in 0.20f..1f)
         require(focusRegionHeight in 0.20f..1f)
+        require(subjectClusterRadius in 0.05f..0.80f)
+        require(subjectClusterMinimumRelativeArea in 0f..1f)
+        require(maximumUnknownAspectRatio >= 1f)
+        require(nestedDuplicateCenterDistance in 0f..1f)
+        require(nestedDuplicateContainment in 0f..1f)
     }
 }
 
@@ -88,7 +102,10 @@ class StableSceneTracker(
             }
 
         val stable = tracks.values
-            .filter { it.history.count { present -> present } >= config.confirmationsRequired }
+            .filter {
+                it.lastSequence == batch.sequenceId &&
+                    it.history.count { present -> present } >= config.confirmationsRequired
+            }
             .map { track ->
                 track.latest.copy(
                     semanticConfirmed = track.semanticHistory
@@ -118,7 +135,12 @@ class StableSceneTracker(
         return area * 0.7f + (1f - centerDistance) * 0.3f
     }
 
-    /** Remove full-frame/background proposals and duplicate boxes before tracking. */
+    /**
+     * Keeps one central, visually coherent group of major subjects. The object
+     * detector can still report cables, a laptop edge, or nested duplicate
+     * boxes; those are useful detector diagnostics but must not become extra
+     * composition slots.
+     */
     private fun sanitize(objects: List<ObjectObservation>): List<ObjectObservation> {
         val selected = mutableListOf<ObjectObservation>()
         objects
@@ -139,11 +161,50 @@ class StableSceneTracker(
             .sortedByDescending(::rankingScore)
             .forEach { candidate ->
                 val duplicate = selected.any { existing ->
-                    intersectionOverUnion(existing.box, candidate.box) >= config.duplicateIou
+                    isDuplicate(existing, candidate)
                 }
                 if (!duplicate) selected += candidate
             }
-        return selected
+        val people = selected.filter { it.category == GuideObjectCategory.PERSON }
+        val objectCluster = selectMainObjectCluster(selected.filter { it.category != GuideObjectCategory.PERSON })
+        return people + objectCluster
+    }
+
+    /**
+     * The central/high-importance object is the anchor. Nearby objects of a
+     * meaningful size form its scene cluster; isolated or thin unknown boxes
+     * are discarded. This keeps labels optional while preserving a genuine
+     * 1~4 object scene such as a drink, pouch, and snack on one table.
+     */
+    private fun selectMainObjectCluster(objects: List<ObjectObservation>): List<ObjectObservation> {
+        if (objects.size <= 1) return objects
+        val plausible = objects.filter(::isPlausibleSubject).ifEmpty { objects }
+        val anchor = plausible.maxByOrNull(::rankingScore) ?: return emptyList()
+        val anchorArea = area(anchor.box).coerceAtLeast(config.minimumAreaRatio)
+        return plausible.filter { candidate ->
+            candidate === anchor || (
+                distance(anchor, candidate) <= config.subjectClusterRadius &&
+                    (candidate.category != GuideObjectCategory.UNKNOWN ||
+                        area(candidate.box) >= anchorArea * config.subjectClusterMinimumRelativeArea)
+                )
+            }
+            .sortedByDescending(::rankingScore)
+    }
+
+    private fun isPlausibleSubject(candidate: ObjectObservation): Boolean {
+        if (candidate.category != GuideObjectCategory.UNKNOWN) return true
+        val width = candidate.box.width.coerceAtLeast(0.0001f)
+        val height = candidate.box.height.coerceAtLeast(0.0001f)
+        val aspect = maxOf(width / height, height / width)
+        return aspect <= config.maximumUnknownAspectRatio
+    }
+
+    private fun isDuplicate(existing: ObjectObservation, candidate: ObjectObservation): Boolean {
+        if (intersectionOverUnion(existing.box, candidate.box) >= config.duplicateIou) return true
+        val intersection = intersectionArea(existing.box, candidate.box)
+        val smallerArea = minOf(area(existing.box), area(candidate.box))
+        val contained = smallerArea > 0f && intersection / smallerArea >= config.nestedDuplicateContainment
+        return contained && distance(existing, candidate) <= config.nestedDuplicateCenterDistance
     }
 
     /**
@@ -191,12 +252,18 @@ class StableSceneTracker(
     )
 
     private fun intersectionOverUnion(a: NormalizedBox, b: NormalizedBox): Float {
+        val intersection = intersectionArea(a, b)
+        val union = a.width * a.height + b.width * b.height - intersection
+        return if (union <= 0f) 0f else intersection / union
+    }
+
+    private fun intersectionArea(a: NormalizedBox, b: NormalizedBox): Float {
         val left = maxOf(a.left, b.left)
         val top = maxOf(a.top, b.top)
         val right = minOf(a.right, b.right)
         val bottom = minOf(a.bottom, b.bottom)
-        val intersection = ((right - left).coerceAtLeast(0f) * (bottom - top).coerceAtLeast(0f))
-        val union = a.width * a.height + b.width * b.height - intersection
-        return if (union <= 0f) 0f else intersection / union
+        return (right - left).coerceAtLeast(0f) * (bottom - top).coerceAtLeast(0f)
     }
+
+    private fun area(box: NormalizedBox): Float = box.width * box.height
 }
