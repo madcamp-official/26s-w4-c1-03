@@ -49,6 +49,11 @@
     "detectedSlotScaleMin": 0.70,
     "detectedSlotScaleMax": 1.16,
     "detectedSlotReferenceArea": 0.08,
+    "multiScaleEnabled": true,
+    "multiScaleFallbackEveryFrames": 6,
+    "multiScaleCropScale": 1.60,
+    "multiScaleSmallObjectAreaRatio": 0.05,
+    "multiScaleDuplicateIou": 0.55,
     "performanceTargetFps": 8
   }
 }

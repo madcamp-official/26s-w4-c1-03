@@ -112,6 +112,10 @@ class GuideConfigJsonTest {
         assertEquals(1.80f, shape.aspectRatioMax, 0.0001f)
         assertEquals(0.70f, shape.scaleMin, 0.0001f)
         assertEquals(1.16f, shape.scaleMax, 0.0001f)
+        val multiScale = bundle.objectGuide.toMultiScaleObjectDetectionConfig()
+        assertTrue(multiScale.enabled)
+        assertEquals(6, multiScale.fallbackEveryFrames)
+        assertEquals(1.60f, multiScale.cropScale, 0.0001f)
     }
 
     @Test

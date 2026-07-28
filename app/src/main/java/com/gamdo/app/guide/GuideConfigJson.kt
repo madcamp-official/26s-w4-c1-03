@@ -70,6 +70,11 @@ data class ObjectGuideConfigJson(
     val detectedSlotScaleMin: Float = 0.70f,
     val detectedSlotScaleMax: Float = 1.16f,
     val detectedSlotReferenceArea: Float = 0.08f,
+    val multiScaleEnabled: Boolean = true,
+    val multiScaleFallbackEveryFrames: Int = 6,
+    val multiScaleCropScale: Float = 1.60f,
+    val multiScaleSmallObjectAreaRatio: Float = 0.05f,
+    val multiScaleDuplicateIou: Float = 0.55f,
     val performanceTargetFps: Int = 8,
 ) {
     init {
@@ -79,6 +84,10 @@ data class ObjectGuideConfigJson(
         require(detectedSlotAspectMin > 0f && detectedSlotAspectMax >= detectedSlotAspectMin)
         require(detectedSlotScaleMin > 0f && detectedSlotScaleMax >= detectedSlotScaleMin)
         require(detectedSlotReferenceArea in 0.001f..1f)
+        require(multiScaleFallbackEveryFrames >= 1)
+        require(multiScaleCropScale in 1.10f..2.0f)
+        require(multiScaleSmallObjectAreaRatio in 0f..1f)
+        require(multiScaleDuplicateIou in 0f..1f)
         require(performanceTargetFps >= 1)
     }
 
@@ -102,6 +111,15 @@ data class ObjectGuideConfigJson(
         scaleMax = detectedSlotScaleMax,
         referenceAreaRatio = detectedSlotReferenceArea,
     )
+
+    fun toMultiScaleObjectDetectionConfig(): com.gamdo.app.detect.MultiScaleObjectDetectionConfig =
+        com.gamdo.app.detect.MultiScaleObjectDetectionConfig(
+            enabled = multiScaleEnabled,
+            fallbackEveryFrames = multiScaleFallbackEveryFrames,
+            cropScale = multiScaleCropScale,
+            smallObjectAreaRatio = multiScaleSmallObjectAreaRatio,
+            duplicateIou = multiScaleDuplicateIou,
+        )
 }
 
 /**
