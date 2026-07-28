@@ -23,15 +23,33 @@ class AppContainer(context: Context) {
         encodeDefaults = true
     }
 
+    /**
+     * The local database. **Deliberately built with no migration fallback.**
+     *
+     * This app has no server-side copy of the user's data — DB 스키마 v2.0 §6:
+     * "로컬이 원천이므로 앱 삭제 = 데이터 전체 소실". So the two candidate
+     * behaviours on a schema mismatch are:
+     *
+     *  - `fallbackToDestructiveMigration()` — drop and recreate all 14 tables.
+     *    No crash, no log, no prompt. The profile, every capture row, the whole
+     *    edit stack and the session KPI evidence are gone before anyone can look.
+     *  - no fallback (what we do) — Room throws on open.
+     *
+     * A crash is the better failure. It is loud, it happens on the developer's
+     * machine on the very next run, and nothing has been lost yet.
+     *
+     * **If Room starts throwing here, the fix is a `Migration`, not this call.**
+     * `version` lives in [GamdoDatabase]; bump it and add the object in the same
+     * change. DDL §9-4 requires migrations to be additive, and AGENTS.md §7 규칙 2
+     * only permits additive edits, so writing one is short.
+     *
+     * `DatabaseMigrationPolicyTest` fails if the destructive fallback comes back.
+     */
     val database: GamdoDatabase = Room.databaseBuilder(
         appContext,
         GamdoDatabase::class.java,
         GamdoDatabase.NAME,
     )
-        // Dev-phase only: B's schema (v2.x) is still evolving; without this any
-        // entity change crashes existing installs. Replace with real migrations
-        // before release.
-        .fallbackToDestructiveMigration()
         .build()
 
     val deviceIdStore: DeviceIdStore = DeviceIdStore(appContext)
