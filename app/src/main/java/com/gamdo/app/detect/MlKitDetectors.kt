@@ -21,10 +21,27 @@ private const val TAG = "MlKitDetectors"
  */
 class MlKitFaceDetector : FaceDetector {
 
+    /**
+     * Classification (eye-open / smile) is **off**.
+     *
+     * It is a separate model pass on every face, and on device this detector was
+     * measured at 98.5ms per frame — the single largest cost in the analysis
+     * pipeline, running unthrottled at 37% of a 263ms budget.
+     *
+     * Nothing needs what it produced. `leftEyeOpenProbability` had exactly one
+     * production reader, `SceneProposalEngine`'s person-confidence fallback, and
+     * that reader was a defect (review_report #17): eyelid state standing in for
+     * detection confidence. The fix there removed the last consumer, so the pass
+     * was paying for a wrong answer. The fields stay on [FaceObservation] and
+     * simply read null; the debug HUD prints `?` for them.
+     *
+     * Contours are also off and always were — the guide draws a bracket, not a
+     * face mesh.
+     */
     private val detector = FaceDetection.getClient(
         FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
+            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
             .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)
             .build(),
     )
