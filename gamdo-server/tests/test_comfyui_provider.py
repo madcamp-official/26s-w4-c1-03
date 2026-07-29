@@ -8,6 +8,7 @@ from app.comfyui_provider import (
     ComfyUiProvider,
     _inject_workflow_inputs,
     _masked_upload_path,
+    is_outpaint_ready,
     provider_from_environment,
 )
 from app.generative import ProviderNotReady
@@ -68,3 +69,19 @@ def test_provider_from_environment_builds_comfy_provider(monkeypatch, tmp_path: 
     provider = provider_from_environment()
     assert isinstance(provider, ComfyUiProvider)
     assert provider.base_url == "http://127.0.0.1:18188"
+
+
+def test_outpaint_is_not_ready_without_its_dedicated_workflow(monkeypatch) -> None:
+    monkeypatch.setenv("GAMDO_COMFYUI_URL", "http://127.0.0.1:8188")
+    monkeypatch.delenv("GAMDO_COMFYUI_OUTPAINT_WORKFLOW", raising=False)
+
+    assert is_outpaint_ready() is False
+
+
+def test_outpaint_is_ready_when_deployment_workflow_exists(monkeypatch, tmp_path: Path) -> None:
+    workflow = tmp_path / "outpaint.json"
+    workflow.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("GAMDO_COMFYUI_URL", "http://127.0.0.1:8188")
+    monkeypatch.setenv("GAMDO_COMFYUI_OUTPAINT_WORKFLOW", str(workflow))
+
+    assert is_outpaint_ready() is True

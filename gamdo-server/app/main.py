@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -9,6 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .db import Database
+from .reference_analysis import get_reference_analyzer
 from .storage import RESULT_DIR, ensure_storage
 from .routes import edit_jobs, presets, references, rescue
 
@@ -17,6 +19,12 @@ from .routes import edit_jobs, presets, references, rescue
 async def lifespan(_: FastAPI):
     ensure_storage()
     Database().initialize()
+    # Reference/rescue analysis shares this analyzer. Loading InsightFace and the
+    # optional YOLO models on the first upload made the first real request take
+    # longer than the Android timeout, even though every later request was fast.
+    # Keep the blocking model work off the event loop, but do not advertise the
+    # FastAPI app as ready until the reusable analyzer has finished warming up.
+    await asyncio.to_thread(get_reference_analyzer)
     yield
 
 

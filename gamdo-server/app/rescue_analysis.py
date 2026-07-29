@@ -5,6 +5,7 @@ from typing import Any
 
 from PIL import Image
 
+from .comfyui_provider import is_outpaint_ready
 from .reference_analysis import get_reference_analyzer
 
 
@@ -48,7 +49,8 @@ def analyze_rescue(
             "confidence": round(min(0.95, 0.55 + 0.1 * len(masks)), 3),
         })
 
-    outpaint = _outpaint_recommendation(subjects, style_params, reference_composition)
+    outpaint_ready = is_outpaint_ready()
+    outpaint = _outpaint_recommendation(subjects, style_params, reference_composition) if outpaint_ready else None
     if outpaint is not None:
         recommendations.append(outpaint)
 
@@ -61,7 +63,7 @@ def analyze_rescue(
         "capabilities": {
             "localStyle": True,
             "removeObjects": bool(masks),
-            "outpaint": True,
+            "outpaint": outpaint_ready,
         },
     }
 
