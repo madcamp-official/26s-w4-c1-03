@@ -7,12 +7,14 @@ import com.gamdo.app.data.network.EditJobStatus
 import com.gamdo.app.data.network.GamdoApiClient
 import com.gamdo.app.data.network.JobTimeoutPolicy
 import com.gamdo.app.data.network.RescueAnalysisResponse
+import com.gamdo.app.data.GamdoPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import java.io.File
 
 class RescueRepository(
@@ -33,8 +35,20 @@ class RescueRepository(
         val downloaded: List<DownloadedResult>,
     )
 
-    suspend fun analyze(image: File, captureRef: String, style: JsonObject, reference: JsonObject): RescueAnalysisResponse =
-        api.analyzeRescue(image, captureRef, style, reference)
+    suspend fun analyze(
+        image: File,
+        captureRef: String,
+        style: JsonObject,
+        reference: JsonObject,
+        context: RescueContext = RescueContext(),
+    ): RescueAnalysisResponse =
+        api.analyzeRescue(
+            image, captureRef, style, reference,
+            profileVersion = context.profileVersion,
+            sceneContext = context.sceneContext.name,
+            gamdoPolicy = json.encodeToJsonElement(GamdoPolicy.serializer(), context.policy).jsonObject,
+            reinterpretationLevel = context.level.name,
+        )
 
     suspend fun submitAndPoll(
         image: File,

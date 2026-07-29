@@ -28,10 +28,16 @@ class RescueController(private val repository: RescueRepository) {
     private val mutableState = MutableStateFlow<RescueState>(RescueState.Idle)
     val state: StateFlow<RescueState> = mutableState.asStateFlow()
 
-    suspend fun analyze(image: File, captureRef: String, style: JsonObject = JsonObject(emptyMap()), reference: JsonObject = JsonObject(emptyMap())) {
+    suspend fun analyze(
+        image: File,
+        captureRef: String,
+        style: JsonObject = JsonObject(emptyMap()),
+        reference: JsonObject = JsonObject(emptyMap()),
+        context: RescueContext = RescueContext(),
+    ) {
         android.util.Log.d("RescueController", "rescueAnalyzeStarted")
         mutableState.value = RescueState.Analyzing
-        runCatching { repository.analyze(image, captureRef, style, reference) }
+        runCatching { repository.analyze(image, captureRef, style, reference, context) }
             .onSuccess {
                 android.util.Log.d("RescueController", "recommendationShown count=${it.recommendations.size}")
                 mutableState.value = RescueState.Recommendations(it)
