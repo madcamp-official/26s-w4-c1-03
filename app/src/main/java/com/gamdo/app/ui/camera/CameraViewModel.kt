@@ -144,6 +144,14 @@ class CameraViewModel(
     private val collectDebugSignals: Boolean = BuildConfig.DEBUG,
     private val logSink: (String) -> Unit = {},
 ) {
+    private var detector: com.gamdo.app.detect.SceneDetector? = null
+
+    fun attachDetector(detector: com.gamdo.app.detect.SceneDetector) {
+        if (this.detector === detector) return
+        this.detector = detector
+        detector.setObjectDetectionPaused(false)
+    }
+
     private val guideConfig = config.toGuideConfig()
     private val featureCalculator = config.toFrameFeatureCalculator()
     private val stabilizer = OverlayStabilizer(config.toStabilizerConfig())
@@ -359,6 +367,7 @@ class CameraViewModel(
             styleTarget = target,
             signals = sceneSignals,
         )
+        detector?.setObjectDetectionPaused(sceneGuide.fixedLayout != null)
         updateSceneMetrics(sceneGuide)
         val resolvedTarget = sceneGuide.proposal.target
         val engineState = alignmentEngine.align(
@@ -448,6 +457,7 @@ class CameraViewModel(
         // Queued work is dropped rather than applied: it describes a scene the
         // camera is no longer pointed at.
         pendingGuideWork.clear()
+        detector?.setObjectDetectionPaused(false)
         _overlay.value = null
         _detectionLabel.value = ""
         _guideDebug.value = null
@@ -500,6 +510,7 @@ class CameraViewModel(
      * when searching begins.
      */
     fun rescanLayout() {
+        detector?.setObjectDetectionPaused(false)
         // Deferred to the analysis thread — the counters below are read and written
         // per frame. See [pendingGuideWork].
         pendingGuideWork.add {
@@ -518,6 +529,7 @@ class CameraViewModel(
      * stabilizer/tracker race that [rescanLayout] already avoids.
      */
     fun rescanLayoutAt(anchorX: Float, anchorY: Float) {
+        detector?.setObjectDetectionPaused(false)
         pendingGuideWork.add {
             alignmentEngine.reset()
             stabilizer.reset()

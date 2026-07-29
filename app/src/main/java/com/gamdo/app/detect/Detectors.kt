@@ -22,6 +22,11 @@ interface ObjectSceneDetector {
     fun close()
 }
 
+/** Allows the camera session to stop expensive object inference after fixation. */
+interface PausableObjectSceneDetector {
+    fun setObjectDetectionPaused(paused: Boolean)
+}
+
 data class ObjectDetectionBatch(
     val objects: List<ObjectObservation>,
     val isFresh: Boolean,
@@ -41,7 +46,7 @@ interface SubjectSceneSegmenter {
 class ThrottledObjectSceneDetector(
     private val delegate: ObjectSceneDetector,
     private val refreshEveryFrames: Int = 3,
-) : ObjectSceneDetector, AcceleratorReporting {
+) : ObjectSceneDetector, AcceleratorReporting, PausableObjectSceneDetector {
     init {
         require(refreshEveryFrames >= 1)
     }
@@ -57,12 +62,19 @@ class ThrottledObjectSceneDetector(
     private var frameCount = 0
     private var lastResult: List<ObjectObservation> = emptyList()
     private var sequenceId = 0L
+    @Volatile private var paused = false
+
+    override fun setObjectDetectionPaused(paused: Boolean) {
+        this.paused = paused
+        if (!paused) frameCount = 0
+    }
 
     override fun detect(frame: AnalysisFrame): List<ObjectObservation> {
         return detectBatch(frame).objects
     }
 
     override fun detectBatch(frame: AnalysisFrame): ObjectDetectionBatch {
+        if (paused) return ObjectDetectionBatch(lastResult, isFresh = false, sequenceId = sequenceId)
         frameCount++
         if (frameCount == 1 || frameCount % refreshEveryFrames == 0) {
             lastResult = delegate.detect(frame)
@@ -332,6 +344,10 @@ class SceneDetector(
     private val customObjectDetector: CustomSceneDetector? = null,
     private val stageSink: ((DetectStageTimings) -> Unit)? = null,
 ) {
+    fun setObjectDetectionPaused(paused: Boolean) {
+        (customObjectDetector as? PausableObjectSceneDetector)?.setObjectDetectionPaused(paused)
+        (objectDetector as? PausableObjectSceneDetector)?.setObjectDetectionPaused(paused)
+    }
     /**
      * Which processor the object stage is actually running on, or `null` when no
      * wired detector can say.
