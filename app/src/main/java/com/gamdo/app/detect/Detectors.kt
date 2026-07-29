@@ -369,17 +369,19 @@ class SceneDetector(
         val t1 = System.nanoTime()
         val pose = poseDetector.detect(frame)
         val t2 = System.nanoTime()
-        // Segmentation refines an already-detected foreground outline. It must
-        // never invent a single generic object when object detection is empty:
-        // a merged foreground mask would turn two adjacent drinks into a false
-        // one-slot scene.
-        val segmentation = subjectSegmenter?.detect(frame)
-        val t3 = System.nanoTime()
         val objectBatch = when {
             customObjectDetector != null -> customObjectDetector.detectBatch(frame)
             objectDetector != null -> objectDetector.detectBatch(frame)
             else -> ObjectDetectionBatch(emptyList(), isFresh = true, sequenceId = 0L)
         }
+        val t3 = System.nanoTime()
+        // Segmentation only refines a foreground already found by a cheaper
+        // detector. Running it on an empty wall cannot create a valid object
+        // candidate (D12), but did cost ~600ms on the CPU fallback device every
+        // twelfth frame. Return null while there is no seed so a previous mask can
+        // never survive an empty scene either.
+        val hasForegroundSeed = faces.isNotEmpty() || pose != null || objectBatch.objects.isNotEmpty()
+        val segmentation = if (hasForegroundSeed) subjectSegmenter?.detect(frame) else null
         val t4 = System.nanoTime()
 
         stageSink?.let { sink ->
@@ -388,8 +390,8 @@ class SceneDetector(
                 DetectStageTimings(
                     faceMs = ms(t0, t1),
                     poseMs = ms(t1, t2),
-                    segMs = ms(t2, t3),
-                    objectMs = ms(t3, t4),
+                    segMs = ms(t3, t4),
+                    objectMs = ms(t2, t3),
                     // Upstream removed the phantom-object synthesis and the
                     // StableSceneTracker pass that used to sit here, so there is
                     // no post-stage left to measure. Kept at 0 rather than dropped
@@ -398,7 +400,7 @@ class SceneDetector(
                     // zero rather than wonder where it went.
                     postMs = 0.0,
                     totalMs = ms(t0, t4),
-                    segRefreshed = ms(t2, t3) > 1.0,
+                    segRefreshed = hasForegroundSeed && ms(t3, t4) > 1.0,
                     objectsFresh = objectBatch.isFresh,
                     segNonNull = segmentation != null,
                 ),
