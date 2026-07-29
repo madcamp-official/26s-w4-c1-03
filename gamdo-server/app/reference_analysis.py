@@ -6,7 +6,7 @@ import os
 import threading
 from typing import Any
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 ANALYSIS_VERSION = 3
@@ -88,7 +88,22 @@ class ReferenceAnalyzer:
             self.pose_model(sample, verbose=False)
 
     def analyze(self, payload: bytes) -> dict[str, Any]:
-        image = Image.open(io.BytesIO(payload)).convert("RGB")
+        image = Image.open(io.BytesIO(payload))
+        image.load()
+        # Bake the EXIF Orientation into the pixels before any pixel
+        # heuristic below runs. Without this, a portrait phone photo stored
+        # as landscape sensor pixels plus an Orientation tag would be
+        # measured lying on its side -- horizon, subject boxes, and
+        # aspect ratio would all be computed against the wrong frame. Same
+        # fix, same try/except posture (O-8), as storage.save_exif_stripped_input.
+        try:
+            image = ImageOps.exif_transpose(image) or image
+        except Exception:
+            logger.warning(
+                "reference_exif_orientation_transpose_failed; analyzing pixels as decoded",
+                exc_info=True,
+            )
+        image = image.convert("RGB")
         image.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
         pixels = list(image.getdata())
         width, height = image.size
