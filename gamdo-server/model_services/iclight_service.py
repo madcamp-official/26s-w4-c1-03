@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import argparse
+import json
 import os
 import gc
+import subprocess
+import sys
 from pathlib import Path
 
 from PIL import Image
@@ -42,6 +46,32 @@ class IcLightBackend:
         return self._runtime
 
     def generate(self, image: Path, operation: dict, output: Path, seed: int) -> None:
+        if os.getenv("GAMDO_ICLIGHT_CHILD") != "1":
+            environment = os.environ.copy()
+            environment["GAMDO_ICLIGHT_CHILD"] = "1"
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "model_services.iclight_service",
+                    "--input",
+                    str(image),
+                    "--output",
+                    str(output),
+                    "--operation",
+                    json.dumps(operation, separators=(",", ":")),
+                    "--seed",
+                    str(seed),
+                ],
+                cwd=Path(os.getenv("GAMDO_SERVER_ROOT", "/opt/gamdo/server")),
+                env=environment,
+                check=True,
+                timeout=240,
+            )
+            return
+        self._generate_local(image, operation, output, seed)
+
+    def _generate_local(self, image: Path, operation: dict, output: Path, seed: int) -> None:
         runtime = self._load()
         with Image.open(image) as decoded:
             rgb = decoded.convert("RGB")
@@ -91,3 +121,22 @@ class IcLightBackend:
 
 
 app = create_app(ModelService("relight", IcLightBackend(), output_dir()))
+
+
+def _run_child() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--operation", required=True)
+    parser.add_argument("--seed", type=int, required=True)
+    arguments = parser.parse_args()
+    IcLightBackend()._generate_local(
+        arguments.input,
+        json.loads(arguments.operation),
+        arguments.output,
+        arguments.seed,
+    )
+
+
+if __name__ == "__main__":
+    _run_child()
