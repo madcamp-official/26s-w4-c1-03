@@ -100,6 +100,7 @@ class ReferenceRepository(
     private val cacheDir: File,
     private val sanitizer: ReferenceImageSanitizer = ReferenceImageSanitizer(ExifSanitizer::sanitizeFile),
     private val preprocessor: ReferenceImagePreprocessor = ReferenceImagePreprocessor { },
+    private val activeReferenceSink: (ResolvedStyle?) -> Unit = { },
 ) {
     private val _activeReferenceStyle = MutableStateFlow<ResolvedStyle?>(null)
     val activeReferenceStyle: StateFlow<ResolvedStyle?> = _activeReferenceStyle.asStateFlow()
@@ -113,7 +114,9 @@ class ReferenceRepository(
         require(scope == ResolvedStyle.ReferenceScope.COLOR || resolution.compositionAvailable) {
             "composition is unavailable for this reference; choose color-only"
         }
-        require(resolution.colorAvailable) { "color analysis is unavailable" }
+        require(scope == ResolvedStyle.ReferenceScope.COMPOSITION || resolution.colorAvailable) {
+            "color analysis is unavailable; choose composition-only"
+        }
         settings.saveActiveReference(resolution.contentHash, scope.name.lowercase(), strength)
         cleanupCache(resolution.contentHash)
         return ResolvedStyle.fromReference(
@@ -122,7 +125,7 @@ class ReferenceRepository(
             colorTarget = resolution.colorTarget,
             scope = scope,
             strength = strength,
-        ).also { _activeReferenceStyle.value = it }
+        ).also(::publishActiveReference)
     }
 
     suspend fun cleanupCache(activeHash: String? = null) {
@@ -138,20 +141,25 @@ class ReferenceRepository(
             val scope = runCatching {
                 ResolvedStyle.ReferenceScope.valueOf(settings.getActiveReferenceScope().uppercase())
             }.getOrDefault(ResolvedStyle.ReferenceScope.BOTH)
-            _activeReferenceStyle.value = ResolvedStyle.fromReference(
+            publishActiveReference(ResolvedStyle.fromReference(
                 hash = resolution.contentHash,
                 target = resolution.targetComposition,
                 colorTarget = resolution.colorTarget,
                 scope = scope,
                 strength = settings.getActiveReferenceStrength(),
-            )
+            ))
         }
     }
 
     suspend fun clearActive(settings: SettingsRepository) {
         settings.clearActiveReference()
-        _activeReferenceStyle.value = null
+        publishActiveReference(null)
         cleanupCache()
+    }
+
+    private fun publishActiveReference(reference: ResolvedStyle?) {
+        _activeReferenceStyle.value = reference
+        activeReferenceSink(reference)
     }
 
     /**

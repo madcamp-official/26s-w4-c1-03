@@ -78,6 +78,9 @@ class AppContainer(context: Context) {
         json = json,
     )
 
+    /** Stable AI 2 result-filter catalogue; updated atomically by the reference repository. */
+    val resultFilterStateHolder: ResultFilterStateHolder = ResultFilterStateHolder()
+
     /** AI 2 reference analysis: stateless server response + local content-hash cache. */
     val referenceRepository: ReferenceRepository = ReferenceRepository(
         cachedReferencesDao = database.cachedReferencesDao(),
@@ -85,12 +88,10 @@ class AppContainer(context: Context) {
         json = json,
         cacheDir = File(appContext.cacheDir, "reference-analysis"),
         preprocessor = AndroidReferenceImagePreprocessor(),
+        activeReferenceSink = resultFilterStateHolder::synchronizeReference,
     )
 
     val settingsRepository: SettingsRepository = SettingsRepository(database.appSettingsDao())
-
-    /** Stable AI 2 result-filter catalogue; P1 consumes this instead of render-local list state. */
-    val resultFilterStateHolder: ResultFilterStateHolder = ResultFilterStateHolder()
 
     // §3-3 KPI. Referenced by CaptureRepository's KDoc since Day 1 but never built,
     // which is why `sessions` and `session_guides` both read 0 rows on device.
