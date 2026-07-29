@@ -422,7 +422,10 @@ class CaptureRepository(
             put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/감도")
+                put(
+                    MediaStore.Images.Media.RELATIVE_PATH,
+                    Environment.DIRECTORY_PICTURES + "/" + GALLERY_BUCKET_NAME,
+                )
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             }
         }
@@ -438,8 +441,28 @@ class CaptureRepository(
         }
     }
 
-    private companion object {
-        const val TAG = "CaptureRepository"
-        const val JPEG_QUALITY = 95
+    companion object {
+        /**
+         * The gallery folder every exported capture lands in, as MediaStore reports
+         * it in `bucket_display_name`.
+         *
+         * Public because the album (W3.5) has to *undo* this export when it merges
+         * the device library with the `captures` table: an exported shot exists
+         * twice — once as a `captures` row and once as a MediaStore row for the same
+         * JPEG — and without dropping the MediaStore side it would render twice in
+         * one grid (O-11). The `captures` row is the one that survives, because it
+         * carries the captureId the result screen routes on.
+         *
+         * It is a constant rather than a literal in two places because the coupling
+         * is silent: if this string changed and the album kept its own copy, dedup
+         * would simply stop and photos would start appearing twice — no crash, no
+         * failing test, just a wrong grid. Room is frozen so there is no column to
+         * store the exported URI in, which would otherwise be the exact key to match
+         * on; the bucket name is the only join available.
+         */
+        const val GALLERY_BUCKET_NAME = "감도"
+
+        internal const val TAG = "CaptureRepository"
+        internal const val JPEG_QUALITY = 95
     }
 }
