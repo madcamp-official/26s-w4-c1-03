@@ -345,6 +345,10 @@ class GamdoApiClient(
         service.createShootSession(deviceIdStore.getOrCreate(), policy)
     }
 
+    fun publicUrl(path: String): String =
+        if (path.startsWith("http://") || path.startsWith("https://")) path
+        else normalizedBaseUrl.removeSuffix("api/v1/") + path.trimStart('/')
+
     suspend fun getShootSession(sessionId: String, ownerToken: String): ShootSessionStatus = callApi {
         service.getShootSession(sessionId, ownerToken)
     }

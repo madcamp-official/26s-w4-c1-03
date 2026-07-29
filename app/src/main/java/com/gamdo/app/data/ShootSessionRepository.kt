@@ -53,5 +53,5 @@ class ShootSessionRepository(
 
     suspend fun clear() = settings.clearShootSession()
 
-    private fun ShootSessionCreated.toActive() = ActiveSession(sessionId, ownerToken, shareUrl, expiresAt, maxPhotos)
+    private fun ShootSessionCreated.toActive() = ActiveSession(sessionId, ownerToken, api.publicUrl(shareUrl), expiresAt, maxPhotos)
 }
