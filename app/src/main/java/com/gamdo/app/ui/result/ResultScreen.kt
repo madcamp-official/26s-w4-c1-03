@@ -48,6 +48,8 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.local.entity.Captures
+import com.gamdo.app.data.ReferenceRepository
+import com.gamdo.app.core.ExifSanitizer
 import com.gamdo.app.data.network.RescueAnalysisResponse
 import com.gamdo.app.data.preset.ResolvedStyle
 import com.gamdo.app.data.rescue.RescueState
@@ -99,6 +101,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 
 private const val TAG = "ResultScreen"
+
+private data class RescueInput(val file: File, val captureRef: String)
 
 /**
  * What the screen has managed to open, as one value.
@@ -208,6 +212,8 @@ fun ResultScreen(
     onDeleteReference: () -> Unit = {},
 ) {
     val sourceKind = target.kind
+    val context = LocalContext.current
+    val contentResolver = context.contentResolver
     // Null for a device photo, and that is a fact rather than a missing value —
     // everything keyed on it (AI 3, the edit stack) is gated on the same branch.
     val captureId: String? = (target as? ResultTarget.AppCapture)?.captureId
@@ -215,6 +221,27 @@ fun ResultScreen(
         val id = captureId ?: return@produceState
         value = withContext(Dispatchers.IO) {
             container.database.capturesDao().get(id)
+        }
+    }
+    // AI 3 accepts both app captures and MediaStore photos. Device photos are
+    // copied into an app-owned cache file once, sanitized before upload, and
+    // addressed by a content hash rather than inventing a captures row.
+    val rescueInput by produceState<RescueInput?>(initialValue = null, target, capture) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                if (capture != null) {
+                    RescueInput(File(capture!!.filePath), capture!!.id)
+                } else if (target is ResultTarget.DevicePhoto) {
+                    val bytes = contentResolver.openInputStream(target.uri)?.use { it.readBytes() }
+                        ?: error("device_photo_unreadable")
+                    val hash = ReferenceRepository.sha256Hex(bytes)
+                    val dir = File(context.cacheDir, "rescue-input").apply { mkdirs() }
+                    val file = File(dir, "$hash.jpg")
+                    if (!file.exists()) file.writeBytes(bytes)
+                    ExifSanitizer.sanitizeFile(file)
+                    RescueInput(file, "device_${hash.take(24)}")
+                } else null
+            }.onFailure { Log.w(TAG, "could not prepare rescue input", it) }.getOrNull()
         }
     }
     // ---- AI 3 (사진 살리기) --------------------------------------------------
@@ -267,7 +294,10 @@ fun ResultScreen(
                     Log.w(TAG, "could not read the downloaded results for ${done.jobId}", it)
                     emptyList()
                 }
-                rescueCandidates(done.results, rows)
+                val downloaded = if (done.downloaded.isNotEmpty()) {
+                    done.downloaded.map { RescueLocalResult(it.resultId, it.filePath, it.rank) }
+                } else rows
+                rescueCandidates(done.results, downloaded)
             }
         }
     }
@@ -330,7 +360,6 @@ fun ResultScreen(
      * `produceState` key below: a fresh instance every frame would re-decode the
      * photo every frame.
      */
-    val contentResolver = LocalContext.current.contentResolver
     val editSource: EditImageSource? = remember(
         target,
         capture?.filePath,
@@ -905,14 +934,15 @@ fun ResultScreen(
                 if (rescueState is RescueState.Candidates) rescueOpened = false else cancelRescue()
             },
             onAnalyze = {
-                val captureValue = capture
-                if (captureValue == null) {
-                    Log.w(TAG, "rescue analyze skipped: capture $captureId is not loaded yet")
+                val input = rescueInput
+                if (input == null) {
+                    Log.w(TAG, "rescueAnalyzeSkipped input_not_ready")
                 } else {
+                    Log.d(TAG, "rescueAnalyzeStarted source=${sourceKind.name}")
                     rescueJob = scope.launch {
                         rescueController.analyze(
-                            image = File(captureValue.filePath),
-                            captureRef = captureValue.id,
+                            image = input.file,
+                            captureRef = input.captureRef,
                             style = styleParamsJson(activeReferenceStyle),
                             reference = referenceCompositionJson(activeReferenceStyle),
                         )
@@ -921,16 +951,17 @@ fun ResultScreen(
             },
             onChoose = { operation -> rescueController.choose(operation) },
             onRun = {
-                val captureValue = capture
+                val input = rescueInput
                 val current = rescueState
                 // The upload gate, restated at the call site: only from `Editing`,
                 // and only for an operation that actually goes to the server.
-                if (captureValue != null && canSubmit(current) && current is RescueState.Editing) {
+                if (input != null && canSubmit(current) && current is RescueState.Editing) {
+                    Log.d(TAG, "operationChosen type=${current.operation["type"]}")
                     rescueJob = scope.launch {
                         rescueController.submit(
-                            image = File(captureValue.filePath),
-                            captureId = captureValue.id,
-                            captureRef = captureValue.id,
+                            image = input.file,
+                            captureId = captureId,
+                            captureRef = input.captureRef,
                             operation = current.operation,
                             style = styleParamsJson(activeReferenceStyle),
                         )

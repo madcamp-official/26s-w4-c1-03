@@ -109,7 +109,11 @@ fun GamdoNavHost(
     // `apply()` lands (see the LaunchedEffect below) or cleared on delete.
     var activeReferenceStyle by remember { mutableStateOf<ResolvedStyle?>(null) }
     LaunchedEffect(container) {
-        activeReferenceStyle = runCatching { loadActiveReferenceStyle(container) }.getOrNull()
+        // Do not let a slower Room restore overwrite an Apply that completed
+        // while this effect was reading. This race made the reference slot and
+        // downstream filter state disappear immediately after a successful apply.
+        val restored = runCatching { loadActiveReferenceStyle(container) }.getOrNull()
+        if (activeReferenceStyle == null) activeReferenceStyle = restored
     }
     LaunchedEffect(referenceState) {
         val applied = referenceState as? ReferenceCreateState.Applied ?: return@LaunchedEffect

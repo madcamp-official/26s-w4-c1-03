@@ -23,16 +23,28 @@ class RescueRepository(
     private val cacheDir: File,
     private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
 ) {
+    data class DownloadedResult(
+        val resultId: String,
+        val filePath: String,
+        val rank: Int,
+    )
+
+    data class RescueRunResult(
+        val jobId: String,
+        val results: List<EditJobResult>,
+        val downloaded: List<DownloadedResult>,
+    )
+
     suspend fun analyze(image: File, captureRef: String, style: JsonObject, reference: JsonObject): RescueAnalysisResponse =
         api.analyzeRescue(image, captureRef, style, reference)
 
     suspend fun submitAndPoll(
         image: File,
-        captureId: String,
+        captureId: String?,
         captureRef: String,
         operation: JsonObject,
         style: JsonObject,
-    ): Pair<String, List<EditJobResult>> = withContext(Dispatchers.IO) {
+    ): RescueRunResult = withContext(Dispatchers.IO) {
         val jobId = "job_${Ulid.generate()}"
         val operationType = operation["type"]?.jsonPrimitive?.contentOrNull
         api.createEditJob(jobId, captureRef, kotlinx.serialization.json.JsonArray(listOf(operation)), style, if (operationType == "outpaint") 1 else 2, image)
@@ -47,15 +59,17 @@ class RescueRepository(
             }
             delay(1000)
         }
-        val saved = status.results.mapIndexed { index, result ->
+        val downloaded = status.results.mapIndexed { index, result ->
             val destination = File(cacheDir, "rescue_${jobId}_$index.png")
             api.downloadResult(result.url, destination)
-            captureRepository?.recordDownloadedEditResult(
-                captureId, jobId, destination.absolutePath, index, result.seed,
-                result.validation ?: "{}", json.encodeToString(JsonElement.serializer(), operation),
-            )
-            result
+            captureId?.let { id ->
+                captureRepository?.recordDownloadedEditResult(
+                    id, jobId, destination.absolutePath, index, result.seed,
+                    result.validation ?: "{}", json.encodeToString(JsonElement.serializer(), operation),
+                )
+            }
+            DownloadedResult("res_${jobId}_$index", destination.absolutePath, index)
         }
-        jobId to saved
+        RescueRunResult(jobId, status.results, downloaded)
     }
 }

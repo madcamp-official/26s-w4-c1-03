@@ -15,7 +15,11 @@ sealed interface RescueState {
     data class Editing(val operation: JsonObject) : RescueState
     data object Submitting : RescueState
     data object Polling : RescueState
-    data class Candidates(val jobId: String, val results: List<EditJobResult>) : RescueState
+    data class Candidates(
+        val jobId: String,
+        val results: List<EditJobResult>,
+        val downloaded: List<RescueRepository.DownloadedResult> = emptyList(),
+    ) : RescueState
     data class LocalFallback(val reason: String) : RescueState
 }
 
@@ -25,19 +29,36 @@ class RescueController(private val repository: RescueRepository) {
     val state: StateFlow<RescueState> = mutableState.asStateFlow()
 
     suspend fun analyze(image: File, captureRef: String, style: JsonObject = JsonObject(emptyMap()), reference: JsonObject = JsonObject(emptyMap())) {
+        android.util.Log.d("RescueController", "rescueAnalyzeStarted")
         mutableState.value = RescueState.Analyzing
         runCatching { repository.analyze(image, captureRef, style, reference) }
-            .onSuccess { mutableState.value = RescueState.Recommendations(it) }
-            .onFailure { mutableState.value = RescueState.LocalFallback("analysis_unavailable") }
+            .onSuccess {
+                android.util.Log.d("RescueController", "recommendationShown count=${it.recommendations.size}")
+                mutableState.value = RescueState.Recommendations(it)
+            }
+            .onFailure {
+                android.util.Log.w("RescueController", "rescueAnalyzeFailed", it)
+                mutableState.value = RescueState.LocalFallback("analysis_unavailable")
+            }
     }
 
-    fun choose(operation: JsonObject) { mutableState.value = RescueState.Editing(operation) }
+    fun choose(operation: JsonObject) {
+        android.util.Log.d("RescueController", "operationChosen type=${operation["type"]}")
+        mutableState.value = RescueState.Editing(operation)
+    }
 
-    suspend fun submit(image: File, captureId: String, captureRef: String, operation: JsonObject, style: JsonObject = JsonObject(emptyMap())) {
+    suspend fun submit(image: File, captureId: String?, captureRef: String, operation: JsonObject, style: JsonObject = JsonObject(emptyMap())) {
+        android.util.Log.d("RescueController", "editJobSubmitted capture=${captureId != null} operation=${operation["type"]}")
         mutableState.value = RescueState.Submitting
         runCatching { repository.submitAndPoll(image, captureId, captureRef, operation, style) }
-            .onSuccess { mutableState.value = RescueState.Candidates(it.first, it.second) }
-            .onFailure { mutableState.value = RescueState.LocalFallback("generation_unavailable") }
+            .onSuccess {
+                android.util.Log.d("RescueController", "editJobCompleted job=${it.jobId} candidates=${it.downloaded.size}")
+                mutableState.value = RescueState.Candidates(it.jobId, it.results, it.downloaded)
+            }
+            .onFailure {
+                android.util.Log.w("RescueController", "editJobFailed", it)
+                mutableState.value = RescueState.LocalFallback("generation_unavailable")
+            }
     }
 
     fun reset() { mutableState.value = RescueState.Idle }

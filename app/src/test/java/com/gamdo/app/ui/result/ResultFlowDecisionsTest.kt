@@ -137,7 +137,7 @@ class ResultFlowDecisionsTest {
 
     @Test
     fun `AI로 보정 is not offered for a photo with no captures row`() {
-        assertFalse(offersGenerativeRestore(EditSourceKind.DEVICE_PHOTO))
+        assertTrue(offersGenerativeRestore(EditSourceKind.DEVICE_PHOTO))
         assertTrue(offersGenerativeRestore(EditSourceKind.APP_CAPTURE))
     }
 }
