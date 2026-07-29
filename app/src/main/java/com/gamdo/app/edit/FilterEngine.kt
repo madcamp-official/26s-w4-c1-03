@@ -387,6 +387,43 @@ object FilterEngine {
     }
 
     /**
+     * The hue-rotation matrix for every entry of a [hueTable] shift array, nine
+     * coefficients per bin, flat: bin `b` occupies `[b * 9, b * 9 + 9)`.
+     *
+     * ## Why this is a table
+     *
+     * The rotation used to be built **per pixel**, from a `sin` and a `cos` of the
+     * shift angle, into a freshly allocated three-element array that was read once and
+     * dropped. `FilterCostHarness` put that at 25 ms of the 131 ms a full preview pass
+     * took on a desktop JVM — a fifth of the frame, for an angle that
+     * [hueTable] has already quantised to one of 360 values. Building it 360 times
+     * instead of 1.7 million costs nothing measurable and removes 3.3 million
+     * transcendental calls and 1.7 million allocations from the interaction path.
+     *
+     * Same YIQ-style rotation as before, coefficient for coefficient, so the pixels
+     * are unchanged — `FilterEngineCostTest` pins both halves of that claim.
+     */
+    fun hueRotationMatrices(hueShift: FloatArray): FloatArray {
+        val out = FloatArray(hueShift.size * 9)
+        for (bin in hueShift.indices) {
+            val rad = hueShift[bin] * Math.PI.toFloat() / 180f
+            val c = kotlin.math.cos(rad)
+            val s = sin(rad)
+            val o = bin * 9
+            out[o] = LR + c * (1 - LR) - s * LR
+            out[o + 1] = LG - c * LG - s * LG
+            out[o + 2] = LB - c * LB + s * (1 - LB)
+            out[o + 3] = LR - c * LR + s * 0.143f
+            out[o + 4] = LG + c * (1 - LG) + s * 0.140f
+            out[o + 5] = LB - c * LB - s * 0.283f
+            out[o + 6] = LR - c * LR - s * (1 - LR)
+            out[o + 7] = LG - c * LG + s * LG
+            out[o + 8] = LB + c * (1 - LB) + s * LB
+        }
+        return out
+    }
+
+    /**
      * How far a band reaches: to its nearest neighbour's centre, no further.
      *
      * A single width for every band does not work, because Lightroom's centres are
@@ -431,6 +468,16 @@ object FilterEngine {
      * Note there is no [measure] call here. The one thing that needed measuring was
      * capping a preset's exposure, and that now happens once in [seedFrom] rather
      * than on every render.
+     *
+     * ## The index window
+     *
+     * [fromIndex]/[toIndex] render one contiguous stretch of the buffer and default to
+     * all of it. They exist so a preview pass can be split across cores
+     * ([applyFilterInParallel]); nothing else about the render changes, and in
+     * particular **the index a pixel is at does not**. Grain is hashed from that
+     * index and the vignette is measured from `index % width`, so a slice that
+     * renumbered its own pixels from zero would draw a seam at every boundary — which
+     * is why the window is a pair of absolute indices rather than a sub-buffer.
      */
     fun apply(
         pixels: IntArray,
@@ -438,8 +485,14 @@ object FilterEngine {
         height: Int,
         filter: PhotoFilter,
         adjustments: Adjustments = Adjustments.NEUTRAL,
+        fromIndex: Int = 0,
+        toIndex: Int = pixels.size,
     ) {
         if (pixels.isEmpty()) return
+        require(fromIndex in 0..toIndex && toIndex <= pixels.size) {
+            "window $fromIndex..$toIndex is outside 0..${pixels.size}"
+        }
+        if (fromIndex == toIndex) return
 
         val ev = (adjustments.exposure / 100f) * MANUAL_EXPOSURE_EV
         val tone = PhotoFilter.Tone(
@@ -469,6 +522,9 @@ object FilterEngine {
         val hueSat = hue[0]
         val hueRot = hue[1]
         val hueLum = hue[2]
+        // Only when there is a mixer to run: 360 sin/cos pairs are free next to 1.7M
+        // pixels but not next to a filter that has no colour-mixer rows at all.
+        val hueRotM = if (hasHsl) hueRotationMatrices(hueRot) else FloatArray(0)
 
         // The 0.16 / 0.14 factors are what "100" means for effects that have no
         // Lightroom-equivalent unit: 100 grain is ±16% of range of noise, 100 fade
@@ -481,7 +537,7 @@ object FilterEngine {
         val cy = height * 0.5f
         val maxDist = kotlin.math.sqrt(cx * cx + cy * cy).coerceAtLeast(1f)
 
-        for (i in pixels.indices) {
+        for (i in fromIndex until toIndex) {
             val p = pixels[i]
             var r = lutR[(p shr 16) and 0xff]
             var g = lutG[(p shr 8) and 0xff]
@@ -523,8 +579,13 @@ object FilterEngine {
                 val mn = min(r, min(g, b))
                 val delta = mx - mn
                 if (delta > 1e-4f) {
+                    // No `% 6f` on the red branch. `mx` is the maximum and `mn` the
+                    // minimum by construction, so `(g - b) / delta` is already inside
+                    // [-1, 1] and the modulo — which is `frem`, one of the slowest
+                    // float instructions on the JVM — could never do anything. It ran
+                    // on every pixel of every photograph regardless.
                     var deg = when (mx) {
-                        r -> 60f * (((g - b) / delta) % 6f)
+                        r -> 60f * ((g - b) / delta)
                         g -> 60f * ((b - r) / delta + 2f)
                         else -> 60f * ((r - g) / delta + 4f)
                     }
@@ -540,8 +601,14 @@ object FilterEngine {
                         b = (lum + (b - lum) * sMul) * lMul
                     }
                     if (rot != 0f) {
-                        val rotated = rotateHue(r, g, b, rot)
-                        r = rotated[0]; g = rotated[1]; b = rotated[2]
+                        // Read out of the per-bin table. All three channels come from
+                        // the pre-rotation values, so they are computed before any is
+                        // assigned — same arithmetic, same order, same pixels.
+                        val m = bin * 9
+                        val nr = r * hueRotM[m] + g * hueRotM[m + 1] + b * hueRotM[m + 2]
+                        val ng = r * hueRotM[m + 3] + g * hueRotM[m + 4] + b * hueRotM[m + 5]
+                        val nb = r * hueRotM[m + 6] + g * hueRotM[m + 7] + b * hueRotM[m + 8]
+                        r = nr; g = ng; b = nb
                     }
                 }
             }
@@ -591,29 +658,6 @@ object FilterEngine {
         h *= -0x7ee3623b
         h = h xor (h ushr 13)
         return ((h ushr 8) and 0xff) / 255f - 0.5f
-    }
-
-    /** Rotates a colour's hue by [deg], preserving luminance and chroma length. */
-    private fun rotateHue(r: Float, g: Float, b: Float, deg: Float): FloatArray {
-        val rad = deg * Math.PI.toFloat() / 180f
-        val c = kotlin.math.cos(rad)
-        val s = sin(rad)
-        // YIQ-style rotation: cheap, and exact enough for the ±30° a colour mixer
-        // row can ask for.
-        val m0 = LR + c * (1 - LR) - s * LR
-        val m1 = LG - c * LG - s * LG
-        val m2 = LB - c * LB + s * (1 - LB)
-        val m3 = LR - c * LR + s * 0.143f
-        val m4 = LG + c * (1 - LG) + s * 0.140f
-        val m5 = LB - c * LB - s * 0.283f
-        val m6 = LR - c * LR - s * (1 - LR)
-        val m7 = LG - c * LG + s * LG
-        val m8 = LB + c * (1 - LB) + s * LB
-        return floatArrayOf(
-            r * m0 + g * m1 + b * m2,
-            r * m3 + g * m4 + b * m5,
-            r * m6 + g * m7 + b * m8,
-        )
     }
 
     private fun to8(v: Float) = (v * 255f).roundToInt().coerceIn(0, 255)
