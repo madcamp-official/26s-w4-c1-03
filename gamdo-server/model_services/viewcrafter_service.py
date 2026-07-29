@@ -17,9 +17,14 @@ class ViewCrafterBackend:
         self.python = os.getenv("GAMDO_VIEWCRAFTER_PYTHON", "/opt/gamdo/model-services/viewcrafter-venv/bin/python")
         self.checkpoint = Path(os.getenv("GAMDO_VIEWCRAFTER_CHECKPOINT", str(self.repository / "checkpoints/model.ckpt")))
         self.dust3r = Path(os.getenv("GAMDO_DUST3R_CHECKPOINT", str(self.repository / "checkpoints/DUSt3R_ViTLarge_BaseDecoder_512_dpt.pth")))
+        self.config = Path(os.getenv(
+            "GAMDO_VIEWCRAFTER_CONFIG",
+            str(self.repository / "configs/inference_pvd_1024.yaml"),
+        ))
+        self.video_length = int(os.getenv("GAMDO_VIEWCRAFTER_VIDEO_LENGTH", "16"))
 
     def ready(self) -> tuple[bool, str]:
-        missing = [str(path) for path in (Path(self.python), self.checkpoint, self.dust3r) if not path.is_file()]
+        missing = [str(path) for path in (Path(self.python), self.checkpoint, self.dust3r, self.config) if not path.is_file()]
         if missing:
             return False, "missing: " + ", ".join(missing)
         minimum_checkpoint_bytes = int(os.getenv("GAMDO_VIEWCRAFTER_MIN_CHECKPOINT_BYTES", "9000000000"))
@@ -53,8 +58,8 @@ class ViewCrafterBackend:
             command = [
                 self.python, "inference.py", "--image_dir", str(source), "--out_dir", str(work),
                 "--exp_name", name, "--mode", "single_view_target", "--ckpt_path", str(self.checkpoint),
-                "--model_path", str(self.dust3r), "--config", "configs/inference_pvd_512.yaml",
-                "--height", "320", "--width", "512", "--video_length", "25", "--ddim_steps", "25",
+                "--model_path", str(self.dust3r), "--config", str(self.config),
+                "--height", "576", "--width", "1024", "--video_length", str(self.video_length), "--ddim_steps", "25",
                 "--seed", str(seed), trajectory[0], trajectory[1],
             ]
             subprocess.run(command, cwd=self.repository, check=True, timeout=280)

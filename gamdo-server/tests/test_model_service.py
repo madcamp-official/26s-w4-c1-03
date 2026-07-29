@@ -64,15 +64,19 @@ def test_viewcrafter_partial_checkpoint_is_not_reported_ready(
     repository = tmp_path / "ViewCrafter"
     checkpoint = repository / "checkpoints" / "model.ckpt"
     dust3r = repository / "checkpoints" / "dust3r.pth"
+    config = repository / "configs" / "inference.yaml"
     python = tmp_path / "python"
     checkpoint.parent.mkdir(parents=True)
+    config.parent.mkdir(parents=True)
     checkpoint.write_bytes(b"partial")
     dust3r.write_bytes(b"complete-enough-for-this-test")
     python.write_bytes(b"executable")
+    config.write_text("model: test", encoding="utf-8")
     monkeypatch.setenv("GAMDO_VIEWCRAFTER_REPOSITORY", str(repository))
     monkeypatch.setenv("GAMDO_VIEWCRAFTER_PYTHON", str(python))
     monkeypatch.setenv("GAMDO_VIEWCRAFTER_CHECKPOINT", str(checkpoint))
     monkeypatch.setenv("GAMDO_DUST3R_CHECKPOINT", str(dust3r))
+    monkeypatch.setenv("GAMDO_VIEWCRAFTER_CONFIG", str(config))
     monkeypatch.setenv("GAMDO_VIEWCRAFTER_MIN_CHECKPOINT_BYTES", "8")
     monkeypatch.setenv("GAMDO_DUST3R_MIN_CHECKPOINT_BYTES", "8")
 
