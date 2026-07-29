@@ -92,6 +92,7 @@ import com.gamdo.app.data.preset.StylePreset
 import com.gamdo.app.detect.DetectionResult
 import com.gamdo.app.guide.toSceneObservation
 import com.gamdo.app.detect.toAnalysisFrame
+import com.gamdo.app.guide.StyleTarget
 import com.gamdo.app.guide.toStyleTarget
 import com.gamdo.app.ui.components.moodBrush
 import com.gamdo.app.ui.reference.CreateReferenceThumb
@@ -310,21 +311,32 @@ fun CameraScreen(
     val hudAvailable = BuildConfig.DEBUG
     var showHud by rememberSaveable { mutableStateOf(BuildConfig.DEBUG) }
 
-    // A preset adjusts the fixed template's spacing/scale without triggering a
-    // fresh scene search, so this is keyed on the preset value only.
-    // `styleIndex = -1` (still reading / no presets) leaves the target
-    // unpublished rather than publishing preset 0 and swapping it a frame later.
-    LaunchedEffect(activePreset, referenceSelected, activeReferenceStyle) {
-        // §5-2: the reference's composition wins over the preset while it is
-        // selected, exactly like a preset switch — `setStyleTarget` resets the
-        // smoothing window either way, so this must be the single place either
-        // kind of style reaches the guide (never two competing LaunchedEffects).
+    // O-13 (1): **a preset is colour. It does not reach the guide.**
+    //
+    // This effect used to read `activePreset` and publish
+    // `activePreset.toStyleTarget()`. `StylePreset.toStyleTarget()` maps
+    // `composition.subjectPosition` onto `subjectAnchorX` — `third_left` → 1/3,
+    // `third_right` → 2/3 — and `GenericLayoutSynthesizer.transform` then re-centres
+    // *every slot of the layout the AI had just chosen* on that anchor and rescales
+    // it by `subjectScaleRange`. With `presets.json` as shipped, tapping 부드러운
+    // 필름 threw the brackets into the right third and 밤거리 threw them into the
+    // left third. That is the backwards behaviour the owner reported: the colour
+    // control was the composition control, and the colour control was not a colour
+    // control at all.
+    //
+    // A reference still publishes composition, because O-13 (2) says a reference
+    // *may* carry one — as a candidate. Which candidate the overlay draws is
+    // decided per frame by `GuideCompositionChoice`, not here.
+    //
+    // Keyed without `activePreset` on purpose: a preset switch must no longer reset
+    // the alignment smoothing window or the display stabilizer, so the bracket now
+    // stays exactly where it is while the strip scrolls under it.
+    LaunchedEffect(referenceSelected, activeReferenceStyle) {
         val referenceTarget = activeReferenceStyle?.takeIf { referenceSelected }
-        if (referenceTarget != null) {
-            viewModel.setStyleTarget(referenceTarget.toStyleTarget())
-        } else {
-            activePreset?.let { viewModel.setStyleTarget(it.toStyleTarget()) }
-        }
+        // Dropping a reference returns the guide to the neutral target rather than
+        // leaving the last reference's anchor latched in — `StyleTarget()`'s
+        // defaults are centre/0.35..0.55, which is what the scene analyser assumes.
+        viewModel.setStyleTarget(referenceTarget?.toStyleTarget() ?: StyleTarget())
     }
 
     DisposableEffect(Unit) {
