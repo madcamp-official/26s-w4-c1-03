@@ -37,10 +37,14 @@ class IcLightBackend:
                 raise RuntimeError("unsupported IC-Light source revision")
             namespace = {"__file__": str(self.repository / "gradio_demo.py"), "__name__": "gamdo_iclight_runtime"}
             previous = Path.cwd()
+            repository_path = str(self.repository)
             try:
                 os.chdir(self.repository)
+                sys.path.insert(0, repository_path)
                 exec(compile(model_source, str(self.repository / "gradio_demo.py"), "exec"), namespace)
             finally:
+                if sys.path and sys.path[0] == repository_path:
+                    sys.path.pop(0)
                 os.chdir(previous)
             self._runtime = namespace
         return self._runtime
