@@ -158,6 +158,12 @@ data class ObjectGuideConfigJson(
     val multiScaleCropScale: Float = 1.60f,
     val multiScaleSmallObjectAreaRatio: Float = 0.05f,
     val multiScaleDuplicateIou: Float = 0.55f,
+    /**
+     * O-13 (2): how many analysed frames the scene analyser gets before a selected
+     * reference's composition is drawn instead. `0` = show the reference the instant
+     * it is picked, which is a legitimate owner answer — see [GuideCompositionChoice].
+     */
+    val referenceGraceFrames: Int = 8,
     // `performanceTargetFps: 8` was removed here (2026-07-29). It was parsed and
     // `require`d but never read by anything, so it stood in the asset looking like
     // §7-1's "발열 시 8fps 하향" was implemented when no such downgrade exists.
@@ -188,6 +194,9 @@ data class ObjectGuideConfigJson(
         require(multiScaleCropScale in 1.10f..2.0f)
         require(multiScaleSmallObjectAreaRatio in 0f..1f)
         require(multiScaleDuplicateIou in 0f..1f)
+        require(referenceGraceFrames >= 0) {
+            "referenceGraceFrames must be >= 0, was $referenceGraceFrames"
+        }
         require(focusRegionWidth in 0.20f..1f)
         require(focusRegionHeight in 0.20f..1f)
         require(subjectClusterRadius in 0.05f..0.80f)

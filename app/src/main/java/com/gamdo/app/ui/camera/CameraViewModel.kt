@@ -151,6 +151,7 @@ class CameraViewModel(
         coordinator = SceneGuideCoordinator(
             templateSafetyMargin = config.objectGuide.templateSafetyMargin,
             detectedSlotShapeConfig = config.objectGuide.toDetectedSlotShapeConfig(),
+            referenceGraceFrames = config.objectGuide.referenceGraceFrames,
         ),
         tracker = StableSceneTracker(config.toObjectTrackerConfig()),
     )

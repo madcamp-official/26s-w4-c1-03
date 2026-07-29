@@ -47,24 +47,65 @@ class SceneLayoutContractTest {
         assertEquals(GuideLayoutState.Searching, coordinator.currentLayoutState)
     }
 
+    private val twoObjectReference = StyleTarget(
+        referenceSlots = listOf(
+            ReferenceTargetSlot(SlotRole.OBJECT, SlotVisualKind.GENERIC_OBJECT, RectN(0.10f, 0.20f, 0.40f, 0.60f)),
+            ReferenceTargetSlot(SlotRole.OBJECT, SlotVisualKind.PLATE, RectN(0.55f, 0.50f, 0.80f, 0.70f)),
+        ),
+    )
+
+    /**
+     * **This contract was reversed by O-13 (2), 2026-07-29.**
+     *
+     * It used to read `reference slots fix immediately and do not wait for live
+     * object detection`, and it was accurate: `referenceTemplate` sat in the
+     * `explicitTemplate` chain and latched on the first frame, before
+     * `autoLayoutResolver` was consulted at all. The owner ruled that a reference's
+     * composition is a **candidate**, not a command — so the scene analyser is heard
+     * first, for `referenceGraceFrames` frames.
+     */
     @Test
-    fun `reference slots fix immediately and do not wait for live object detection`() {
+    fun `reference slots wait for the scene analyser rather than latching on frame one`() {
         val coordinator = SceneGuideCoordinator()
         val state = coordinator.update(
             detection = com.gamdo.app.detect.DetectionResult(emptyList(), null),
-            styleTarget = StyleTarget(
-                referenceSlots = listOf(
-                    ReferenceTargetSlot(SlotRole.OBJECT, SlotVisualKind.GENERIC_OBJECT, RectN(0.10f, 0.20f, 0.40f, 0.60f)),
-                    ReferenceTargetSlot(SlotRole.OBJECT, SlotVisualKind.PLATE, RectN(0.55f, 0.50f, 0.80f, 0.70f)),
-                ),
-            ),
+            styleTarget = twoObjectReference,
         )
+        assertEquals(GuideLayoutState.Searching, state.layoutState)
+    }
+
+    @Test
+    fun `reference slots fix once the scene analyser has had its grace window`() {
+        val grace = 8
+        val coordinator = SceneGuideCoordinator(referenceGraceFrames = grace)
+        var state = coordinator.update(
+            detection = com.gamdo.app.detect.DetectionResult(emptyList(), null),
+            styleTarget = twoObjectReference,
+        )
+        repeat(grace) {
+            state = coordinator.update(
+                detection = com.gamdo.app.detect.DetectionResult(emptyList(), null),
+                styleTarget = twoObjectReference,
+            )
+        }
 
         assertEquals(LayoutSource.REFERENCE, (state.layoutState as GuideLayoutState.Fixed).source)
         assertEquals(2, state.fixedLayout!!.template.slots.size)
         // The shared style transformer is allowed to apply its documented
         // size/spacing micro-adjustment. The reference slot must remain a
         // fixed, safe-area-clamped slot rather than preserving raw pixels.
-        assertTrue(state.fixedLayout.template.slots.first().bounds.left in 0.05f..0.95f)
+        assertTrue(state.fixedLayout!!.template.slots.first().bounds.left in 0.05f..0.95f)
+    }
+
+    @Test
+    fun `a zero grace window restores the pre-O13 immediate latch`() {
+        // The knob is real, and this is what turning it off looks like — kept so the
+        // owner can reject the grace window without a code change.
+        val coordinator = SceneGuideCoordinator(referenceGraceFrames = 0)
+        val state = coordinator.update(
+            detection = com.gamdo.app.detect.DetectionResult(emptyList(), null),
+            styleTarget = twoObjectReference,
+        )
+        assertEquals(LayoutSource.REFERENCE, (state.layoutState as GuideLayoutState.Fixed).source)
     }
 }
