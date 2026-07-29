@@ -1,6 +1,8 @@
 package com.gamdo.app.ui.navigation
 
+import android.content.ContentUris
 import android.net.Uri
+import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -40,6 +42,7 @@ import com.gamdo.app.ui.reference.ReferenceOverlayLayer
 import com.gamdo.app.ui.reference.clampReferenceOverlayAlpha
 import com.gamdo.app.ui.reference.shouldShowReferenceOverlay
 import com.gamdo.app.ui.result.ResultScreen
+import com.gamdo.app.ui.result.ResultTarget
 import kotlinx.coroutines.launch
 
 /**
@@ -211,6 +214,14 @@ fun GamdoNavHost(
                     container = container,
                     onBack = { navController.popBackStack() },
                     onOpenPhoto = { captureId -> navController.navigate(Routes.result(captureId)) },
+                    // W3.5-6. The tap opens the same 보정 screen on a `MediaStore`
+                    // photo — **without** minting a `captures` row for it. Importing
+                    // one would put the same photo in the grid twice, once as an app
+                    // capture and once as the device original, which is the exact
+                    // duplication W3.5-2's dedup removed.
+                    onOpenDevicePhoto = { tap ->
+                        navController.navigate(Routes.devicePhoto(tap.mediaStoreId))
+                    },
                 )
             }
 
@@ -221,7 +232,7 @@ fun GamdoNavHost(
                 val captureId = entry.arguments?.getString(Routes.ARG_CAPTURE_ID).orEmpty()
                 ResultScreen(
                     container = container,
-                    captureId = captureId,
+                    target = ResultTarget.AppCapture(captureId),
                     onBack = { navController.popBackStack() },
                     activeReferenceStyle = activeReferenceStyle,
                     activeReferenceImageUri = activeReferenceImageUri,
@@ -230,6 +241,38 @@ fun GamdoNavHost(
                     // AI 3's slot (O-10) — deliberately wired to nothing here; see
                     // the integration task's explicit instruction not to
                     // implement AI 3 behaviour.
+                )
+            }
+
+            composable(
+                route = Routes.DEVICE_PHOTO,
+                arguments = listOf(navArgument(Routes.ARG_MEDIA_STORE_ID) { type = NavType.LongType }),
+            ) { entry ->
+                // Rebuilt from the id rather than passed as an encoded Uri — the
+                // album built the Uri it handed over the same way, so this is the
+                // same value with no escaping to get wrong. A missing argument is
+                // not a thing this route can produce (`LongType` is required and
+                // `Routes.devicePhoto` is the only writer), but if it somehow were,
+                // -1 resolves to a Uri that fails to open and the screen says
+                // 사진을 열지 못했어요 rather than sitting blank.
+                val mediaStoreId = entry.arguments?.getLong(Routes.ARG_MEDIA_STORE_ID) ?: -1L
+                val uri = remember(mediaStoreId) {
+                    ContentUris.withAppendedId(
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                        mediaStoreId,
+                    )
+                }
+                ResultScreen(
+                    container = container,
+                    // O-12 rides on this: `DevicePhoto` means no geometry and no
+                    // optical pass until the user picks a look. See
+                    // `ui/result/ResultFlowDecisions.kt`.
+                    target = ResultTarget.DevicePhoto(uri),
+                    onBack = { navController.popBackStack() },
+                    activeReferenceStyle = activeReferenceStyle,
+                    activeReferenceImageUri = activeReferenceImageUri,
+                    onCreateReference = onCreateReference,
+                    onDeleteReference = onDeleteReference,
                 )
             }
         }

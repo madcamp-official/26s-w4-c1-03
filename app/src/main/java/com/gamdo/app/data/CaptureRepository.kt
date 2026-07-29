@@ -47,6 +47,19 @@ data class SavedEdit(
 )
 
 /**
+ * Result of writing an edited copy of a photo that has **no `captures` row** — a
+ * device-library photo opened from the album (W3.5-6).
+ *
+ * Deliberately not a [SavedEdit] with a blank `captureId`: there is no capture, so
+ * there is no edit stack, no `saved_to_gallery` column to set and no step count to
+ * report. Saying so in the type is what stops a caller from looking for those.
+ */
+data class SavedDeviceEdit(
+    val filePath: String,
+    val savedToGallery: Boolean,
+)
+
+/**
  * Shutter-moment context stored alongside a capture.
  *
  * Shared contract with guide-capture-agent: they fill this at the shutter (session,
@@ -339,6 +352,44 @@ class CaptureRepository(
             stepsRecorded = if (editStackDao != null) 1 else 0,
             savedToGallery = exported,
         )
+    }
+
+    /**
+     * W3.5-6 저장 for a photo the app does not own: a device-library photo the user
+     * tapped in the album and edited.
+     *
+     * **The user's original is never touched.** It is reachable only as a
+     * `content://` Uri which the editor opens read-only
+     * (`edit/UriEditImageSource`), and this function never sees it: it takes the
+     * rendered bitmap and writes a new file, exactly as [saveEditedCapture] does for
+     * a capture. That is D8-6 for a file outside app storage — the guard cannot be
+     * "refuse to write to the source path" here, because there is no path, so it is
+     * structural instead: nothing in this call has anything to write *to*.
+     *
+     * Two things [saveEditedCapture] does are deliberately absent, both because the
+     * row they hang off does not exist and Room is frozen (R2 스키마 동결):
+     *
+     *  - no `capture_edit_stack` step, so this edit is not replayable from
+     *    parameters. The pixels are saved; the recipe is not.
+     *  - no `captures.saved_to_gallery`, which is a column on a row there is none of.
+     *
+     * The gallery copy lands in the same `Pictures/[GALLERY_BUCKET_NAME]` folder as
+     * everything else this app exports. **Consequence worth knowing:** the album
+     * filters that whole bucket out of its MediaStore side to dedup app captures
+     * (see [GALLERY_BUCKET_NAME]), so a saved device-photo edit is visible in the
+     * system gallery but not in this app's album.
+     */
+    suspend fun saveDevicePhotoEdit(bitmap: Bitmap): SavedDeviceEdit = withContext(Dispatchers.IO) {
+        val fileName = "dev_" + Ulid.generate() + ".jpg"
+        val bytes = bitmap.toJpegBytes()
+        val dir = File(appContext.filesDir, "edits").apply { mkdirs() }
+        val file = File(dir, fileName).apply { writeBytes(bytes) }
+
+        val exported = runCatching { exportToGallery(bytes, fileName) }
+            .onFailure { Log.w(TAG, "Device-photo edit gallery export failed (kept local copy)", it) }
+            .isSuccess
+
+        SavedDeviceEdit(filePath = file.absolutePath, savedToGallery = exported)
     }
 
     /**

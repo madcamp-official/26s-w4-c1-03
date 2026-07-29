@@ -72,10 +72,13 @@ private const val LOAD_MORE_THRESHOLD_ITEMS = LOAD_MORE_THRESHOLD_ROWS * 3
 private const val APP_CAPTURE_LOAD_LIMIT = 500
 
 /**
- * What tapping a device-photo tile hands the caller. Deliberately not wired to a
- * destination by this screen — see `onOpenDevicePhoto`'s KDoc and this task's
- * report on the seam `ui/result/ResultScreen.kt` + `ui/navigation/GamdoNavHost.kt`
- * would need to accept a photo with no `captures` row behind it.
+ * What tapping a device-photo tile hands the caller.
+ *
+ * As of W3.5-6 the nav host routes this to the 보정 screen on
+ * [mediaStoreId] — `Routes.devicePhoto(...)`, which rebuilds the same content Uri
+ * with `ContentUris.withAppendedId`. [uri] and [takenAtMillis] are carried for the
+ * caller's own use and are not what the route travels on; see `Routes.DEVICE_PHOTO`
+ * for why an id beats a URL-encoded Uri in a path argument.
  */
 data class DevicePhotoTap(val uri: Uri, val mediaStoreId: Long, val takenAtMillis: Long)
 
@@ -101,12 +104,12 @@ fun AlbumScreen(
     container: AppContainer,
     onBack: () -> Unit,
     onOpenPhoto: (captureId: String) -> Unit,
-    // W3.5: intentionally NOT wired to a screen. Tapping a device photo has no
-    // captures row, so it cannot reuse `Routes.result(captureId)` as-is — see this
-    // task's report for the exact change `ui/result/ResultScreen.kt` and
-    // `ui/navigation/GamdoNavHost.kt` (both out of this screen's ownership) would
-    // need before this callback can open anything. Default no-op keeps every
-    // existing caller (`GamdoNavHost.kt`, untouched here) compiling unchanged.
+    // W3.5-6: wired to `Routes.DEVICE_PHOTO`, which opens the 보정 screen on the
+    // MediaStore Uri **without** creating a `captures` row — importing one would put
+    // the same photo in this grid twice, which is what W3.5-2's dedup exists to
+    // prevent. What that screen may then do to the photo is O-12, decided in
+    // `ui/result/ResultFlowDecisions.kt`. Default no-op so a caller that has no
+    // destination for it still compiles.
     onOpenDevicePhoto: (DevicePhotoTap) -> Unit = {},
 ) {
     val context = LocalContext.current

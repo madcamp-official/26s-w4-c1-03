@@ -41,25 +41,27 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.local.entity.Captures
-import com.gamdo.app.data.SavedEdit
 import com.gamdo.app.data.network.RescueAnalysisResponse
 import com.gamdo.app.data.preset.ResolvedStyle
 import com.gamdo.app.data.rescue.RescueState
 import com.gamdo.app.edit.CaptureConditions
+import com.gamdo.app.edit.EditImageSource
 import com.gamdo.app.edit.EditPlan
-import com.gamdo.app.edit.EditSourceLoader
 import com.gamdo.app.edit.EditTool
+import com.gamdo.app.edit.FileEditImageSource
 import com.gamdo.app.edit.FilterEngine
 import com.gamdo.app.edit.QuickFilterEditor
 import com.gamdo.app.edit.LocalEditor
 import com.gamdo.app.edit.LocalFilter
 import com.gamdo.app.edit.SaveRender
+import com.gamdo.app.edit.UriEditImageSource
 import com.gamdo.app.edit.pixelBuffer
 import com.gamdo.app.edit.renderForSave
 import com.gamdo.app.edit.renderLatest
@@ -99,13 +101,33 @@ import kotlinx.serialization.json.JsonObject
 private const val TAG = "ResultScreen"
 
 /**
- * The opened photo after §4-1 levelling + auto exposure, plus the plan that made
- * it so the save path can re-apply the identical correction at full resolution.
+ * What the screen has managed to open, as one value.
  *
- * [plan] is null when auto-correction could not run; [bitmap] is then the
- * untouched decode.
+ * Three states, not two, and the third one is the point: `null` used to mean both
+ * "still decoding" and "this will never decode", so a photo that could not be read
+ * left the screen on 사진을 불러오는 중이에요 forever. A device photo can be deleted
+ * between the album listing it and the user tapping it, which makes that a reachable
+ * state rather than a theoretical one (W3.5-6).
  */
-private data class AutoCorrected(val bitmap: Bitmap, val plan: EditPlan?)
+private sealed interface OpenedPhoto {
+
+    /** The decode is in flight. */
+    data object Loading : OpenedPhoto
+
+    /**
+     * The photo, after whatever §4-1 passes [com.gamdo.app.ui.result.correctionPassesFor]
+     * allowed, plus the [plan] that produced it so the save path can re-apply the
+     * identical correction at full resolution.
+     *
+     * [plan] is null when no pass ran — either O-12 held them all back, or the
+     * correction failed and this is the untouched decode. Both mean the same thing
+     * downstream: there is nothing for the save path to re-apply.
+     */
+    data class Ready(val bitmap: Bitmap, val plan: EditPlan?) : OpenedPhoto
+
+    /** The source could not be read at all. Terminal — nothing else is coming. */
+    data object Unavailable : OpenedPhoto
+}
 
 /**
  * Everything the preview render depends on, in one value so the render loop has a
@@ -156,20 +178,28 @@ private sealed interface SelectedStripFilter {
  * result and therefore lives at the nav host, AI 3 exists only here and every input it
  * needs — the capture, its file on disk, the active style — is already this screen's.
  * See [RescueSheet] and `docs/AI3_사진살리기_통합계약_2026-07-28.md`'s "P1 연결 계약".
+ *
+ * @param target which photo is open, and therefore which of O-12's two behaviours
+ *   applies. See [ResultTarget]; the rules themselves are in `ResultFlowDecisions.kt`.
  */
 @Composable
 fun ResultScreen(
     container: AppContainer,
-    captureId: String,
+    target: ResultTarget,
     onBack: () -> Unit,
     activeReferenceStyle: ResolvedStyle? = null,
     activeReferenceImageUri: Uri? = null,
     onCreateReference: () -> Unit = {},
     onDeleteReference: () -> Unit = {},
 ) {
-    val capture by produceState<Captures?>(initialValue = null, captureId, container) {
+    val sourceKind = target.kind
+    // Null for a device photo, and that is a fact rather than a missing value —
+    // everything keyed on it (AI 3, the edit stack) is gated on the same branch.
+    val captureId: String? = (target as? ResultTarget.AppCapture)?.captureId
+    val capture by produceState<Captures?>(initialValue = null, target, container) {
+        val id = captureId ?: return@produceState
         value = withContext(Dispatchers.IO) {
-            container.database.capturesDao().get(captureId)
+            container.database.capturesDao().get(id)
         }
     }
     // ---- AI 3 (사진 살리기) --------------------------------------------------
@@ -192,7 +222,7 @@ fun ResultScreen(
     // *another* capture's Candidates when this screen opens. Without this, opening
     // photo B would show photo A's results and picking one would put A's generated
     // file into B's editor.
-    LaunchedEffect(captureId) {
+    LaunchedEffect(target) {
         rescueOpened = false
         rescueController.reset()
     }
@@ -233,24 +263,68 @@ fun ResultScreen(
     // known *before* `corrected` below — selecting it changes which pass produces
     // the base bitmap, not just what runs on top of it.
     var selectedStrip by remember { mutableStateOf<SelectedStripFilter>(SelectedStripFilter.Preset(LocalFilter.ORIGINAL)) }
+    // O-12: whether the *user* put the strip where it is. Not derivable from
+    // `selectedStrip` — on an app capture the screen seeds it below, and a seeded
+    // selection is not a choice. Every strip tap sets this.
+    var styleChosenByUser by remember { mutableStateOf(false) }
     // Every style in presets.json now has a filter of its own, so this is a lookup
     // rather than a when-chain with a fallback. The chain listed four of the six
     // and sent `clean_social` and `casual_portrait` to a different style's look.
     val preferredFilter by produceState(LocalFilter.ORIGINAL, container) {
         value = LocalFilter.forPresetId(container.settingsRepository.getStylePresetId())
     }
-    LaunchedEffect(preferredFilter) { selectedStrip = SelectedStripFilter.Preset(preferredFilter) }
+    // O-12's quieter half: seeding the saved style would put a look nobody picked
+    // onto a photo from the user's own library. An app capture keeps the seed.
+    LaunchedEffect(preferredFilter, sourceKind) {
+        if (opensOnPreferredStyle(sourceKind)) selectedStrip = SelectedStripFilter.Preset(preferredFilter)
+    }
+    val stylePick = stylePickFor(
+        source = sourceKind,
+        selection = when (val sel = selectedStrip) {
+            is SelectedStripFilter.Preset ->
+                if (sel.filter == LocalFilter.ORIGINAL) StripSelection.ORIGINAL else StripSelection.PRESET
+            SelectedStripFilter.Reference -> StripSelection.REFERENCE
+        },
+        chosenByUser = styleChosenByUser,
+    )
+    // The whole O-12 decision, in one value the render below can key on.
+    val passes = correctionPassesFor(sourceKind, stylePick)
     /*
-     * The file the editor reads. A picked AI 3 candidate stands in for the original
-     * **as an input only** — the original on disk is never written to (contract:
-     * 원본 덮어쓰기 금지), and the save path still produces a new file through
-     * `CaptureRepository.saveEditedCapture`.
+     * Where the editor reads its pixels — **the one seam**, used by the preview
+     * decode, the size probe and the save-time re-decode alike. A picked AI 3
+     * candidate stands in for the original **as an input only**: the original is
+     * never written to (contract: 원본 덮어쓰기 금지), and the save path still
+     * produces a new file.
      *
-     * It is derived from [pickedCandidate], which is itself derived from the
-     * controller state, so there is no way to be left rendering a generated file
-     * after the job that produced it is gone.
+     * `File(path)` cannot serve all three any more. A device photo lives behind
+     * `ContentResolver.openInputStream` — scoped storage makes its real path
+     * unreadable — so the branch happens once, here, rather than at each read.
+     * See `edit/EditImageSource.kt`.
+     *
+     * `remember`ed rather than rebuilt per composition because it is a
+     * `produceState` key below: a fresh instance every frame would re-decode the
+     * photo every frame.
      */
-    val editSourcePath: String? = pickedCandidate?.filePath ?: capture?.filePath
+    val contentResolver = LocalContext.current.contentResolver
+    val editSource: EditImageSource? = remember(
+        target,
+        capture?.filePath,
+        pickedCandidate?.filePath,
+        contentResolver,
+    ) {
+        val candidate = pickedCandidate?.filePath
+        when {
+            candidate != null -> FileEditImageSource(File(candidate))
+            target is ResultTarget.DevicePhoto -> UriEditImageSource(contentResolver, target.uri)
+            else -> capture?.filePath?.let { FileEditImageSource(File(it)) }
+        }
+    }
+    // A device photo has no `conditions_json` — no shutter, no tilt reading — so this
+    // is `CaptureConditions.NONE` there. That is *not* what stops the levelling pass
+    // (a zero tilt would still crop); [passes] is. See `correctionPassesFor`.
+    val conditions = remember(capture?.conditionsJson) {
+        CaptureConditions.parse(capture?.conditionsJson)
+    }
 
     // §4-1 기하·광학 자동 보정 (O-2): levelling rotation + auto exposure, applied
     // when the photo opens, with **no visible control**.
@@ -265,23 +339,29 @@ fun ResultScreen(
     // crop; `EditPlan.withProcessingMaxSide` exists for exactly this and
     // `EditPlanTest` pins the property.
     //
-    // Keyed on `selectedStrip` too (not just the file path): selecting `내
-    // 레퍼런스` re-runs this pass with the reference's colour folded into the
-    // *plan* itself — `EditPlanner.plan`'s `resolvedStyle` parameter, the exact
-    // "ColorTarget → ColorParams → LocalEditor" seam the integration contract
-    // names — rather than through `QuickFilterEditor`/`PhotoFilter` like every
-    // preset. Deselecting it re-runs the plain geometry+optical pass again.
+    // Keyed on [passes] rather than on `selectedStrip`: that value *is* what the
+    // strip contributes to this pass — `applyStyle` for the `내 레퍼런스` slot, which
+    // folds the reference's colour into the *plan* itself (`EditPlanner.plan`'s
+    // `resolvedStyle`, the "ColorTarget → ColorParams → LocalEditor" seam the
+    // integration contract names) rather than going through `QuickFilterEditor` like
+    // every preset. Keying on the decision instead of the selection also means
+    // switching between two presets no longer re-decodes and re-plans for an
+    // identical result.
     //
-    // Keyed on [editSourcePath] rather than the capture's own path: picking an AI 3
+    // Keyed on [editSource] rather than the capture's own path: picking an AI 3
     // candidate swaps which file this pass reads, and the levelling/exposure plan is
     // then recomputed from *that* bitmap. The generated file was produced from the
     // untouched original upload, so it arrives un-levelled and needs the same
     // correction; re-planning from its own dimensions is also what keeps the crop
     // right when the operation changed them (outpaint).
-    val corrected by produceState<AutoCorrected?>(initialValue = null, editSourcePath, selectedStrip, activeReferenceStyle) {
-        val captureValue = capture ?: return@produceState
-        val sourcePath = editSourcePath ?: return@produceState
-        val isReferenceSelected = selectedStrip is SelectedStripFilter.Reference
+    val corrected by produceState<OpenedPhoto>(
+        initialValue = OpenedPhoto.Loading,
+        editSource,
+        passes,
+        conditions,
+        activeReferenceStyle,
+    ) {
+        val image = editSource ?: return@produceState
         // Decode off the composition thread so entering the editor never blocks
         // the first frame, and decode *small*.
         //
@@ -292,15 +372,18 @@ fun ResultScreen(
         // show, on the interaction path. Saving still uses the full file; see the
         // save button below.
         value = withContext(Dispatchers.Default) {
-            val file = File(sourcePath)
-            val preview = EditSourceLoader.decode(file, EDITOR_DECODE_MAX_SIDE)
-                ?: return@withContext null
+            val preview = image.decode(EDITOR_DECODE_MAX_SIDE)
+                ?: return@withContext OpenedPhoto.Unavailable
+            // **O-12.** A device photo shows the decode and nothing else until the
+            // user picks a look — no rotation, no exposure, no white balance, no
+            // crop. `plan = null` carries that all the way to the save path, which
+            // re-applies the plan and therefore re-applies nothing.
+            if (!passes.runsAnyPass) return@withContext OpenedPhoto.Ready(preview, plan = null)
             // Every failure below falls back to the untouched decode. An
             // auto-correction the user never asked for must never be the reason a
             // photo will not open.
             runCatching {
-                val fullSize = EditSourceLoader.readSize(file) ?: (preview.width to preview.height)
-                val conditions = CaptureConditions.parse(captureValue.conditionsJson)
+                val fullSize = image.readSize() ?: (preview.width to preview.height)
                 val editor = LocalEditor()
                 val sample = editor.sample(
                     bitmap = preview,
@@ -316,19 +399,19 @@ fun ResultScreen(
                 val plan = editor.plan(
                     sample = sample,
                     preset = null,
-                    applyStyle = isReferenceSelected,
-                    resolvedStyle = activeReferenceStyle.takeIf { isReferenceSelected },
+                    applyStyle = passes.style,
+                    resolvedStyle = activeReferenceStyle.takeIf { passes.style },
                     subject = conditions.subject,
                     requestedMaxSide = EDITOR_DECODE_MAX_SIDE,
                 )
-                AutoCorrected(editor.render(preview, plan).bitmap, plan)
+                OpenedPhoto.Ready(editor.render(preview, plan).bitmap, plan)
             }.getOrElse {
-                Log.w(TAG, "auto-correction failed for ${captureValue.id}; showing the original", it)
-                AutoCorrected(preview, plan = null)
+                Log.w(TAG, "auto-correction failed for $target; showing the original", it)
+                OpenedPhoto.Ready(preview, plan = null)
             }
         }
     }
-    val source: Bitmap? = corrected?.bitmap
+    val source: Bitmap? = (corrected as? OpenedPhoto.Ready)?.bitmap
     // The strip's own recipe, on top of whichever bitmap `corrected` produced:
     // ORIGINAL is an identity `PhotoFilter`, so selecting `내 레퍼런스` above means
     // "no second colour pass here, only what the sliders add" — the reference's
@@ -376,7 +459,11 @@ fun ResultScreen(
         baseline = seeded
         adjustments = seeded
     }
-    var saved by remember { mutableStateOf<SavedEdit?>(null) }
+    // Null until a save lands; then whether the gallery accepted it. Reduced from the
+    // whole `SavedEdit` because the two save paths return different records — an app
+    // capture's derivative is tied to a `captures` row, a device photo's is a
+    // standalone file — and this is the only field the screen ever read.
+    var saved by remember { mutableStateOf<Boolean?>(null) }
     // Saving re-renders the full-resolution file, which takes seconds. Without a
     // state for it the button looks inert and invites a second tap.
     var saving by remember { mutableStateOf(false) }
@@ -473,7 +560,20 @@ fun ResultScreen(
                 )
             }
             if (displayBitmap == null) {
-                Text("사진을 불러오는 중이에요", color = OnDarkMuted, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center))
+                // Two different sentences, because they are two different facts. The
+                // screen used to say 불러오는 중 forever for a photo that was never
+                // going to arrive — a `captures` id with no row, and now also a
+                // device photo deleted between the album listing it and this tap.
+                Text(
+                    text = if (corrected is OpenedPhoto.Unavailable) {
+                        "사진을 열지 못했어요"
+                    } else {
+                        "사진을 불러오는 중이에요"
+                    },
+                    color = OnDarkMuted,
+                    fontSize = 12.sp,
+                    modifier = Modifier.align(Alignment.Center),
+                )
             }
 
             Row(
@@ -512,10 +612,14 @@ fun ResultScreen(
             // nothing when tapped.
             val hasReferenceColor = activeReferenceStyle != null &&
                 activeReferenceStyle.referenceScope != ResolvedStyle.ReferenceScope.COMPOSITION
-            val strip = remember(hasReferenceColor) {
+            // AI 3 is keyed on a `captures` row at every step (`analyze(captureRef=)`,
+            // `submit(captureId=)`, `selected_result_id`), which a device photo does
+            // not have — so the slot is not drawn rather than drawn dead.
+            val offersAiRestore = offersGenerativeRestore(sourceKind)
+            val strip = remember(hasReferenceColor, offersAiRestore) {
                 buildFilterStrip(
                     presets = LocalFilter.entries.toList(),
-                    includeAiRestore = true,
+                    includeAiRestore = offersAiRestore,
                     hasActiveReference = hasReferenceColor,
                 )
             }
@@ -540,7 +644,12 @@ fun ResultScreen(
                             label = filter.label,
                             asset = filterAsset(filter),
                             selected = selectedStrip == SelectedStripFilter.Preset(filter),
-                            onClick = { selectedStrip = SelectedStripFilter.Preset(filter) },
+                            // O-12: this tap, and the one below, are the only things
+                            // that let a correction touch a device photo.
+                            onClick = {
+                                styleChosenByUser = true
+                                selectedStrip = SelectedStripFilter.Preset(filter)
+                            },
                         )
                     }
                     is StripEntry.MyReference -> MyReferenceThumb(
@@ -548,7 +657,10 @@ fun ResultScreen(
                         size = 58.dp,
                         imageUri = activeReferenceImageUri,
                         selected = selectedStrip == SelectedStripFilter.Reference,
-                        onSelect = { selectedStrip = SelectedStripFilter.Reference },
+                        onSelect = {
+                            styleChosenByUser = true
+                            selectedStrip = SelectedStripFilter.Reference
+                        },
                         onDelete = {
                             if (selectedStrip == SelectedStripFilter.Reference) {
                                 selectedStrip = SelectedStripFilter.Preset(preferredFilter)
@@ -588,14 +700,16 @@ fun ResultScreen(
                     // refused still wrote the app's own copy, and telling the user
                     // it is "갤러리에 저장됨" when it is not there is the kind of
                     // claim AGENTS.md §7-6 rules out.
-                    saved?.savedToGallery == true -> "갤러리에 저장됨"
+                    saved == true -> "갤러리에 저장됨"
                     saved != null -> "앱에 저장됨"
                     saving -> "저장 중…"
                     else -> "저장"
                 },
                 onClick = {
                     if (saving) return@PrimaryPillButton
-                    val captureValue = capture ?: return@PrimaryPillButton
+                    // The seam, not the capture: a device photo has no row to check
+                    // and this is the same value the preview rendered from.
+                    val image = editSource ?: return@PrimaryPillButton
                     saving = true
                     // A retry starts clean, or the complaint from the attempt that
                     // failed stays on screen underneath one that worked.
@@ -613,17 +727,13 @@ fun ResultScreen(
                             // editor-resolution bitmap instead and still reported
                             // 갤러리에 저장됨. `renderForSave` has nowhere to put a
                             // preview, so the fallback cannot come back by accident.
-                            val plan = corrected?.plan
-                            // The same file the preview rendered from — the original,
-                            // or the AI 3 candidate if one is picked. Reading
-                            // `captureValue.filePath` here would have saved the
-                            // original while the screen showed the generated result.
-                            val saveSource = File(editSourcePath ?: captureValue.filePath)
+                            // Null when O-12 held every pass back, or when the
+                            // correction failed — both mean there is nothing to
+                            // re-apply and the save writes what the screen showed.
+                            val plan = (corrected as? OpenedPhoto.Ready)?.plan
                             val rendered = withContext(Dispatchers.Default) {
                                 renderForSave(
-                                    decodeFullResolution = {
-                                        EditSourceLoader.decode(saveSource, SAVE_MAX_SIDE)
-                                    },
+                                    decodeFullResolution = { image.decode(SAVE_MAX_SIDE) },
                                     // The **same** plan the preview used, only at save
                                     // resolution. Re-planning here from a larger decode
                                     // would let the saved crop drift from the one the
@@ -645,21 +755,40 @@ fun ResultScreen(
                                 // R7-1: what happened, in the words someone would use
                                 // about their own photo. The path and the resolution go
                                 // to the log, where they are useful.
-                                Log.w(TAG, "save refused: could not decode $saveSource at ${SAVE_MAX_SIDE}px")
+                                Log.w(TAG, "save refused: could not decode $image at ${SAVE_MAX_SIDE}px")
                                 saveError = "원본 사진을 열지 못했어요. 저장하지 않았습니다"
                                 return@launch
                             }
-                            val written = container.captureRepository.saveEditedCapture(
-                                captureId = captureValue.id,
-                                bitmap = rendered.image,
-                                // §4-1 비파괴: the record has to hold every control,
-                                // not the three the old panel happened to show, or a
-                                // saved edit cannot be reopened as what it was.
-                                paramsJson = "{\"filter\":\"$filterRecordName\"," +
-                                    "\"adjustments\":${EditTool.toJson(adjustments)}}",
-                            )
-                            saved = written
-                            if (!written.savedToGallery) {
+                            // D8-6, in both branches: the edited pixels go to a new
+                            // file. Neither path opens the source for writing — and
+                            // for a device photo the source is a `content://` Uri the
+                            // editor only ever calls `openInputStream` on.
+                            val savedToGallery = when (saveTargetFor(sourceKind)) {
+                                SaveTarget.CAPTURE_DERIVATIVE -> container.captureRepository
+                                    .saveEditedCapture(
+                                        // Non-null exactly when the target is an app
+                                        // capture; the `?:` below is unreachable
+                                        // rather than a fallback, and it degrades to
+                                        // "still saves the photo" instead of throwing.
+                                        captureId = captureId ?: return@launch,
+                                        bitmap = rendered.image,
+                                        // §4-1 비파괴: the record has to hold every
+                                        // control, not the three the old panel happened
+                                        // to show, or a saved edit cannot be reopened
+                                        // as what it was.
+                                        paramsJson = "{\"filter\":\"$filterRecordName\"," +
+                                            "\"adjustments\":${EditTool.toJson(adjustments)}}",
+                                    ).savedToGallery
+                                // No `captures` row to hang a `capture_edit_stack` step
+                                // off, and Room is frozen (R2) so one cannot be
+                                // invented. The edit becomes a new file plus a gallery
+                                // copy, and the parameters are not recorded — see the
+                                // W3.5-6 report's 저장 section.
+                                SaveTarget.NEW_FILE_ONLY -> container.captureRepository
+                                    .saveDevicePhotoEdit(rendered.image).savedToGallery
+                            }
+                            saved = savedToGallery
+                            if (!savedToGallery) {
                                 saveError = "갤러리에 못 넣었어요. 앱에는 저장했습니다"
                             }
                         } catch (t: Throwable) {
@@ -711,7 +840,10 @@ fun ResultScreen(
                 rescueJob?.cancelAndJoin()
                 rescueJob = null
                 rescueController.reset()
-                runCatching { container.database.captureEditStackDao().setSelectedResult(captureId, null) }
+                // `captureId` is null only for a device photo, which cannot reach AI 3
+                // at all (the strip slot is not drawn) — so this is a type-level
+                // guard, not a behaviour change.
+                runCatching { captureId?.let { container.database.captureEditStackDao().setSelectedResult(it, null) } }
                     .onFailure { Log.w(TAG, "clearing selected_result_id failed", it) }
             }
         }
@@ -729,14 +861,14 @@ fun ResultScreen(
                 if (rescueState is RescueState.Candidates) rescueOpened = false else cancelRescue()
             },
             onAnalyze = {
-                val file = capture?.let { File(it.filePath) }
-                if (file == null) {
+                val captureValue = capture
+                if (captureValue == null) {
                     Log.w(TAG, "rescue analyze skipped: capture $captureId is not loaded yet")
                 } else {
                     rescueJob = scope.launch {
                         rescueController.analyze(
-                            image = file,
-                            captureRef = captureId,
+                            image = File(captureValue.filePath),
+                            captureRef = captureValue.id,
                             style = styleParamsJson(activeReferenceStyle),
                             reference = referenceCompositionJson(activeReferenceStyle),
                         )
@@ -766,8 +898,10 @@ fun ResultScreen(
                 pickedCandidateId = candidate.resultId
                 scope.launch {
                     runCatching {
-                        container.database.captureEditStackDao()
-                            .setSelectedResult(captureId, candidate.resultId)
+                        captureId?.let {
+                            container.database.captureEditStackDao()
+                                .setSelectedResult(it, candidate.resultId)
+                        }
                     }.onFailure { Log.w(TAG, "recording selected_result_id failed", it) }
                 }
             },
