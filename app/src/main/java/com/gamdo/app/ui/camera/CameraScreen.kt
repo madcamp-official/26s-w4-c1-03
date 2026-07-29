@@ -81,7 +81,6 @@ import com.gamdo.app.camera.SceneDetectorWarmup
 import com.gamdo.app.camera.ShakeMeter
 import com.gamdo.app.camera.TiltSensor
 import com.gamdo.app.camera.ZoomBounds
-import com.gamdo.app.camera.centerCropToRatio
 import com.gamdo.app.camera.brightnessSample
 import com.gamdo.app.camera.croppedForObjectDetection
 import com.gamdo.app.camera.sceneFrameSignals
@@ -640,13 +639,15 @@ fun CameraScreen(
                         // the one the user was looking at when they pressed it.
                         val frame = viewModel.lastFrame.value
 
-                        val captured = controller.capture(trace)
-                        // Heavy bitmap work stays off the main thread; the thumb
-                        // is a downscaled copy so we never retain a
-                        // full-resolution bitmap for a 44dp preview.
-                        val bitmap = withContext(Dispatchers.Default) {
-                            captured.centerCropToRatio(aspect.ratioWtoH)
-                        }
+                        // The aspect crop is part of the capture's single transform
+                        // now, not a fifth full-resolution copy afterwards — see
+                        // `captureGeometryFor`. `capture()` already runs its work on
+                        // Dispatchers.Default inside CameraX's callback.
+                        val bitmap = controller.capture(trace, aspect.ratioWtoH)
+                        // The thumb stays a separate downscale: it is a different
+                        // size from the photo, so it cannot share the same pass. It
+                        // is small and it means no full-resolution bitmap is
+                        // retained for a 44dp preview.
                         lastThumb = withContext(Dispatchers.Default) {
                             bitmap.scaledToMaxSide(256)
                         }
