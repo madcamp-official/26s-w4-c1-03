@@ -30,4 +30,18 @@ class MainActivity : ComponentActivity() {
             GamdoApp()
         }
     }
+
+    /**
+     * Re-arms the detector warm-up on return to the foreground.
+     *
+     * `Application.onTrimMemory` gives the model back when the app stops being
+     * visible with no camera screen mounted, and becoming visible again is the
+     * first moment it is worth paying for once more — earlier than any composable,
+     * and early enough to overlap the activity restart. A no-op when the stack is
+     * already warm, which is every launch that was not preceded by a trim.
+     */
+    override fun onStart() {
+        super.onStart()
+        (application as? GamdoApplication)?.warmSceneDetector()
+    }
 }

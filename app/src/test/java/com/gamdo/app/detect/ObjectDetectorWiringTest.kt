@@ -87,14 +87,35 @@ class ObjectDetectorWiringTest {
      * The face and pose ML Kit wrappers are *not* retired — they are the only
      * detectors for their subjects. This asserts the deletion was surgical, so a
      * later reader does not conclude the whole ML Kit dependency went away.
+     *
+     * ## Why the whole tree, and not `CameraScreen.kt`
+     *
+     * This used to read only `CameraScreen.kt`, because that is where the stack
+     * happened to be constructed. That was never the property — the property is
+     * "these two are still constructed in production" — and the file name was an
+     * incidental fact that went stale the moment the build moved to
+     * `camera/SceneDetectorWarmup.kt` so it could start before the camera screen
+     * composes. A single-file haystack fails on a move that changed nothing about
+     * what is wired, which is a test reporting on itself rather than on the code.
+     * Scanning every source is what the sibling test above already does, and it
+     * cannot go stale the next time the construction site moves.
+     *
+     * The declaration exclusion comes with the wider haystack and is not optional:
+     * over the whole tree, `class MlKitFaceDetector(` would satisfy a bare
+     * `contains` and the assertion would pass with nothing constructing anything.
+     * It does not match today only because neither class takes constructor
+     * parameters — one added parameter would quietly hollow this out.
      */
     @Test
     fun `the ML Kit face and pose detectors are still wired`() {
-        val wiring = mainSources
-            .filter { it.name == "CameraScreen.kt" }
-            .joinToString("\n") { codeOf(it) }
+        fun constructedAnywhere(name: String): Boolean = mainSources.any { file ->
+            codeOf(file).lines().any { line ->
+                line.contains("$name(") &&
+                    !Regex("""\b(class|interface|object)\s+$name""").containsMatchIn(line)
+            }
+        }
 
-        assertTrue("face detection must stay wired", wiring.contains("MlKitFaceDetector("))
-        assertTrue("pose detection must stay wired", wiring.contains("MlKitPoseDetector("))
+        assertTrue("face detection must stay wired", constructedAnywhere("MlKitFaceDetector"))
+        assertTrue("pose detection must stay wired", constructedAnywhere("MlKitPoseDetector"))
     }
 }

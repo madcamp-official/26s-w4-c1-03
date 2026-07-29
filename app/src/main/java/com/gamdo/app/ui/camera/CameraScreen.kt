@@ -42,6 +42,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.RememberObserver
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -69,9 +70,9 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.gamdo.app.BuildConfig
 import com.gamdo.app.camera.AnalysisStats
-import com.gamdo.app.camera.AnalysisThreadResource
 import com.gamdo.app.camera.CameraController
 import com.gamdo.app.camera.FrameAnalyzer
+import com.gamdo.app.camera.SceneDetectorWarmup
 import com.gamdo.app.camera.ShakeMeter
 import com.gamdo.app.camera.TiltSensor
 import com.gamdo.app.camera.ZoomBounds
@@ -86,18 +87,8 @@ import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.GuideKpiRepository
 import com.gamdo.app.data.preset.StylePreset
 import com.gamdo.app.detect.DetectionResult
-import com.gamdo.app.detect.MlKitFaceDetector
-import com.gamdo.app.detect.MlKitPoseDetector
-import com.gamdo.app.detect.ThrottledPoseDetector
-import com.gamdo.app.detect.EfficientDetSceneDetector
-import com.gamdo.app.detect.ThrottledObjectSceneDetector
-import com.gamdo.app.detect.MlKitSubjectSegmenter
-import com.gamdo.app.detect.ThrottledSubjectSceneSegmenter
 import com.gamdo.app.guide.toSceneObservation
-import com.gamdo.app.detect.SceneDetector
 import com.gamdo.app.detect.toAnalysisFrame
-import com.gamdo.app.guide.GuideConfigBundle
-import com.gamdo.app.guide.parseGuideConfigBundle
 import com.gamdo.app.guide.toStyleTarget
 import com.gamdo.app.ui.components.moodBrush
 import com.gamdo.app.ui.theme.Charcoal600
@@ -107,7 +98,6 @@ import com.gamdo.app.ui.theme.OnDarkMedium
 import com.gamdo.app.ui.theme.OnDarkMuted
 import com.gamdo.app.ui.theme.OnSage
 import com.gamdo.app.ui.theme.Sage
-import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -121,9 +111,6 @@ import kotlinx.coroutines.withContext
 private val GridLine = Color(0x47FFFFFF)
 private const val TAG = "CameraScreen"
 
-/** Separate tag so per-stage timing greps cleanly out of the per-frame chatter. */
-private const val STAGE_TAG = "DetectStage"
-
 /**
  * Cold-start attribution. One line per one-off startup cost, so a launch trace
  * can be read without inferring durations from the gaps between CameraX's logs.
@@ -136,6 +123,30 @@ private val STYLE_STRIP_HEIGHT = 78.dp
 enum class CaptureAspect(val label: String, val ratioWtoH: Float) {
     RATIO_4_5("4:5", 4f / 5f),
     RATIO_1_1("1:1", 1f),
+}
+
+/**
+ * The camera screen's claim on the process-scoped detection stack, released when
+ * this composition goes away.
+ *
+ * A [RememberObserver] rather than the `DisposableEffect` this file uses
+ * everywhere else, because the two differ in exactly the case that matters here.
+ * `remember` runs during composition and the claim is taken there — it has to be,
+ * since the executor and the config are needed further down the same composable —
+ * but a composition can be **abandoned** before it is ever applied, which happens
+ * on a fast navigate-away during first composition. An abandoned composition runs
+ * no `onDispose`, so a claim taken in `remember` and dropped in `DisposableEffect`
+ * would be stranded, and a stranded claim pins ~5MB of model for the life of the
+ * process (see [com.gamdo.app.camera.DetectorWarmupGate.onTrimMemory], which
+ * refuses to release while a consumer is attached). [onAbandoned] is the branch
+ * that closes that hole.
+ */
+private class SceneDetectorLease(
+    val value: SceneDetectorWarmup.Lease,
+) : RememberObserver {
+    override fun onRemembered() = Unit
+    override fun onForgotten() = SceneDetectorWarmup.releaseLease()
+    override fun onAbandoned() = SceneDetectorWarmup.releaseLease()
 }
 
 /**
@@ -173,36 +184,24 @@ fun CameraScreen(
     val scope = rememberCoroutineScope()
 
     val controller = remember { CameraController(context) }
-    val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
-    // Thresholds come from assets only (CFG-1); the data-class defaults are the
-    // fallback for a missing/!unparseable file.
-    val guideConfig = remember {
-        traceColdStart("guideConfig") {
-            runCatching {
-                context.assets.open("guide_config.json").bufferedReader().use { reader ->
-                    parseGuideConfigBundle(reader.readText())
-                }
-            }.getOrDefault(GuideConfigBundle())
-        }
-    }
-    // Built on the analysis thread, not here.
+    // Neither built nor owned here — claimed.
     //
-    // This block used to construct the detector stack inline — three ML Kit
-    // clients plus a 4.5MB MediaPipe/TFLite model — which meant composition sat
-    // inside `ObjectDetector.createFromOptions` and the `AndroidView` factory
-    // below (the only caller of `CameraController.bind`) could not run until it
-    // returned. Measured on SM-G970N: CameraX had the camera open at +1.1s and
-    // was not told to attach use cases until +7.5s, with a black preview for the
-    // 6.4s in between. See [AnalysisThreadResource] for why the ordering
-    // ("detector exists before the first frame") survives the move.
-    val scene = remember(guideConfig) {
-        AnalysisThreadResource<SceneDetector>(
-            executor = analysisExecutor,
-            close = SceneDetector::close,
-        ) {
-            buildSceneDetector(context, guideConfig)
-        }
-    }
+    // This block used to construct the detector stack inline, which put a 4.5MB
+    // TFLite model load on the composition thread and left the preview black for
+    // 6.4s. Moving it to the analysis executor fixed the preview but not the
+    // guide: the build still did not *start* until this composable first ran, so
+    // on SM-G970N the first detection landed 9.4s after launch. See
+    // [SceneDetectorWarmup] for where the load starts now, how much of those 9.4s
+    // that can actually recover (about a second — the model itself is unchanged),
+    // and why the executor is adopted along with the resource rather than
+    // separately.
+    val lease = remember { SceneDetectorLease(SceneDetectorWarmup.lease(context)) }
+    val analysisExecutor = lease.value.executor
+    // Thresholds come from assets only (CFG-1); the data-class defaults are the
+    // fallback for a missing/unparseable file. Parsed on the analysis thread when
+    // the warm-up ran, on this thread when it did not.
+    val guideConfig = lease.value.guideConfig
+    val scene = lease.value.detector
     val viewModel = remember {
         // The §2-4 stopwatch writes through this sink; the ViewModel itself stays
         // free of android.util.Log so the stability harness can drive it on the JVM.
@@ -407,12 +406,12 @@ fun CameraScreen(
         onDispose {
             controller.clearAnalyzer()
             controller.unbind()
-            // Torn down on the analysis thread, in the same queue that built and
-            // used it — `shutdown()` (not `shutdownNow()`) lets that last task run.
-            // The old `scene.close()` here closed native detectors from the main
-            // thread while the analysis thread could still be inside detect().
-            scene.release()
-            analysisExecutor.shutdown()
+            // The detector is **not** released here, and neither is the thread.
+            // Leaving for the album and coming back is one tap each way, and this
+            // used to charge the full 7.6s model load on the way back in. The
+            // claim is dropped by [SceneDetectorLease] when this composable is
+            // forgotten; the memory goes back on a trim, which — unlike onDispose
+            // — knows whether the app is still on screen.
             viewModel.onAnalyzerDetached()
         }
     }
@@ -1136,79 +1135,13 @@ private fun CameraHud(
 }
 
 /**
- * Builds the detection stack. **Called on the analysis executor, never on the
- * composition thread** — see [AnalysisThreadResource] and the `scene` remember
- * block for the 6.4s of black preview that motivated the move.
- *
- * Extracted verbatim from that block; nothing about *what* is constructed
- * changed, only *where*. The per-stage timings exist because the cost is now
- * invisible to logcat timestamps: it used to be bracketed by CameraX's own log
- * lines, and off the main thread it is bracketed by nothing. Four candidates
- * share the 6.4s — three ML Kit clients and one 4.5MB MediaPipe model, one of
- * which (`subject-segmentation`) is a GMS-backed unbundled module that can go to
- * Play services on first use — and this line is what says which.
- */
-private fun buildSceneDetector(context: Context, guideConfig: GuideConfigBundle): SceneDetector {
-    val t0 = System.nanoTime()
-    val faceDetector = MlKitFaceDetector()
-    val t1 = System.nanoTime()
-    // Pose cost 89.8ms of a measured 263ms frame and ran on every frame.
-    // Like every model here it does not get cheaper on an empty frame, so
-    // cadence is the only lever (owner decision, 2026-07-28). Unlike the
-    // object/segmentation divisors this one is still a code default —
-    // externalizing it means adding a key to 담당 B's ObjectGuideConfigJson.
-    val poseDetector = ThrottledPoseDetector(MlKitPoseDetector())
-    val t2 = System.nanoTime()
-    // CameraX already keeps only the newest frame. Refreshing objects on
-    // every processed frame gives the 3/5 tracker enough real evidence
-    // to meet the two-second first-layout target without a queue.
-    val objectDetector = ThrottledObjectSceneDetector(
-        EfficientDetSceneDetector(context, guideConfig.toEfficientDetConfig()),
-        refreshEveryFrames = guideConfig.objectGuide.objectRefreshEveryFrames,
-    )
-    val t3 = System.nanoTime()
-    val subjectSegmenter = ThrottledSubjectSceneSegmenter(
-        MlKitSubjectSegmenter(),
-        refreshEveryFrames = guideConfig.objectGuide.segmentationRefreshEveryFrames,
-    )
-    val t4 = System.nanoTime()
-
-    if (BuildConfig.DEBUG) {
-        fun ms(from: Long, to: Long) = (to - from) / 1_000_000.0
-        Log.d(
-            STARTUP_TAG,
-            "detectorBuild face=%.0f pose=%.0f object=%.0f seg=%.0f total=%.0fms (%s)".format(
-                ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3, t4), ms(t0, t4),
-                Thread.currentThread().name,
-            ),
-        )
-    }
-
-    return SceneDetector(
-        faceDetector = faceDetector,
-        poseDetector = poseDetector,
-        objectDetector = objectDetector,
-        subjectSegmenter = subjectSegmenter,
-        // Per-stage cost, debug builds only. Every ML Kit model here blocks the
-        // single analysis thread in turn and none gets cheaper on an empty
-        // frame, so "which one" is not answerable from the HUD's whole-lambda
-        // number.
-        stageSink = if (BuildConfig.DEBUG) {
-            { timings -> Log.d(STAGE_TAG, timings.format()) }
-        } else {
-            null
-        },
-    )
-}
-
-/**
  * Debug-only stopwatch for work that still runs on the composition thread.
  *
- * These two asset reads (`guide_config.json` 2.2KB, `presets.json` 4.5KB) are the
- * main-thread I/O left in the cold-start path once the detector build moved off
- * it. They are almost certainly small — but "almost certainly" is how the 6.4s
- * went unattributed for a week, and neither has a log line of its own to be read
- * off logcat timestamps.
+ * `presets.json` (4.5KB) is the main-thread asset read left in the cold-start
+ * path once the detector build moved off it — `guide_config.json` followed the
+ * build into [SceneDetectorWarmup]. It is almost certainly small, but "almost
+ * certainly" is how the 6.4s went unattributed for a week, and it has no log line
+ * of its own to be read off logcat timestamps.
  */
 private inline fun <T> traceColdStart(label: String, block: () -> T): T {
     if (!BuildConfig.DEBUG) return block()
