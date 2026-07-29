@@ -1,0 +1,16 @@
+[Unit]
+Description=GAMDO ViewCrafter viewpoint service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/gamdo/server
+EnvironmentFile=/etc/gamdo/gamdo.env
+ExecStart=/opt/gamdo/model-services/viewcrafter-api-venv/bin/uvicorn model_services.viewcrafter_service:app --host 127.0.0.1 --port 8192
+Restart=on-failure
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
