@@ -76,7 +76,8 @@ class ViewCrafterBackend:
                 "--height", "576", "--width", "1024", "--video_length", str(self.video_length), "--ddim_steps", "25",
                 "--seed", str(seed), trajectory[0], trajectory[1],
             ]
-            subprocess.run(command, cwd=self.repository, check=True, timeout=280)
+            timeout = float(os.getenv("GAMDO_VIEWCRAFTER_TIMEOUT_SECONDS", "600"))
+            subprocess.run(command, cwd=self.repository, check=True, timeout=timeout)
             video = work / name / "diffusion0.mp4"
             frames = iio.imread(video, plugin="ffmpeg")
             frame = frames[min(len(frames) - 1, max(1, round(len(frames) * 0.7)))]
