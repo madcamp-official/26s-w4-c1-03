@@ -20,7 +20,15 @@ class ViewCrafterBackend:
 
     def ready(self) -> tuple[bool, str]:
         missing = [str(path) for path in (Path(self.python), self.checkpoint, self.dust3r) if not path.is_file()]
-        return (False, "missing: " + ", ".join(missing)) if missing else (True, "model files present")
+        if missing:
+            return False, "missing: " + ", ".join(missing)
+        minimum_checkpoint_bytes = int(os.getenv("GAMDO_VIEWCRAFTER_MIN_CHECKPOINT_BYTES", "9000000000"))
+        if self.checkpoint.stat().st_size < minimum_checkpoint_bytes:
+            return False, "ViewCrafter checkpoint is incomplete"
+        minimum_dust3r_bytes = int(os.getenv("GAMDO_DUST3R_MIN_CHECKPOINT_BYTES", "1000000000"))
+        if self.dust3r.stat().st_size < minimum_dust3r_bytes:
+            return False, "DUSt3R checkpoint is incomplete"
+        return True, "model files present"
 
     def generate(self, image: Path, operation: dict, output: Path, seed: int) -> None:
         import imageio.v3 as iio

@@ -236,10 +236,13 @@ def _outpaint_upload_path(image_path: Path, operation: dict[str, Any]) -> Path:
         width, height = source.size
         extra_width = round(width * ratio) * (2 if direction == "all" else 1) if direction in {"left", "right", "all"} else 0
         extra_height = round(height * ratio) * (2 if direction == "all" else 1) if direction in {"top", "bottom", "all"} else 0
-        canvas = Image.new("RGB", (width + extra_width, height + extra_height), (128, 128, 128))
+        # ComfyUI's LoadImage exposes the inverse alpha channel as its MASK
+        # output. Keep source pixels opaque and expansion pixels transparent so
+        # the fill workflow receives an exact generation region.
+        canvas = Image.new("RGBA", (width + extra_width, height + extra_height), (128, 128, 128, 0))
         offset_x = extra_width if direction == "left" else extra_width // 2 if direction == "all" else 0
         offset_y = extra_height if direction == "top" else extra_height // 2 if direction == "all" else 0
-        canvas.paste(source, (offset_x, offset_y))
+        canvas.paste(source.convert("RGBA"), (offset_x, offset_y))
     handle = tempfile.NamedTemporaryFile(prefix="gamdo-outpaint-", suffix=".png", delete=False)
     path = Path(handle.name)
     handle.close()

@@ -8,6 +8,7 @@ from app.comfyui_provider import (
     ComfyUiProvider,
     _inject_workflow_inputs,
     _masked_upload_path,
+    _outpaint_upload_path,
     provider_from_environment,
 )
 from app.generative import ProviderNotReady
@@ -52,6 +53,24 @@ def test_masked_upload_uses_transient_alpha_mask(tmp_path: Path) -> None:
             assert image.getpixel((90, 70))[3] == 255
     finally:
         masked.unlink(missing_ok=True)
+
+
+def test_outpaint_upload_marks_only_expansion_as_transparent(tmp_path: Path) -> None:
+    source = tmp_path / "input.jpg"
+    from PIL import Image
+
+    Image.new("RGB", (100, 80), "white").save(source)
+    expanded = _outpaint_upload_path(source, {"type": "outpaint", "direction": "all", "ratio": 0.10})
+    try:
+        with Image.open(expanded) as image:
+            assert image.mode == "RGBA"
+            assert image.size == (120, 96)
+            assert image.getpixel((0, 0))[3] == 0
+            assert image.getpixel((10, 8))[3] == 255
+            assert image.getpixel((109, 87))[3] == 255
+            assert image.getpixel((119, 95))[3] == 0
+    finally:
+        expanded.unlink(missing_ok=True)
 
 
 def test_provider_from_environment_defaults_to_safe_fallback(monkeypatch) -> None:
