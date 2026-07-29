@@ -12,12 +12,16 @@ from model_services.viewcrafter_service import ViewCrafterBackend
 class FakeBackend:
     def __init__(self, ready: bool = True) -> None:
         self.is_ready = ready
+        self.release_count = 0
 
     def ready(self) -> tuple[bool, str]:
         return self.is_ready, "test"
 
     def generate(self, image: Path, operation: dict, output: Path, seed: int) -> None:
         output.write_bytes(image.read_bytes() + str(seed).encode())
+
+    def release(self) -> None:
+        self.release_count += 1
 
 
 def test_model_service_rejects_wrong_operation(tmp_path: Path) -> None:
@@ -27,10 +31,12 @@ def test_model_service_rejects_wrong_operation(tmp_path: Path) -> None:
 
 
 def test_model_service_limits_candidates_to_two(tmp_path: Path) -> None:
-    service = ModelService("relight", FakeBackend(), tmp_path / "results")
+    backend = FakeBackend()
+    service = ModelService("relight", backend, tmp_path / "results")
     results = service.run(b"image", {"type": "relight", "seed": 7}, 5)
     assert len(results) == 2
     assert [item["seed"] for item in results] == [7, 8]
+    assert backend.release_count == 1
 
 
 def test_model_service_fails_closed_until_backend_is_ready(tmp_path: Path) -> None:

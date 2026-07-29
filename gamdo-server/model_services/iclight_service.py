@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import gc
 from pathlib import Path
 
 from PIL import Image
@@ -74,6 +75,19 @@ class IcLightBackend:
             bg_source,
         )
         Image.fromarray(results[0]).resize(original_size, Image.Resampling.LANCZOS).save(output, "PNG")
+
+    def release(self) -> None:
+        """Drop the resident SD/IC-Light graph so the next GPU provider has room."""
+        self._runtime = None
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+        except (ImportError, RuntimeError):
+            pass
 
 
 app = create_app(ModelService("relight", IcLightBackend(), output_dir()))

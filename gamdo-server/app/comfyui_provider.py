@@ -77,6 +77,7 @@ class ComfyUiProvider(GenerativeEditProvider):
         operation = operations[0] if operations else {}
         prepared = _outpaint_upload_path(image_path, operation)
         try:
+            self._free_models()
             input_name = self._upload_image(prepared)
             candidates: list[GeneratedCandidate] = []
             for seed in range(max(1, result_count)):
@@ -92,6 +93,18 @@ class ComfyUiProvider(GenerativeEditProvider):
             return candidates
         finally:
             prepared.unlink(missing_ok=True)
+            self._free_models()
+
+    def _free_models(self) -> None:
+        """Best-effort ComfyUI unload between mutually exclusive GPU jobs."""
+        if not self.base_url:
+            return
+        try:
+            self._request_json("/free", {"unload_models": True, "free_memory": True})
+        except ProviderNotReady:
+            # Cleanup must never turn a successfully downloaded candidate into a
+            # failed edit job; the following job will retry the unload first.
+            pass
 
     def _wait_for_history(self, prompt_id: str) -> dict[str, Any]:
         deadline = time.monotonic() + self.timeout_seconds

@@ -42,20 +42,25 @@ class ModelService:
         with tempfile.TemporaryDirectory(prefix=f"gamdo-{self.operation}-") as directory, self._lock:
             source = Path(directory) / "input.bin"
             source.write_bytes(payload)
-            for index in range(max(1, min(result_count, 2))):
-                seed = int(requested.get("seed", 20260729)) + index
-                output = self.output_dir / f"{self.operation}_{uuid.uuid4().hex}.png"
-                try:
-                    self.backend.generate(source, requested, output, seed)
-                except ValueError:
-                    raise
-                except Exception as exc:
-                    output.unlink(missing_ok=True)
-                    logger.exception("model_execution_failed operation=%s", self.operation)
-                    raise RuntimeError(f"{self.operation} model execution failed") from exc
-                if not output.is_file() or output.stat().st_size == 0:
-                    raise RuntimeError("model backend produced no image")
-                results.append({"path": str(output), "seed": seed})
+            try:
+                for index in range(max(1, min(result_count, 2))):
+                    seed = int(requested.get("seed", 20260729)) + index
+                    output = self.output_dir / f"{self.operation}_{uuid.uuid4().hex}.png"
+                    try:
+                        self.backend.generate(source, requested, output, seed)
+                    except ValueError:
+                        raise
+                    except Exception as exc:
+                        output.unlink(missing_ok=True)
+                        logger.exception("model_execution_failed operation=%s", self.operation)
+                        raise RuntimeError(f"{self.operation} model execution failed") from exc
+                    if not output.is_file() or output.stat().st_size == 0:
+                        raise RuntimeError("model backend produced no image")
+                    results.append({"path": str(output), "seed": seed})
+            finally:
+                release = getattr(self.backend, "release", None)
+                if callable(release):
+                    release()
         return results
 
 
