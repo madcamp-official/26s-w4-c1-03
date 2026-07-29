@@ -8,6 +8,7 @@ from PIL import Image
 from PIL.Image import DecompressionBombError, UnidentifiedImageError
 
 from ..rescue_analysis import analyze_rescue
+from ..storage import strip_gps_exif
 from .common import require_device_id
 
 
@@ -37,6 +38,9 @@ async def analyze_rescue_route(
             "message": "image exceeds the 20MB limit",
             "retryable": False,
         })
+    # Earliest point on this path (O-9): strip GPS before the image is even
+    # decoded for validation, let alone analyzed.
+    payload = strip_gps_exif(payload)
     try:
         with Image.open(io.BytesIO(payload)) as decoded:
             decoded.verify()

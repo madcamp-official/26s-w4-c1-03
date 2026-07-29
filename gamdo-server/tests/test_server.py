@@ -5,10 +5,13 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
-from PIL import Image
+from PIL import ExifTags, Image
 
 from app import db, storage
 from app.main import app
+from app.routes import edit_jobs as edit_jobs_routes
+from app.routes import references as references_routes
+from app.routes import rescue as rescue_routes
 
 
 @pytest.fixture(autouse=True)
@@ -22,6 +25,17 @@ def isolated_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
 def image_bytes() -> bytes:
     output = io.BytesIO()
     Image.new("RGB", (8, 8), (120, 140, 120)).save(output, format="PNG")
+    return output.getvalue()
+
+
+def image_bytes_with_gps() -> bytes:
+    """A JPEG carrying GPS EXIF, the same shape a phone gallery photo has (O-9)."""
+    image = Image.new("RGB", (8, 8), (120, 140, 120))
+    exif = image.getexif()
+    exif[ExifTags.Base.Orientation] = 6
+    exif[ExifTags.Base.GPSInfo] = {1: "N", 2: (37.0, 33.0, 12.34), 3: "E", 4: (127.0, 1.0, 2.34)}
+    output = io.BytesIO()
+    image.save(output, format="JPEG", exif=exif)
     return output.getvalue()
 
 
@@ -267,3 +281,85 @@ def test_edit_job_rejects_non_image_payload_without_persisting_file() -> None:
     assert response.status_code == 415
     assert response.json()["code"] == "unsupported_image"
     assert list(storage.INPUT_DIR.glob("**/*")) == []
+
+
+# --- O-9: GPS EXIF is stripped at the earliest point on every upload path ---
+
+
+def test_reference_analysis_strips_gps_before_analysis(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, bytes] = {}
+    real_analyze = references_routes.analyze_reference
+
+    def spy(payload: bytes):
+        captured["payload"] = payload
+        return real_analyze(payload)
+
+    monkeypatch.setattr(references_routes, "analyze_reference", spy)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/references/analyze",
+            headers={"X-Device-Id": "test-device"},
+            files={"image": ("reference.jpg", image_bytes_with_gps(), "image/jpeg")},
+        )
+    assert response.status_code == 200, response.text
+    assert "payload" in captured  # the spy actually ran
+    exif = Image.open(io.BytesIO(captured["payload"])).getexif()
+    assert ExifTags.Base.GPSInfo not in exif
+    assert exif.get(ExifTags.Base.Orientation) == 6  # stripped, not just discarded wholesale
+
+
+def test_rescue_analysis_strips_gps_before_analysis(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, bytes] = {}
+    real_analyze = rescue_routes.analyze_rescue
+
+    def spy(payload: bytes, capture_ref, style_params, reference_composition):
+        captured["payload"] = payload
+        return real_analyze(payload, capture_ref, style_params, reference_composition)
+
+    monkeypatch.setattr(rescue_routes, "analyze_rescue", spy)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/rescue/analyze",
+            headers={"X-Device-Id": "rescue-device"},
+            data={"captureRef": "cap_gps", "styleParams": "{}", "referenceComposition": "{}"},
+            files={"image": ("photo.jpg", image_bytes_with_gps(), "image/jpeg")},
+        )
+    assert response.status_code == 200, response.text
+    assert "payload" in captured
+    exif = Image.open(io.BytesIO(captured["payload"])).getexif()
+    assert ExifTags.Base.GPSInfo not in exif
+    assert exif.get(ExifTags.Base.Orientation) == 6
+
+
+def test_edit_job_strips_gps_before_the_persisted_copy_is_written(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, bytes] = {}
+    real_save = edit_jobs_routes.save_exif_stripped_input
+
+    def spy(job_id: str, payload: bytes):
+        captured["payload"] = payload
+        return real_save(job_id, payload)
+
+    monkeypatch.setattr(edit_jobs_routes, "save_exif_stripped_input", spy)
+
+    form = {
+        "jobId": "job_gps_test",
+        "captureRef": "cap_gps_test",
+        "operations": json.dumps([{
+            "type": "remove_objects",
+            "masks": [{"rect": {"x": 0.1, "y": 0.1, "width": 0.1, "height": 0.1}}],
+        }]),
+    }
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/edit-jobs",
+            headers={"X-Device-Id": "gps-device"},
+            data=form,
+            files={"image": ("input.jpg", image_bytes_with_gps(), "image/jpeg")},
+        )
+    assert response.status_code == 202, response.text
+    assert "payload" in captured  # save_exif_stripped_input already received GPS-free bytes
+    exif = Image.open(io.BytesIO(captured["payload"])).getexif()
+    assert ExifTags.Base.GPSInfo not in exif
+    assert exif.get(ExifTags.Base.Orientation) == 6
