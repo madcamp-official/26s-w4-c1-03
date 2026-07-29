@@ -227,26 +227,61 @@ class CameraController(context: Context) {
     }
 
     /**
-     * Captures a photo and returns an upright bitmap (rotation baked into pixels,
-     * front camera mirrored to match the preview). The viewport cropRect —
-     * attached by LifecycleCameraController from the PreviewView — is applied
-     * first so the result contains exactly what the preview showed (WYSIWYG).
-     * Cropping to the selected aspect ratio is left to the caller.
+     * Captures a photo and returns the finished bitmap: viewport-cropped, upright,
+     * front-camera mirrored, and cropped to [targetRatioWtoH] if one is given.
      *
-     * Decode/rotate run on a background dispatcher, not the main thread: a
-     * full-resolution JPEG decode is hundreds of ms and ~50MB per copy.
+     * The viewport cropRect — attached by LifecycleCameraController from the
+     * PreviewView — is part of the same composition, so the result contains exactly
+     * what the preview showed (WYSIWYG).
+     *
+     * Decode and transform run on a background dispatcher, not the main thread: a
+     * full-resolution JPEG decode is hundreds of ms and ~45MB per copy.
+     *
+     * **The aspect crop belongs here, not in the caller.** It used to run on the
+     * screen, one more full-resolution `createBitmap` after this function had
+     * already made three; folding it into the same plan is what turns four copies
+     * into one. [captureGeometryFor] composes the four steps as arithmetic and
+     * `CaptureGeometryTest` proves the composition reads the same pixels the chain
+     * did, including the front camera's off-by-one at odd trims.
+     *
+     * @param targetRatioWtoH width:height to centre-crop to (0.8 = 4:5, 1.0 = 1:1),
+     *   or null to return the full uncropped frame.
+     * @param trace debug instrumentation, null in release builds. Marks
+     *   [CapturePhase.CAMERA_X] the instant CameraX hands the image over and
+     *   [CapturePhase.DECODE] once the finished bitmap exists. **Those two are worth
+     *   separating precisely because logcat cannot separate them**: the work below
+     *   runs inside CameraX's own callback, so from the outside it is
+     *   indistinguishable from CameraX being slow.
      */
-    suspend fun capture(): Bitmap =
+    suspend fun capture(
+        trace: CaptureTrace? = null,
+        targetRatioWtoH: Float? = null,
+    ): Bitmap =
         suspendCancellableCoroutine { cont ->
             camera.takePicture(
                 Dispatchers.Default.asExecutor(),
                 object : ImageCapture.OnImageCapturedCallback() {
                     override fun onCaptureSuccess(image: ImageProxy) {
+                        // First statement in the callback: everything before it is
+                        // CameraX, everything after it is ours.
+                        trace?.mark(CapturePhase.CAMERA_X)
                         try {
-                            var bitmap = image.toBitmap()
-                                .cropped(image.cropRect)
-                                .rotated(image.imageInfo.rotationDegrees)
-                            if (isFront) bitmap = bitmap.mirroredHorizontally()
+                            val decoded = image.toBitmap()
+                            // Planned against the decoded bitmap's own dimensions
+                            // rather than the ImageProxy's, so nothing here depends
+                            // on those two agreeing.
+                            val plan = captureGeometryFor(
+                                bufferWidth = decoded.width,
+                                bufferHeight = decoded.height,
+                                crop = image.cropRect.let {
+                                    CropRect(it.left, it.top, it.right, it.bottom)
+                                },
+                                rotationDegrees = image.imageInfo.rotationDegrees,
+                                mirror = isFront,
+                                targetRatioWtoH = targetRatioWtoH,
+                            )
+                            val bitmap = decoded.transformedBy(plan)
+                            trace?.mark(CapturePhase.DECODE)
                             cont.resume(bitmap)
                         } catch (t: Throwable) {
                             cont.resumeWithException(t)

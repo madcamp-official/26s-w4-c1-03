@@ -70,15 +70,17 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.gamdo.app.BuildConfig
+import com.gamdo.app.camera.AnalysisPauseGate
 import com.gamdo.app.camera.AnalysisStats
 import com.gamdo.app.camera.CameraController
+import com.gamdo.app.camera.CapturePhase
+import com.gamdo.app.camera.CaptureTrace
 import com.gamdo.app.camera.FrameAnalyzer
 import com.gamdo.app.camera.PreviewStats
 import com.gamdo.app.camera.SceneDetectorWarmup
 import com.gamdo.app.camera.ShakeMeter
 import com.gamdo.app.camera.TiltSensor
 import com.gamdo.app.camera.ZoomBounds
-import com.gamdo.app.camera.centerCropToRatio
 import com.gamdo.app.camera.brightnessSample
 import com.gamdo.app.camera.croppedForObjectDetection
 import com.gamdo.app.camera.sceneFrameSignals
@@ -124,6 +126,14 @@ private const val TAG = "CameraScreen"
  * can be read without inferring durations from the gaps between CameraX's logs.
  */
 private const val STARTUP_TAG = "CameraStartup"
+
+/**
+ * Shutter→saved attribution. Shared with `data/CaptureRepository`, so
+ * `grep CaptureLatency` reads the synchronous breakdown and the gallery export
+ * that is no longer part of it as one sequence — same convention as
+ * [STARTUP_TAG], which already spans two files.
+ */
+private const val LATENCY_TAG = "CaptureLatency"
 
 /** 52dp thumbnail + 4dp gap + label, fixed so the preview pane is laid out once. */
 private val STYLE_STRIP_HEIGHT = 78.dp
@@ -233,6 +243,11 @@ fun CameraScreen(
     // the warm-up ran, on this thread when it did not.
     val guideConfig = lease.value.guideConfig
     val scene = lease.value.detector
+    // Change (1): the detection stack stands down for the length of a capture.
+    // Remembered here rather than inside the analyzer's DisposableEffect so the
+    // shutter and the analyzer hold the same one; a fresh composition gets a fresh
+    // gate, which is RUNNING, so no pause can survive a trip to the album.
+    val analysisPauseGate = remember { AnalysisPauseGate() }
     val viewModel = remember {
         // The §2-4 stopwatch writes through this sink; the ViewModel itself stays
         // free of android.util.Log so the stability harness can drive it on the JVM.
@@ -473,11 +488,16 @@ fun CameraScreen(
                         if (BuildConfig.DEBUG) logDetection(result)
                     }
                 },
+                pauseGate = analysisPauseGate,
             ),
         )
         onDispose {
             controller.clearAnalyzer()
             controller.unbind()
+            // Resume guarantee 2 of 3 (see AnalysisPauseGate): the shutter's
+            // `finally` cannot run if its coroutine was cancelled by this very
+            // disposal, so the pause is released unconditionally here as well.
+            analysisPauseGate.resumeAll()
             // The detector is **not** released here, and neither is the thread.
             // Leaving for the album and coming back is one tap each way, and this
             // used to charge the full 7.6s model load on the way back in. The
@@ -594,6 +614,15 @@ fun CameraScreen(
             onShutter = {
                 capturing = true
                 scope.launch {
+                    // One line per capture, DEBUG only. Null in release, which is
+                    // what keeps `CaptureTrace` out of the shipped shutter path.
+                    val trace = if (BuildConfig.DEBUG) CaptureTrace() else null
+                    // The statement immediately before `try`, with nothing between
+                    // them, so its `finally` is unconditionally paired with it:
+                    // `finally` runs on success, on throw and on cancellation
+                    // alike. Inside the coroutine rather than beside `launch` for
+                    // the same reason — a body that never starts cannot pause.
+                    val pauseToken = analysisPauseGate.pause()
                     try {
                         // capture() must be called on the main thread: it reaches
                         // CameraX's takePicture(), which asserts it outright
@@ -610,16 +639,19 @@ fun CameraScreen(
                         // the one the user was looking at when they pressed it.
                         val frame = viewModel.lastFrame.value
 
-                        val captured = controller.capture()
-                        // Heavy bitmap work stays off the main thread; the thumb
-                        // is a downscaled copy so we never retain a
-                        // full-resolution bitmap for a 44dp preview.
-                        val bitmap = withContext(Dispatchers.Default) {
-                            captured.centerCropToRatio(aspect.ratioWtoH)
-                        }
+                        // The aspect crop is part of the capture's single transform
+                        // now, not a fifth full-resolution copy afterwards — see
+                        // `captureGeometryFor`. `capture()` already runs its work on
+                        // Dispatchers.Default inside CameraX's callback.
+                        val bitmap = controller.capture(trace, aspect.ratioWtoH)
+                        // The thumb stays a separate downscale: it is a different
+                        // size from the photo, so it cannot share the same pass. It
+                        // is small and it means no full-resolution bitmap is
+                        // retained for a 44dp preview.
                         lastThumb = withContext(Dispatchers.Default) {
                             bitmap.scaledToMaxSide(256)
                         }
+                        trace?.mark(CapturePhase.CROP)
 
                         val score = frame?.let { viewModel.matchScoreOf(it) }
                         container.captureRepository.saveCameraCapture(
@@ -633,7 +665,20 @@ fun CameraScreen(
                                 mirror = isFront,
                                 tiltRecorded = tiltSensor.hasReading,
                             ),
+                            trace = trace,
                         )
+                        // Logged here rather than in `finally`: this is the point
+                        // the user's photo is safe and the shutter's job is done.
+                        // The gallery copy is still running and reports itself on
+                        // the same tag when it finishes.
+                        trace?.let {
+                            Log.d(
+                                LATENCY_TAG,
+                                "capture ${it.format()} pause=" +
+                                    (if (analysisPauseGate.isEnabled) "on" else "off") +
+                                    " watchdogTrips=${analysisPauseGate.watchdogTrips}",
+                            )
+                        }
 
                         // KPI, and never a reason to fail a capture — the repository
                         // swallows its own errors. `ended_at` is refreshed with every
@@ -649,6 +694,10 @@ fun CameraScreen(
                         Log.e(TAG, "capture failed", t)
                         Toast.makeText(context, "촬영에 실패했어요", Toast.LENGTH_SHORT).show()
                     } finally {
+                        // Resume guarantee 1 of 3. Ahead of `capturing = false` so
+                        // that no ordering of the two can leave the shutter usable
+                        // again while the guide is still stood down.
+                        analysisPauseGate.resume(pauseToken)
                         capturing = false
                     }
                 }

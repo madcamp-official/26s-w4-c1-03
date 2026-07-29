@@ -10,6 +10,9 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import com.gamdo.app.BuildConfig
+import com.gamdo.app.camera.CapturePhase
+import com.gamdo.app.camera.CaptureTrace
 import com.gamdo.app.camera.rotated
 import com.gamdo.app.core.Ulid
 import com.gamdo.app.data.local.CaptureEditStackDao
@@ -20,7 +23,10 @@ import com.gamdo.app.data.local.entity.EditResultsLocal
 import com.gamdo.app.data.local.entity.Captures
 import com.gamdo.app.edit.EditStep
 import com.gamdo.app.edit.EditStepType
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -31,11 +37,72 @@ enum class CaptureSource(val value: String) {
     GALLERY_IMPORT("gallery_import"),
 }
 
+/**
+ * Where a saved photo's gallery copy actually is, as of the moment the value was
+ * read.
+ *
+ * **Deliberately not a `Boolean`.** Once the MediaStore export stopped happening
+ * before [CaptureRepository.saveCameraCapture] returns, `false` would have had to
+ * mean both "we tried and the insert was refused" and "it has not run yet" — and
+ * a flag that means two things is precisely how W2-2 happened, when the app said
+ * `갤러리에 저장됨` about a file that was not there. Naming the four cases is what
+ * makes the wrong claim unwritable rather than merely unwritten.
+ *
+ * `GalleryExportTest` pins the one invariant: exactly one of these counts as being
+ * in the user's gallery.
+ */
+enum class GalleryExport {
+    /** Queued and not finished. The app has the photo; the gallery does not, yet. */
+    PENDING,
+
+    /** MediaStore row created and the bytes written. The only state that counts. */
+    DONE,
+
+    /** Attempted and refused. The app-private copy is all there is. */
+    REFUSED,
+
+    /**
+     * No export was asked for — an import, whose photo was already in the user's
+     * gallery before this app ever saw it. Distinct from [REFUSED]: nothing failed.
+     */
+    NOT_REQUESTED,
+    ;
+
+    /** The only state that may be described to the user as being in their gallery. */
+    val isInGallery: Boolean get() = this == DONE
+
+    /** Whether an answer is still coming. [REFUSED] and [NOT_REQUESTED] are final. */
+    val isPending: Boolean get() = this == PENDING
+
+    /** `captures.saved_to_gallery`, which is a claim and so follows [isInGallery]. */
+    val savedToGalleryColumn: Int get() = if (isInGallery) 1 else 0
+
+    /**
+     * Records the outcome of a [PENDING] export.
+     *
+     * A settled export stays settled. The deferred export runs on a scope that
+     * outlives the screen that started it, so a duplicate or late completion is
+     * reachable; it must not be able to downgrade a real gallery copy to [REFUSED]
+     * or to claim one that was refused.
+     */
+    fun settle(succeeded: Boolean): GalleryExport = when {
+        this != PENDING -> this
+        succeeded -> DONE
+        else -> REFUSED
+    }
+}
+
 data class SavedCapture(
     val id: String,
     val filePath: String,
     val source: String,
-    val savedToGallery: Boolean,
+    /**
+     * The gallery state **at the moment this value was produced**, which for a
+     * camera capture is always [GalleryExport.PENDING]: the export is queued and
+     * the function returned without waiting for it. Read it as "so far", never as
+     * a final answer.
+     */
+    val gallery: GalleryExport,
 )
 
 /** Result of writing an edited derivative. [filePath] is never the original. */
@@ -139,33 +206,120 @@ class CaptureRepository(
     private val editResultsDao: EditResultsLocalDao? = null,
     // p1: saveEditedResult (D8-6 guard) / markSavedToGallery, via the Room-free seam
     private val editStackRecorder: EditStackRecorder? = null,
+    /**
+     * Where the deferred gallery export runs.
+     *
+     * Owned here rather than injected from `AppContainer` because of what it has
+     * to outlive: the export is started by the camera screen and must survive that
+     * screen being left, which every screen-scoped or caller-scoped context by
+     * definition does not. This repository is process-scoped, so a scope it owns
+     * is too. Injectable so a test can supply a scope it controls.
+     *
+     * [SupervisorJob] so one refused MediaStore insert cannot cancel the next
+     * capture's export.
+     */
+    private val exportScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) {
     private val appContext = context.applicationContext
 
     /**
-     * Saves a camera capture: private original, gallery copy, `captures` row.
+     * Saves a camera capture: private original, `captures` row, and a gallery copy
+     * **that the caller does not wait for**.
+     *
      * Orientation is already baked into the bitmap pixels.
+     *
+     * ## Why the export is not on this path
+     *
+     * The export is a second full write of the same 3-5MB — through a
+     * ContentProvider, followed by clearing `IS_PENDING`, which triggers the media
+     * scan — and the user was waiting for all of it before the shutter was ready
+     * again.
+     *
+     * **It is worth less than it looks.** Measured on SM-G970N (2026-07-29, 23
+     * captures): the export is 79-165ms, not the several hundred it was assumed to
+     * be. Removing it from the wait is right — the user should not wait for a copy
+     * they did not ask for — but it is not the reason the shutter feels slow. That
+     * is `CapturePhase.DECODE` at 462-939ms, which this change does not touch.
+     *
+     * ## What is claimed, and when
+     *
+     * The row is inserted with `saved_to_gallery = 0`, because at that instant the
+     * photo is not in the gallery. It is set to 1 by [exportInBackground] if and
+     * when the insert really succeeds. There is no moment at which the database
+     * says the photo is somewhere it is not — which is the W2-2 rule, applied to
+     * a claim made in a column instead of in a label.
+     *
+     * The camera screen says nothing on a successful shutter and still says
+     * nothing; this change adds no message, so there is no new claim to be wrong.
+     * The residual risk is honest and worth naming: if the process is killed in
+     * the ~100ms after this returns, the photo stays in app storage and in the
+     * album, and never reaches the system gallery, with `saved_to_gallery = 0`
+     * correctly recording that. Nothing retries it.
+     *
+     * @param trace debug instrumentation; null in release builds. Marked here for
+     *   [CapturePhase.ENCODE], [CapturePhase.APP_FILE] and [CapturePhase.ROW].
      */
     suspend fun saveCameraCapture(
         bitmap: Bitmap,
         snapshot: CaptureSnapshot = CaptureSnapshot(),
         exportToGallery: Boolean = true,
+        trace: CaptureTrace? = null,
     ): SavedCapture = withContext(Dispatchers.IO) {
         val id = newCaptureId()
         val bytes = bitmap.toJpegBytes()
+        trace?.mark(CapturePhase.ENCODE)
         val file = writeOriginal(id, bytes)
+        trace?.mark(CapturePhase.APP_FILE)
 
-        val exported = exportToGallery && runCatching { exportToGallery(bytes, file.name) }
-            .onFailure { Log.w(TAG, "Gallery export failed (kept local copy)", it) }
-            .isSuccess
-
-        insertCapture(
+        val saved = insertCapture(
             id = id,
             file = file,
             source = CaptureSource.CAMERA_MANUAL,
             snapshot = snapshot,
-            savedToGallery = exported,
+            // Queued, not finished — and never `DONE` here, because nothing has
+            // been exported at the point this row is written.
+            gallery = if (exportToGallery) GalleryExport.PENDING else GalleryExport.NOT_REQUESTED,
         )
+        trace?.mark(CapturePhase.ROW)
+
+        // **After** the insert, never before: the export's only job besides writing
+        // bytes is to UPDATE this row, and launching it first would race the INSERT
+        // that creates it.
+        if (exportToGallery) exportInBackground(id, bytes, file.name)
+        saved
+    }
+
+    /**
+     * The gallery copy, off the shutter path.
+     *
+     * Runs on [exportScope] so leaving the camera screen — which cancels the
+     * coroutine that called [saveCameraCapture] — cannot cancel it. Failure is
+     * logged and recorded as `saved_to_gallery = 0`, exactly as the inline version
+     * did; the only thing that changed is who is waiting.
+     */
+    private fun exportInBackground(captureId: String, bytes: ByteArray, displayName: String) {
+        exportScope.launch {
+            val startNs = System.nanoTime()
+            val outcome = GalleryExport.PENDING.settle(
+                succeeded = runCatching { exportToGallery(bytes, displayName) }
+                    .onFailure { Log.w(TAG, "Gallery export failed (kept local copy)", it) }
+                    .isSuccess,
+            )
+            if (outcome.isInGallery) {
+                // Only DONE writes the 1. The column follows `isInGallery`, not the
+                // fact that an attempt happened.
+                runCatching { markSavedToGallery(captureId, saved = true) }
+                    .onFailure { Log.w(TAG, "saved_to_gallery update failed for $captureId", it) }
+            }
+            if (BuildConfig.DEBUG) Log.d(
+                LATENCY_TAG,
+                "galleryExport=%dms state=%s id=%s".format(
+                    (System.nanoTime() - startNs) / 1_000_000L,
+                    outcome,
+                    captureId,
+                ),
+            )
+        }
     }
 
     /**
@@ -203,7 +357,9 @@ class CaptureRepository(
             file = file,
             source = CaptureSource.GALLERY_IMPORT,
             snapshot = snapshot,
-            savedToGallery = false,
+            // Not a failure: no export was asked for. The photo was in the user's
+            // gallery before this app saw it, and this import did not put it there.
+            gallery = GalleryExport.NOT_REQUESTED,
         )
     }
 
@@ -277,7 +433,7 @@ class CaptureRepository(
         file: File,
         source: CaptureSource,
         snapshot: CaptureSnapshot,
-        savedToGallery: Boolean,
+        gallery: GalleryExport,
     ): SavedCapture {
         capturesDao.insert(
             Captures(
@@ -288,7 +444,10 @@ class CaptureRepository(
                 analysisJson = snapshot.analysisJson,
                 conditionsJson = snapshot.conditionsJson,
                 problemsJson = snapshot.problemsJson,
-                savedToGallery = if (savedToGallery) 1 else 0,
+                // The column is a claim, so it is derived from the state rather
+                // than passed in alongside it — there is no call site that can set
+                // one and mean the other.
+                savedToGallery = gallery.savedToGalleryColumn,
                 createdAt = System.currentTimeMillis(),
             ),
         )
@@ -296,7 +455,7 @@ class CaptureRepository(
             id = id,
             filePath = file.absolutePath,
             source = source.value,
-            savedToGallery = savedToGallery,
+            gallery = gallery,
         )
     }
 
@@ -514,6 +673,15 @@ class CaptureRepository(
         const val GALLERY_BUCKET_NAME = "감도"
 
         internal const val TAG = "CaptureRepository"
+
+        /**
+         * Shared with `ui/camera/CameraScreen`, so one `grep CaptureLatency` reads
+         * a whole capture — the synchronous breakdown and the export that is no
+         * longer part of it — in timestamp order. Same convention as
+         * `CameraStartup`, which spans two files for the same reason.
+         */
+        internal const val LATENCY_TAG = "CaptureLatency"
+
         internal const val JPEG_QUALITY = 95
     }
 }

@@ -7,7 +7,7 @@ package com.gamdo.app.ui.camera
  * ## The two spaces
  *
  * `CameraController` mirrors the front lens into both the preview and the saved
- * pixels (`bitmap.mirroredHorizontally()`), but the detector sees the raw,
+ * pixels (`CaptureGeometry.mirror`), but the detector sees the raw,
  * unmirrored sensor frame. So there are two normalized spaces on screen, and they
  * differ by a horizontal flip only when the front lens is active:
  *
