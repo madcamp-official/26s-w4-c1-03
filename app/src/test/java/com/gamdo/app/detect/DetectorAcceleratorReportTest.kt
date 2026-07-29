@@ -10,13 +10,16 @@ import org.junit.Test
 /**
  * Pins that a GPU→CPU downgrade of the object detector is **stated**, not inferred.
  *
- * `preferGpu` is true by default and true in `guide_config.json`, and on device the
- * app never gets GPU: the capture around detector init shows only
- * `"Created TensorFlow Lite XNNPACK delegate for CPU."` — XNNPACK being the CPU
- * path — and never the GPU counterpart, `"Created TensorFlow Lite delegate for
- * GPU."`, which is a string present in the shipped
- * `libmediapipe_tasks_vision_jni.so` and would therefore have printed had GPU
- * initialised.
+ * `preferGpu` is true by default and true in `guide_config.json`, and on SM-G970N
+ * the app ends up on the CPU anyway.
+ *
+ * This KDoc used to add "because GPU initialisation fails", arguing from the absence
+ * of `"Created TensorFlow Lite delegate for GPU."` in logcat. **Disproven,
+ * 2026-07-29.** Once the record these tests cover actually printed, it read
+ * `accelerator=GPU requested=GPU degraded=false`: initialisation succeeds and the
+ * *first inference* fails, with `[GL_INVALID_VALUE]: glMapBufferRange`. The absent
+ * log line was never evidence. `GpuUpgradePolicyTest` covers what that distinction
+ * changed.
  *
  * The delegate loop used to swallow that: the GPU throwable went into a local
  * `lastFailure` that the subsequent CPU success discarded, and the winning
@@ -197,7 +200,7 @@ class DetectorAcceleratorReportTest {
         assertTrue(
             "a refused GPU delegate must be logged where it happens — the old loop " +
                 "kept it in a local that the following CPU success discarded",
-            Regex("""Log\.w\(\s*TAG,\s*"GPU delegate refused""").containsMatchIn(code),
+            Regex("""Log\.w\(\s*TAG,\s*"gpuUpgrade refused""").containsMatchIn(code),
         )
     }
 }

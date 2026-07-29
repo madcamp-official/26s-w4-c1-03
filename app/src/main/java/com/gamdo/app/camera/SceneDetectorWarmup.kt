@@ -262,25 +262,30 @@ object SceneDetectorWarmup {
  *
  * They are what identified the cost, and the answer is lopsided enough to name
  * precisely. `object` is `ms(t2, t3)`, which brackets exactly one thing —
- * [EfficientDetSceneDetector]'s constructor, i.e. the 4.5MB
- * `efficientdet_lite0_coco_int8.tflite` load through MediaPipe Tasks. Cold start
- * on SM-G970N, battery at 24.2°C so not thermally throttled:
+ * [EfficientDetSceneDetector]'s constructor. Cold start on SM-G970N, battery at
+ * 24.2°C so not thermally throttled:
  *
  * ```
  * detectorBuild face=24 pose=17 object=7933 seg=18 total=7992ms
  * ```
  *
- * **99.3% of the build is that one TFLite construction.** The three ML Kit
- * clients cost 59ms between them. Read the stage names carefully before
- * optimizing anything here: `pose` is ML Kit Pose at 17ms and is not the problem,
- * and "the MediaPipe model" means the object detector, not that one.
+ * **99.3% of the build was that one construction.** The three ML Kit clients cost
+ * 59ms between them. Read the stage names carefully before optimizing anything
+ * here: `pose` is ML Kit Pose at 17ms and is not the problem, and "the MediaPipe
+ * model" means the object detector, not that one.
  *
- * Note also what the bracket *includes*: `EfficientDetSceneDetector` tries the GPU
- * delegate before the CPU one, and on this device the GPU attempt is known to fail
- * (see that class's own note — only the XNNPACK CPU line ever appears). So an
- * unknown share of the 7933ms is a delegate that was never going to work. The two
- * are already separable from logs that exist: the `EfficientDet` tag warns at the
- * moment GPU is refused and logs the accelerator report when CPU succeeds.
+ * ## What that 7.9s actually was (2026-07-29)
+ *
+ * Not the 4.5MB `efficientdet_lite0_coco_int8.tflite` load, which is the obvious
+ * suspect and the wrong one. Forcing CPU-only in an isolated worktree, cold process,
+ * twice: `object=281ms / 228ms`, `total=376ms / 313ms` — same asset, same cold page
+ * cache. **The 7.5s was GPU delegate compilation**, for a delegate that then failed
+ * its first inference on this device.
+ *
+ * `EfficientDetSceneDetector` therefore builds on CPU first and pursues the GPU on
+ * a thread of its own, so this bracket should now read `object≈250ms` on every
+ * device. The GPU attempt is no longer inside it; grep the `EfficientDet` tag for
+ * `gpuUpgrade=` to see where it went.
  */
 private fun buildSceneDetector(context: Context, guideConfig: GuideConfigBundle): SceneDetector {
     val t0 = System.nanoTime()
