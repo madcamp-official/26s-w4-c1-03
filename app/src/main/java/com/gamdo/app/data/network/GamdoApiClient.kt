@@ -172,6 +172,34 @@ class GamdoApiException(
     cause: Throwable,
 ) : Exception("HTTP $httpCode ${envelope.code}: ${envelope.message}", cause)
 
+/**
+ * The multipart content type for an image upload, from its file name.
+ *
+ * Every part used to go out as `application/octet-stream`. `gamdo-server`'s
+ * `routes/references.py:21` and `routes/rescue.py:28` accept only
+ * `{image/jpeg, image/png, image/webp}` and answer anything else with a
+ * **non-retryable 415** — which the app surfaces as "이 사진은 사용할 수 없어요",
+ * blaming the user's photo for a header we got wrong.
+ *
+ * It has not bitten yet only because the deployed CAMP-2 build predates those
+ * checks; AI 2 was verified end to end against it on 2026-07-29. It becomes a
+ * live break the moment the server is redeployed at current `main`, which is
+ * exactly what we are asking for so `/rescue/analyze` and the O-9 GPS strip go
+ * live. `routes/edit_jobs.py` has no such check, so generation was never
+ * affected — which is why the gap stayed invisible.
+ *
+ * Unknown extensions fall back to JPEG rather than to a byte stream: every upload
+ * path runs through `ReferenceImagePreprocessor` or `CaptureRepository` first and
+ * both write JPEG, so the default states what is actually in the file instead of
+ * refusing to answer.
+ */
+internal fun imageMediaTypeFor(fileName: String): String =
+    when (fileName.substringAfterLast('.', "").lowercase()) {
+        "png" -> "image/png"
+        "webp" -> "image/webp"
+        else -> "image/jpeg"
+    }
+
 /** Public app-facing client; API details stay out of Compose screens. */
 class GamdoApiClient(
     baseUrl: String,
@@ -243,7 +271,7 @@ class GamdoApiClient(
         }
 
     private fun imagePart(image: File): MultipartBody.Part {
-        val body = image.asRequestBody("application/octet-stream".toMediaType())
+        val body = image.asRequestBody(imageMediaTypeFor(image.name).toMediaType())
         return MultipartBody.Part.createFormData("image", image.name, body)
     }
 
