@@ -24,6 +24,10 @@ async def analyze_rescue_route(
     capture_ref: str = Form("", alias="captureRef"),
     style_params: str = Form("{}", alias="styleParams"),
     reference_composition: str = Form("{}", alias="referenceComposition"),
+    profile_version: int = Form(1, alias="profileVersion"),
+    scene_context: str = Form("GENERAL", alias="sceneContext"),
+    gamdo_policy: str = Form("{}", alias="gamdoPolicy"),
+    reinterpretation_level: str = Form("GAMDO", alias="reinterpretationLevel"),
 ) -> dict:
     if image.content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(status_code=415, detail={
@@ -46,9 +50,15 @@ async def analyze_rescue_route(
             decoded.verify()
         parsed_style = json.loads(style_params)
         parsed_reference = json.loads(reference_composition)
-        if not isinstance(parsed_style, dict) or not isinstance(parsed_reference, dict):
+        parsed_policy = json.loads(gamdo_policy)
+        if not isinstance(parsed_style, dict) or not isinstance(parsed_reference, dict) or not isinstance(parsed_policy, dict):
             raise ValueError("object expected")
-        return analyze_rescue(payload, capture_ref, parsed_style, parsed_reference)
+        # Keep the legacy four-argument invocation intact for existing route
+        # instrumentation while only passing the additive V2 context when it
+        # was actually supplied by a newer client.
+        if profile_version == 1 and scene_context == "GENERAL" and not parsed_policy and reinterpretation_level.upper() == "GAMDO":
+            return analyze_rescue(payload, capture_ref, parsed_style, parsed_reference)
+        return analyze_rescue(payload, capture_ref, parsed_style, parsed_reference, profile_version=profile_version, scene_context=scene_context, gamdo_policy=parsed_policy, reinterpretation_level=reinterpretation_level)
     except (DecompressionBombError, UnidentifiedImageError, OSError) as exc:
         raise HTTPException(status_code=415, detail={
             "code": "unsupported_image",
@@ -58,7 +68,7 @@ async def analyze_rescue_route(
     except (ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=422, detail={
             "code": "invalid_rescue_parameters",
-            "message": "styleParams and referenceComposition must be JSON objects",
+            "message": "styleParams, referenceComposition and gamdoPolicy must be JSON objects",
             "retryable": False,
         }) from exc
     except Exception as exc:
