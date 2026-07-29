@@ -77,6 +77,19 @@ def test_generation_capabilities_follow_deployment_readiness(monkeypatch: pytest
     assert result["capabilities"]["viewpoint"] is False
 
 
+def test_remove_objects_capability_does_not_depend_on_scene_masks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    workflow = tmp_path / "lama.json"
+    workflow.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("GAMDO_COMFYUI_URL", "http://127.0.0.1:8188")
+    monkeypatch.setenv("GAMDO_COMFYUI_WORKFLOW", str(workflow))
+
+    result = analyze_rescue(_jpeg_bytes(_upright_image()))
+
+    assert result["capabilities"]["removeObjects"] is True
+
+
 def test_backlight_diagnostic_detects_bright_border_and_dark_subject() -> None:
     image = Image.new("RGB", (200, 200), "white")
     for y in range(45, 170):

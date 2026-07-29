@@ -77,8 +77,6 @@ def analyze_rescue(
 
     # Object removal remains available from Direct edit, but is deliberately
     # not a primary recommendation after AI3's composition-first product change.
-    masks = _removal_masks(subjects)
-
     return {
         "analysisVersion": ANALYSIS_VERSION,
         "captureRef": capture_ref,
@@ -86,7 +84,7 @@ def analyze_rescue(
         "analysis": analysis.get("analysis", {}),
         "recommendations": recommendations[:3],
         "diagnostics": {"lighting": lighting},
-        "capabilities": {**capabilities, "removeObjects": capabilities["removeObjects"] and bool(masks)},
+        "capabilities": capabilities,
     }
 
 
