@@ -143,4 +143,10 @@ class AppContainer(context: Context) {
         cacheDir = File(appContext.cacheDir, "shoot-sessions"),
         json = json,
     )
+
+    /** The adaptive-card flow can offer this explicit multi-photo refinement action. */
+    val profileRefinementRepository: ProfileRefinementRepository = ProfileRefinementRepository(
+        references = referenceRepository,
+        profiles = profileRepository,
+    )
 }
