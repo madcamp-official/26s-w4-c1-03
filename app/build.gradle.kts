@@ -15,7 +15,7 @@ android {
         // USB/tunnel builds can override this with
         // -PgamdoApiBaseUrl=http://127.0.0.1:18000/api/v1/
         // Emulator builds can use -PgamdoApiBaseUrl=http://10.0.2.2:8000/api/v1/.
-        .orElse("http://172.10.5.176:8000/api/v1/")
+        .orElse("https://api.anjonghwa.madcamp-kaist.org/api/v1/")
         .get()
         .replace("\\", "\\\\")
         .replace("\"", "\\\"")
