@@ -89,6 +89,9 @@ class AppContainer(context: Context) {
 
     val settingsRepository: SettingsRepository = SettingsRepository(database.appSettingsDao())
 
+    /** Stable AI 2 result-filter catalogue; P1 consumes this instead of render-local list state. */
+    val resultFilterStateHolder: ResultFilterStateHolder = ResultFilterStateHolder()
+
     // §3-3 KPI. Referenced by CaptureRepository's KDoc since Day 1 but never built,
     // which is why `sessions` and `session_guides` both read 0 rows on device.
     val guideKpiRepository: GuideKpiRepository = GuideKpiRepository(

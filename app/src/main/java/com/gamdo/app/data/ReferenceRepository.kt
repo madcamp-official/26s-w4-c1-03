@@ -13,6 +13,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -98,6 +101,8 @@ class ReferenceRepository(
     private val sanitizer: ReferenceImageSanitizer = ReferenceImageSanitizer(ExifSanitizer::sanitizeFile),
     private val preprocessor: ReferenceImagePreprocessor = ReferenceImagePreprocessor { },
 ) {
+    private val _activeReferenceStyle = MutableStateFlow<ResolvedStyle?>(null)
+    val activeReferenceStyle: StateFlow<ResolvedStyle?> = _activeReferenceStyle.asStateFlow()
 
     suspend fun activate(
         settings: SettingsRepository,
@@ -117,7 +122,7 @@ class ReferenceRepository(
             colorTarget = resolution.colorTarget,
             scope = scope,
             strength = strength,
-        )
+        ).also { _activeReferenceStyle.value = it }
     }
 
     suspend fun cleanupCache(activeHash: String? = null) {
@@ -129,11 +134,23 @@ class ReferenceRepository(
 
     suspend fun active(settings: SettingsRepository): ReferenceResolution? {
         val hash = settings.getActiveReferenceHash() ?: return null
-        return cachedReferencesDao.get(hash)?.toResolution(json, fromCache = true)
+        return cachedReferencesDao.get(hash)?.toResolution(json, fromCache = true)?.also { resolution ->
+            val scope = runCatching {
+                ResolvedStyle.ReferenceScope.valueOf(settings.getActiveReferenceScope().uppercase())
+            }.getOrDefault(ResolvedStyle.ReferenceScope.BOTH)
+            _activeReferenceStyle.value = ResolvedStyle.fromReference(
+                hash = resolution.contentHash,
+                target = resolution.targetComposition,
+                colorTarget = resolution.colorTarget,
+                scope = scope,
+                strength = settings.getActiveReferenceStrength(),
+            )
+        }
     }
 
     suspend fun clearActive(settings: SettingsRepository) {
         settings.clearActiveReference()
+        _activeReferenceStyle.value = null
         cleanupCache()
     }
 
