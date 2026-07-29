@@ -26,6 +26,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -47,7 +48,9 @@ import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.local.entity.Captures
 import com.gamdo.app.data.SavedEdit
+import com.gamdo.app.data.network.RescueAnalysisResponse
 import com.gamdo.app.data.preset.ResolvedStyle
+import com.gamdo.app.data.rescue.RescueState
 import com.gamdo.app.edit.CaptureConditions
 import com.gamdo.app.edit.EditPlan
 import com.gamdo.app.edit.EditSourceLoader
@@ -66,6 +69,17 @@ import com.gamdo.app.ui.reference.CreateReferenceThumb
 import com.gamdo.app.ui.reference.MyReferenceThumb
 import com.gamdo.app.ui.reference.StripEntry
 import com.gamdo.app.ui.reference.buildFilterStrip
+import com.gamdo.app.ui.rescue.GenerativeBadge
+import com.gamdo.app.ui.rescue.RescueCandidate
+import com.gamdo.app.ui.rescue.RescueLocalResult
+import com.gamdo.app.ui.rescue.RescueSheet
+import com.gamdo.app.ui.rescue.canSubmit
+import com.gamdo.app.ui.rescue.referenceCompositionJson
+import com.gamdo.app.ui.rescue.rescueCandidates
+import com.gamdo.app.ui.rescue.retainedCandidateId
+import com.gamdo.app.ui.rescue.retainedRecommendations
+import com.gamdo.app.ui.rescue.retainedRunningOperation
+import com.gamdo.app.ui.rescue.styleParamsJson
 import com.gamdo.app.ui.theme.Charcoal700
 import com.gamdo.app.ui.theme.Charcoal900
 import com.gamdo.app.ui.theme.Charcoal950
@@ -76,8 +90,11 @@ import com.gamdo.app.ui.theme.OnSage
 import com.gamdo.app.ui.theme.Sage
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
 
 private const val TAG = "ResultScreen"
 
@@ -133,8 +150,12 @@ private sealed interface SelectedStripFilter {
  * @param onCreateReference O-10's leading `+` — opens the same picker/flow as
  *   the camera screen's.
  * @param onDeleteReference the reference slot's `×` badge (삭제).
- * @param onOpenAiRestore O-10's `AI로 보정` slot, immediately right of `+`. Wired
- *   to nothing here by explicit instruction — this is AI 3's landing point.
+ *
+ * O-10's `AI로 보정` slot (AI 3 / 사진 살리기) is wired **inside** this screen rather
+ * than handed out as a callback: unlike AI 2, whose flow starts from either camera or
+ * result and therefore lives at the nav host, AI 3 exists only here and every input it
+ * needs — the capture, its file on disk, the active style — is already this screen's.
+ * See [RescueSheet] and `docs/AI3_사진살리기_통합계약_2026-07-28.md`'s "P1 연결 계약".
  */
 @Composable
 fun ResultScreen(
@@ -145,13 +166,68 @@ fun ResultScreen(
     activeReferenceImageUri: Uri? = null,
     onCreateReference: () -> Unit = {},
     onDeleteReference: () -> Unit = {},
-    onOpenAiRestore: () -> Unit = {},
 ) {
     val capture by produceState<Captures?>(initialValue = null, captureId, container) {
         value = withContext(Dispatchers.IO) {
             container.database.capturesDao().get(captureId)
         }
     }
+    // ---- AI 3 (사진 살리기) --------------------------------------------------
+    //
+    // The controller is the single source of truth for the flow (integration
+    // contract: "P1은 화면·디자인을 소유한다. 다음 호출만 연결하면 된다"). Everything
+    // below is either a call into it, or a *derived* value that cannot outlive the
+    // state that justifies it — see `RescueFlowDecisions.kt`'s retention rules.
+    val rescueController = container.rescueController
+    val rescueState by rescueController.state.collectAsState()
+    // Whether the sheet is open. `Idle` alone cannot say — it means both "closed"
+    // and "open, before anything has been sent".
+    var rescueOpened by remember { mutableStateOf(false) }
+    // The in-flight analyze/submit call, so 취소 can actually cancel it.
+    var rescueJob by remember { mutableStateOf<Job?>(null) }
+    var rescueResponse by remember { mutableStateOf<RescueAnalysisResponse?>(null) }
+    var rescueRunningOperation by remember { mutableStateOf<JsonObject?>(null) }
+    var pickedCandidateId by remember { mutableStateOf<String?>(null) }
+    // The controller is an application-scoped singleton, so it can still be holding
+    // *another* capture's Candidates when this screen opens. Without this, opening
+    // photo B would show photo A's results and picking one would put A's generated
+    // file into B's editor.
+    LaunchedEffect(captureId) {
+        rescueOpened = false
+        rescueController.reset()
+    }
+    // One place where every retained value is re-derived from the controller state.
+    // Anything set when the flow starts is dropped by the same rule that governs a
+    // flow ending in success, in failure, or in a cancel — there is no per-path
+    // cleanup to forget.
+    LaunchedEffect(rescueState) {
+        rescueResponse = retainedRecommendations(rescueState, rescueResponse)
+        rescueRunningOperation = retainedRunningOperation(rescueState, rescueRunningOperation)
+        pickedCandidateId = retainedCandidateId(rescueState, pickedCandidateId)
+    }
+    // What the job downloaded, read back from `edit_results_local` rather than from
+    // the response: the response's `url` points at the server, the row's `file_path`
+    // is the copy that actually landed in app storage.
+    val candidates by produceState(initialValue = emptyList<RescueCandidate>(), rescueState) {
+        val done = rescueState as? RescueState.Candidates
+        value = if (done == null) {
+            emptyList()
+        } else {
+            withContext(Dispatchers.IO) {
+                val rows = runCatching {
+                    container.database.editResultsLocalDao().forJob(done.jobId).map { row ->
+                        RescueLocalResult(resultId = row.id, filePath = row.filePath, rank = row.rank)
+                    }
+                }.getOrElse {
+                    Log.w(TAG, "could not read the downloaded results for ${done.jobId}", it)
+                    emptyList()
+                }
+                rescueCandidates(done.results, rows)
+            }
+        }
+    }
+    val pickedCandidate = candidates.firstOrNull { it.resultId == pickedCandidateId }
+
     // §5-2 결과 화면의 `내 레퍼런스` 색감 항목. A reference is not a `LocalFilter`
     // (see [SelectedStripFilter]'s KDoc), so which strip item is active has to be
     // known *before* `corrected` below — selecting it changes which pass produces
@@ -164,6 +240,18 @@ fun ResultScreen(
         value = LocalFilter.forPresetId(container.settingsRepository.getStylePresetId())
     }
     LaunchedEffect(preferredFilter) { selectedStrip = SelectedStripFilter.Preset(preferredFilter) }
+    /*
+     * The file the editor reads. A picked AI 3 candidate stands in for the original
+     * **as an input only** — the original on disk is never written to (contract:
+     * 원본 덮어쓰기 금지), and the save path still produces a new file through
+     * `CaptureRepository.saveEditedCapture`.
+     *
+     * It is derived from [pickedCandidate], which is itself derived from the
+     * controller state, so there is no way to be left rendering a generated file
+     * after the job that produced it is gone.
+     */
+    val editSourcePath: String? = pickedCandidate?.filePath ?: capture?.filePath
+
     // §4-1 기하·광학 자동 보정 (O-2): levelling rotation + auto exposure, applied
     // when the photo opens, with **no visible control**.
     //
@@ -183,8 +271,16 @@ fun ResultScreen(
     // "ColorTarget → ColorParams → LocalEditor" seam the integration contract
     // names — rather than through `QuickFilterEditor`/`PhotoFilter` like every
     // preset. Deselecting it re-runs the plain geometry+optical pass again.
-    val corrected by produceState<AutoCorrected?>(initialValue = null, capture?.filePath, selectedStrip, activeReferenceStyle) {
+    //
+    // Keyed on [editSourcePath] rather than the capture's own path: picking an AI 3
+    // candidate swaps which file this pass reads, and the levelling/exposure plan is
+    // then recomputed from *that* bitmap. The generated file was produced from the
+    // untouched original upload, so it arrives un-levelled and needs the same
+    // correction; re-planning from its own dimensions is also what keeps the crop
+    // right when the operation changed them (outpaint).
+    val corrected by produceState<AutoCorrected?>(initialValue = null, editSourcePath, selectedStrip, activeReferenceStyle) {
         val captureValue = capture ?: return@produceState
+        val sourcePath = editSourcePath ?: return@produceState
         val isReferenceSelected = selectedStrip is SelectedStripFilter.Reference
         // Decode off the composition thread so entering the editor never blocks
         // the first frame, and decode *small*.
@@ -196,7 +292,7 @@ fun ResultScreen(
         // show, on the interaction path. Saving still uses the full file; see the
         // save button below.
         value = withContext(Dispatchers.Default) {
-            val file = File(captureValue.filePath)
+            val file = File(sourcePath)
             val preview = EditSourceLoader.decode(file, EDITOR_DECODE_MAX_SIDE)
                 ?: return@withContext null
             // Every failure below falls back to the untouched decode. An
@@ -321,6 +417,9 @@ fun ResultScreen(
         )
     }
 
+    // The AI 3 sheet overlays the whole screen, so the editor becomes one child of a
+    // Box rather than the root. Nothing about the editor's own layout changes.
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(modifier = Modifier.fillMaxSize().background(Charcoal900)) {
         // 2f header: `‹` (18sp, OnDarkMedium) · `보정` (15sp bold) · `완료`
         // (13.5sp bold, Sage), space-between at 20dp / 14dp top.
@@ -377,19 +476,28 @@ fun ResultScreen(
                 Text("사진을 불러오는 중이에요", color = OnDarkMuted, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center))
             }
 
-            Box(
-                modifier = Modifier.padding(12.dp).clip(RoundedCornerShape(5.dp))
-                    .background(Sage).padding(horizontal = 8.dp, vertical = 3.dp),
+            Row(
+                modifier = Modifier.padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Text(
-                    text = when (val sel = selectedStrip) {
-                        is SelectedStripFilter.Preset -> sel.filter.label
-                        SelectedStripFilter.Reference -> "내 레퍼런스"
-                    },
-                    color = OnSage,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                Box(
+                    modifier = Modifier.clip(RoundedCornerShape(5.dp))
+                        .background(Sage).padding(horizontal = 8.dp, vertical = 3.dp),
+                ) {
+                    Text(
+                        text = when (val sel = selectedStrip) {
+                            is SelectedStripFilter.Preset -> sel.filter.label
+                            SelectedStripFilter.Reference -> "내 레퍼런스"
+                        },
+                        color = OnSage,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                // §5-3 "**'AI 생성 보완' 뱃지** 표시". It rides on the photo itself, not
+                // only on the picker tile, so a generated photo can never be on this
+                // screen — or be saved from it — without saying so.
+                if (pickedCandidate != null) GenerativeBadge()
             }
         }
 
@@ -418,10 +526,13 @@ fun ResultScreen(
                         size = 58.dp,
                         onClick = onCreateReference,
                     )
+                    // O-10's AI 3 entry point, and the only one. Opening the sheet
+                    // sends nothing anywhere — `analyze()` is one deliberate tap
+                    // further in (RescueSheet's INTRO section).
                     is StripEntry.AiRestore -> AiRestoreThumb(
                         shape = RoundedCornerShape(11.dp),
                         size = 58.dp,
-                        onClick = onOpenAiRestore,
+                        onClick = { rescueOpened = true },
                     )
                     is StripEntry.Preset -> {
                         val filter = entry.value
@@ -503,10 +614,15 @@ fun ResultScreen(
                             // 갤러리에 저장됨. `renderForSave` has nowhere to put a
                             // preview, so the fallback cannot come back by accident.
                             val plan = corrected?.plan
+                            // The same file the preview rendered from — the original,
+                            // or the AI 3 candidate if one is picked. Reading
+                            // `captureValue.filePath` here would have saved the
+                            // original while the screen showed the generated result.
+                            val saveSource = File(editSourcePath ?: captureValue.filePath)
                             val rendered = withContext(Dispatchers.Default) {
                                 renderForSave(
                                     decodeFullResolution = {
-                                        EditSourceLoader.decode(File(captureValue.filePath), SAVE_MAX_SIDE)
+                                        EditSourceLoader.decode(saveSource, SAVE_MAX_SIDE)
                                     },
                                     // The **same** plan the preview used, only at save
                                     // resolution. Re-planning here from a larger decode
@@ -529,7 +645,7 @@ fun ResultScreen(
                                 // R7-1: what happened, in the words someone would use
                                 // about their own photo. The path and the resolution go
                                 // to the log, where they are useful.
-                                Log.w(TAG, "save refused: could not decode ${captureValue.filePath} at ${SAVE_MAX_SIDE}px")
+                                Log.w(TAG, "save refused: could not decode $saveSource at ${SAVE_MAX_SIDE}px")
                                 saveError = "원본 사진을 열지 못했어요. 저장하지 않았습니다"
                                 return@launch
                             }
@@ -564,6 +680,98 @@ fun ResultScreen(
                 },
             )
         }
+    }
+
+        // ---- AI 3 sheet -----------------------------------------------------
+        //
+        // Every callback below is one of the five calls the integration contract
+        // lists (`analyze` / `choose` / `submit` / `reset` + collecting `state`).
+        // Nothing here duplicates the controller's decisions.
+        //
+        // 취소 is a real cancel: the coroutine driving the controller is cancelled
+        // and **joined** before `reset()`. Without the join, `submit`'s own
+        // `runCatching { … }.onFailure { LocalFallback }` would land *after* the
+        // reset and strand the sheet on a fallback the user just cancelled out of.
+        val cancelRescue: () -> Unit = {
+            rescueOpened = false
+            scope.launch {
+                rescueJob?.cancelAndJoin()
+                rescueJob = null
+                // `pickedCandidateId` is not cleared here: `reset()` takes the
+                // controller to Idle, and `retainedCandidateId` drops the pick on the
+                // very next state emission. One rule, one place.
+                rescueController.reset()
+            }
+        }
+        // 기본 보정 유지 — the contract's other branch out of Candidates. Unlike a
+        // cancel, this is a *choice*, so it also un-records the variant.
+        val keepLocalResult: () -> Unit = {
+            rescueOpened = false
+            scope.launch {
+                rescueJob?.cancelAndJoin()
+                rescueJob = null
+                rescueController.reset()
+                runCatching { container.database.captureEditStackDao().setSelectedResult(captureId, null) }
+                    .onFailure { Log.w(TAG, "clearing selected_result_id failed", it) }
+            }
+        }
+        RescueSheet(
+            state = rescueState,
+            opened = rescueOpened,
+            recommendations = rescueResponse,
+            runningOperation = rescueRunningOperation,
+            candidates = candidates,
+            selectedCandidateId = pickedCandidateId,
+            // Closing on Candidates keeps the pick — there the pick *is* the
+            // success, and re-opening the strip slot returns to the same list.
+            // Every other section's close is an abandon, so it cancels and resets.
+            onDismiss = {
+                if (rescueState is RescueState.Candidates) rescueOpened = false else cancelRescue()
+            },
+            onAnalyze = {
+                val file = capture?.let { File(it.filePath) }
+                if (file == null) {
+                    Log.w(TAG, "rescue analyze skipped: capture $captureId is not loaded yet")
+                } else {
+                    rescueJob = scope.launch {
+                        rescueController.analyze(
+                            image = file,
+                            captureRef = captureId,
+                            style = styleParamsJson(activeReferenceStyle),
+                            reference = referenceCompositionJson(activeReferenceStyle),
+                        )
+                    }
+                }
+            },
+            onChoose = { operation -> rescueController.choose(operation) },
+            onRun = {
+                val captureValue = capture
+                val current = rescueState
+                // The upload gate, restated at the call site: only from `Editing`,
+                // and only for an operation that actually goes to the server.
+                if (captureValue != null && canSubmit(current) && current is RescueState.Editing) {
+                    rescueJob = scope.launch {
+                        rescueController.submit(
+                            image = File(captureValue.filePath),
+                            captureId = captureValue.id,
+                            captureRef = captureValue.id,
+                            operation = current.operation,
+                            style = styleParamsJson(activeReferenceStyle),
+                        )
+                    }
+                }
+            },
+            onKeepLocal = keepLocalResult,
+            onSelectCandidate = { candidate ->
+                pickedCandidateId = candidate.resultId
+                scope.launch {
+                    runCatching {
+                        container.database.captureEditStackDao()
+                            .setSelectedResult(captureId, candidate.resultId)
+                    }.onFailure { Log.w(TAG, "recording selected_result_id failed", it) }
+                }
+            },
+        )
     }
 }
 

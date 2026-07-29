@@ -6,6 +6,7 @@ import com.gamdo.app.BuildConfig
 import com.gamdo.app.core.DeviceIdStore
 import com.gamdo.app.core.AndroidReferenceImagePreprocessor
 import com.gamdo.app.data.local.GamdoDatabase
+import com.gamdo.app.data.media.DevicePhotoRepository
 import com.gamdo.app.data.network.GamdoApiClient
 import com.gamdo.app.data.rescue.RescueController
 import com.gamdo.app.data.rescue.RescueRepository
@@ -56,6 +57,9 @@ class AppContainer(context: Context) {
         .build()
 
     val deviceIdStore: DeviceIdStore = DeviceIdStore(appContext)
+
+    // W3.5-2: reads the device photo library directly for the album grid (O-11).
+    val devicePhotoRepository: DevicePhotoRepository = DevicePhotoRepository(appContext)
 
     val apiClient: GamdoApiClient = GamdoApiClient(
         baseUrl = BuildConfig.GAMDO_API_BASE_URL,
