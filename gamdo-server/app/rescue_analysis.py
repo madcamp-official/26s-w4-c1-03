@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import io
+import logging
 from typing import Any
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from .reference_analysis import get_reference_analyzer
 
 
 ANALYSIS_VERSION = 1
 MAX_REFERENCES = 4
+logger = logging.getLogger(__name__)
 
 
 def analyze_rescue(
@@ -25,6 +27,21 @@ def analyze_rescue(
     the primary subject, while the actual GPU operation remains explicit.
     """
     with Image.open(io.BytesIO(payload)) as image:
+        image.load()
+        # Same fix as reference_analysis.ReferenceAnalyzer.analyze: bake in
+        # EXIF Orientation before reading dimensions, so the width/height
+        # reported here agree with the (separately analyzed, separately
+        # transposed) composition/horizon fields below on what "up" means
+        # for this payload. Same try/except posture (O-8) as
+        # storage.save_exif_stripped_input: a malformed Orientation tag must
+        # not fail the rescue-analysis request.
+        try:
+            image = ImageOps.exif_transpose(image) or image
+        except Exception:
+            logger.warning(
+                "rescue_exif_orientation_transpose_failed; measuring pixels as decoded",
+                exc_info=True,
+            )
         width, height = image.size
     analysis = get_reference_analyzer().analyze(payload)
     subjects = list(analysis.get("analysis", {}).get("subjects", []))
