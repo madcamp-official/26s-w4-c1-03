@@ -37,10 +37,10 @@ class ViewCrafterBackend:
         self.dust3r = Path(os.getenv("GAMDO_DUST3R_CHECKPOINT", str(self.repository / "checkpoints/DUSt3R_ViTLarge_BaseDecoder_512_dpt.pth")))
         self.config = Path(os.getenv(
             "GAMDO_VIEWCRAFTER_CONFIG",
-            str(self.repository / "configs/inference_pvd_512.yaml"),
+            str(self.repository / "configs/inference_pvd_1024.yaml"),
         ))
-        self.height = int(os.getenv("GAMDO_VIEWCRAFTER_HEIGHT", "320"))
-        self.width = int(os.getenv("GAMDO_VIEWCRAFTER_WIDTH", "512"))
+        self.height = int(os.getenv("GAMDO_VIEWCRAFTER_HEIGHT", "576"))
+        self.width = int(os.getenv("GAMDO_VIEWCRAFTER_WIDTH", "1024"))
         self.video_length = int(os.getenv("GAMDO_VIEWCRAFTER_VIDEO_LENGTH", "16"))
         self._runtime_check: tuple[bool, str] | None = None
 
@@ -57,7 +57,7 @@ class ViewCrafterBackend:
         if self._runtime_check is None:
             try:
                 subprocess.run(
-                    [self.python, "-c", "import pytorch3d; import imageio; import pytorch_lightning"],
+                    [self.python, "-c", "import pytorch3d; import imageio; import pytorch_lightning; import xformers.ops"],
                     cwd=self.repository,
                     check=True,
                     timeout=30,
@@ -70,7 +70,7 @@ class ViewCrafterBackend:
         return self._runtime_check
 
     def generate(self, image: Path, operation: dict, output: Path, seed: int) -> None:
-        import imageio.v3 as iio
+        import imageio.v2 as iio
 
         motion = operation.get("motion", "dolly_out")
         trajectory = camera_trajectory_args(motion)
@@ -92,8 +92,12 @@ class ViewCrafterBackend:
             timeout = float(os.getenv("GAMDO_VIEWCRAFTER_TIMEOUT_SECONDS", "600"))
             subprocess.run(command, cwd=self.repository, check=True, timeout=timeout)
             video = work / name / "diffusion0.mp4"
-            frames = iio.imread(video, plugin="ffmpeg")
-            frame = frames[min(len(frames) - 1, max(1, round(len(frames) * 0.7)))]
+            reader = iio.get_reader(video, format="FFMPEG")
+            try:
+                frame_count = reader.count_frames()
+                frame = reader.get_data(min(frame_count - 1, max(1, round(frame_count * 0.7))))
+            finally:
+                reader.close()
             Image.fromarray(frame).resize(original_size, Image.Resampling.LANCZOS).save(output, "PNG")
 
 

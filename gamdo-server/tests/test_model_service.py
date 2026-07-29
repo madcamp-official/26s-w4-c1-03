@@ -103,7 +103,7 @@ def test_viewcrafter_rejects_unknown_camera_motion() -> None:
         camera_trajectory_args("orbit")
 
 
-def test_viewcrafter_defaults_to_camp2_safe_resolution(
+def test_viewcrafter_defaults_to_16_frame_checkpoint_resolution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     for key in ("GAMDO_VIEWCRAFTER_CONFIG", "GAMDO_VIEWCRAFTER_HEIGHT", "GAMDO_VIEWCRAFTER_WIDTH"):
@@ -111,5 +111,5 @@ def test_viewcrafter_defaults_to_camp2_safe_resolution(
 
     backend = ViewCrafterBackend()
 
-    assert backend.config.name == "inference_pvd_512.yaml"
-    assert (backend.width, backend.height) == (512, 320)
+    assert backend.config.name == "inference_pvd_1024.yaml"
+    assert (backend.width, backend.height) == (1024, 576)
