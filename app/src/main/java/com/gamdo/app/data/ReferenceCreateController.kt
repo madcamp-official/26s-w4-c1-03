@@ -43,10 +43,14 @@ class ReferenceCreateController(
 
     fun apply(scope: ResolvedStyle.ReferenceScope, strength: Double = ResolvedStyle.DEFAULT_STRENGTH) {
         val preview = (_state.value as? ReferenceCreateState.Preview)?.resolution ?: return
+        android.util.Log.d("ReferenceFlow", "referenceApplied scope=$scope cached=${preview.fromCache}")
         analysisJob?.cancel()
         analysisJob = this.scope.launch {
             runCatching { repository.activate(settings, preview, scope, strength) }
-                .onSuccess { _state.value = ReferenceCreateState.Applied(it) }
+                .onSuccess {
+                    android.util.Log.d("ReferenceFlow", "activeReferenceRestored")
+                    _state.value = ReferenceCreateState.Applied(it)
+                }
                 .onFailure { _state.value = ReferenceCreateState.Error(retryable = false) }
         }
     }
