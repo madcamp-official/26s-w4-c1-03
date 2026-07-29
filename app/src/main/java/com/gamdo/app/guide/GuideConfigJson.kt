@@ -310,7 +310,43 @@ data class FeaturesConfigJson(
     val analysisBudgetMs: Double = 30.0,
     /** How often the measured cost is emitted. 0 disables the log entirely. */
     val budgetLogEveryFrames: Int = 60,
+    /**
+     * Ceiling on how often the analysis pipeline runs, in frames per second (W3-1).
+     *
+     * `FrameAnalyzer` refuses any frame arriving less than `1s / this` after the
+     * last one it processed. It was a Kotlin literal until now, which made the one
+     * number governing the cost of the entire detection stack the only tuning value
+     * in the app that needed a rebuild to change.
+     *
+     * **12 is a ceiling, not a rate.** On SM-G970N it is not reached and not
+     * approached: one analysed frame costs 178-405ms (median 208.8ms warm, 178.5ms
+     * cool, measured 2026-07-29 over 27 frames), i.e. 2.8-4.8fps, against the
+     * 83.3ms of spacing this asks for. `STRATEGY_KEEP_ONLY_LATEST` delivers the
+     * next frame only after the previous `analyze()` returns, so the gate is
+     * consulted at the processing rate and never fires — the drop rate on the
+     * analysis path is structurally 0. Lowering this to 8 would not change
+     * behaviour on this device; the levers that would are the model divisors below
+     * ([objectRefreshEveryFrames] and the three beside it).
+     *
+     * It stays a ceiling worth having because it is the only bound on a faster
+     * device or a cheaper model set, where the preview's 30fps would otherwise
+     * drive the whole stack.
+     *
+     * Keep in step with `stability.sequenceFps`, which simulates this rate in the
+     * §0.4 harness — `GuideConfigJsonTest` fails if the two drift apart.
+     */
+    val analysisTargetFps: Int = 12,
 ) {
+    init {
+        // Only the cadence is guarded here. `analysisBudgetMs = 0.0` is a legitimate
+        // value — it means "treat every frame as over budget", which is how
+        // `CameraViewModelTest` exercises the first-breach log path without
+        // depending on host speed — and it divides nothing.
+        require(analysisTargetFps >= 1) {
+            "analysisTargetFps must be >= 1, was $analysisTargetFps"
+        }
+    }
+
     fun toCalculator(): FrameFeatureCalculator = FrameFeatureCalculator(
         minLandmarkLikelihood = minLandmarkLikelihood,
         lowLightThreshold = lowLightThreshold,

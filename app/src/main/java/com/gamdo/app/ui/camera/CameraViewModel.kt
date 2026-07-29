@@ -2,6 +2,8 @@ package com.gamdo.app.ui.camera
 
 import com.gamdo.app.BuildConfig
 import com.gamdo.app.camera.AnalysisStats
+import com.gamdo.app.camera.PreviewFrameMeter
+import com.gamdo.app.camera.PreviewStats
 import com.gamdo.app.camera.TiltReading
 import com.gamdo.app.detect.BrightnessSample
 import com.gamdo.app.detect.DetectionResult
@@ -166,6 +168,24 @@ class CameraViewModel(
     private val _stats = MutableStateFlow<AnalysisStats?>(null)
     val stats: StateFlow<AnalysisStats?> = _stats.asStateFlow()
 
+    /** W3-2 preview rate. Null until a source is attached *and* a window closes. */
+    private val previewMeter = PreviewFrameMeter()
+
+    private val _previewStats = MutableStateFlow<PreviewStats?>(null)
+    val previewStats: StateFlow<PreviewStats?> = _previewStats.asStateFlow()
+
+    /**
+     * Why the preview rate cannot currently be read, or null while it can.
+     *
+     * Carried so the HUD can say "not measured, and here is why" rather than show
+     * a zero. A zero is indistinguishable from a frozen preview, and W3-2 exists
+     * precisely because a number that did not mean what it was labelled went
+     * unnoticed.
+     */
+    private val _previewFpsAvailability = MutableStateFlow(PreviewFpsAvailability.NOT_ATTACHED)
+    val previewFpsAvailability: StateFlow<PreviewFpsAvailability> =
+        _previewFpsAvailability.asStateFlow()
+
     private val _detectionLabel = MutableStateFlow("")
     val detectionLabel: StateFlow<String> = _detectionLabel.asStateFlow()
 
@@ -275,6 +295,27 @@ class CameraViewModel(
     /** Called from the analysis executor once per second. */
     fun onStats(stats: AnalysisStats) {
         _stats.value = stats
+    }
+
+    /**
+     * One delivered preview frame (W3-2).
+     *
+     * Called on the **main thread**, unlike [onStats] and [onFrameAnalyzed]:
+     * `PreviewView`'s frame-update callback is attached with a direct executor and
+     * fires from `TextureView.onSurfaceTextureUpdated`. [previewMeter] is touched
+     * from nowhere else, so the two threads never meet.
+     */
+    fun onPreviewFrame(nowNs: Long) {
+        previewMeter.onFrame(nowNs)?.let { _previewStats.value = it }
+    }
+
+    /** Records whether a preview-frame source could be attached, and why not. */
+    fun onPreviewFpsAvailability(availability: PreviewFpsAvailability) {
+        _previewFpsAvailability.value = availability
+        if (availability != PreviewFpsAvailability.MEASURING) {
+            previewMeter.reset()
+            _previewStats.value = null
+        }
     }
 
     /**
@@ -409,6 +450,11 @@ class CameraViewModel(
         _overlay.value = null
         _detectionLabel.value = ""
         _guideDebug.value = null
+        // The preview stops with the analyzer. Keeping the open window would make
+        // the first frame after the rebind close a window spanning the absence.
+        previewMeter.reset()
+        _previewStats.value = null
+        _previewFpsAvailability.value = PreviewFpsAvailability.NOT_ATTACHED
         // Cleared with the rest: a snapshot from before a background/rebind would
         // describe a scene the camera is no longer pointed at.
         _lastFrame.value = null

@@ -19,7 +19,8 @@
     "lowLightThreshold": 0.18,
     "backlightRatioThreshold": 1.8,
     "analysisBudgetMs": 30.0,
-    "budgetLogEveryFrames": 60
+    "budgetLogEveryFrames": 60,
+    "analysisTargetFps": 12
   },
   "diagnoser": {},
   "scoring": {},
