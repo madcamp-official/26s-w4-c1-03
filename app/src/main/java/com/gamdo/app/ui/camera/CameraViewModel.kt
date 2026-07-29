@@ -20,6 +20,9 @@ import com.gamdo.app.guide.SceneGuideSessionController
 import com.gamdo.app.guide.GuideLayoutState
 import com.gamdo.app.guide.LayoutTemplateCatalog
 import com.gamdo.app.guide.LayoutTemplateSummary
+import com.gamdo.app.guide.PreviewGeometry
+import com.gamdo.app.guide.ScenePolygonRegion
+import com.gamdo.app.guide.SceneSearchScope
 import com.gamdo.app.detect.StableSceneTracker
 import com.gamdo.app.guide.SceneLayoutGuide
 import com.gamdo.app.guide.FixedLayoutGuide
@@ -240,6 +243,8 @@ class CameraViewModel(
     val styleTarget: StateFlow<StyleTarget> = _styleTarget.asStateFlow()
 
     val layoutState: StateFlow<GuideLayoutState> = sceneGuideSessionController.layoutState
+    /** UI-safe current automatic-search scope; P1 never reaches into the controller. */
+    val searchScope: StateFlow<SceneSearchScope> = sceneGuideSessionController.searchScope
     val availableManualLayouts: List<LayoutTemplateSummary> = sceneGuideSessionController.availableManualLayouts
 
     private val _sceneGuideMetrics = MutableStateFlow(SceneGuideMetrics())
@@ -534,6 +539,40 @@ class CameraViewModel(
             alignmentEngine.reset()
             stabilizer.reset()
             sceneGuideSessionController.rescanAt(anchorX, anchorY)
+            firstFixedNs = null
+            sceneStartedNs = System.nanoTime()
+            freshObjectFrames = 0L
+            _sceneGuideMetrics.value = SceneGuideMetrics()
+        }
+    }
+
+    /**
+     * Starts a lasso-limited automatic search. Validation happens synchronously so
+     * Compose can keep the drawing mode active for an invalid path; mutation still
+     * stays on the CameraX analysis thread via [pendingGuideWork].
+     */
+    fun rescanLayoutInPolygon(points: List<Pair<Float, Float>>, geometry: PreviewGeometry): Boolean {
+        if (ScenePolygonRegion.fromViewPath(points, geometry) == null) return false
+        detector?.setObjectDetectionPaused(false)
+        pendingGuideWork.add {
+            alignmentEngine.reset()
+            stabilizer.reset()
+            sceneGuideSessionController.rescanInPolygon(points, geometry)
+            firstFixedNs = null
+            sceneStartedNs = System.nanoTime()
+            freshObjectFrames = 0L
+            _sceneGuideMetrics.value = SceneGuideMetrics()
+        }
+        return true
+    }
+
+    /** Leaves lasso mode and returns to the default automatic scene search. */
+    fun cancelPolygonLayoutSearch() {
+        detector?.setObjectDetectionPaused(false)
+        pendingGuideWork.add {
+            alignmentEngine.reset()
+            stabilizer.reset()
+            sceneGuideSessionController.cancelPolygonSearch()
             firstFixedNs = null
             sceneStartedNs = System.nanoTime()
             freshObjectFrames = 0L
