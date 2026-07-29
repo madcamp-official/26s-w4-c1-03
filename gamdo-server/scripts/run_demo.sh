@@ -6,7 +6,7 @@ set -Eeuo pipefail
 GPU_HOST="${GPU_HOST:-172.10.5.176}"
 GPU_USER="${GPU_USER:-root}"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/kcloud_gpu_vm_key.pem}"
-LOCAL_PORT="${LOCAL_PORT:-18001}"
+LOCAL_PORT="${LOCAL_PORT:-18000}"
 REMOTE_PORT="${REMOTE_PORT:-8000}"
 BASE_URL="http://127.0.0.1:${LOCAL_PORT}"
 

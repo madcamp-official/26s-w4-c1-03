@@ -11,9 +11,11 @@ android {
     compileSdk = 35
 
     val gamdoApiBaseUrl = providers.gradleProperty("gamdoApiBaseUrl")
-        // Physical-device debug builds use the CAMP-2 SSH tunnel forwarded to 18000.
-        // Emulator builds should override this with -PgamdoApiBaseUrl=http://10.0.2.2:8000/api/v1/
-        .orElse("http://127.0.0.1:18000/api/v1/")
+        // Physical-device debug builds use the CAMP-2 endpoint directly.
+        // USB/tunnel builds can override this with
+        // -PgamdoApiBaseUrl=http://127.0.0.1:18000/api/v1/
+        // Emulator builds can use -PgamdoApiBaseUrl=http://10.0.2.2:8000/api/v1/.
+        .orElse("http://172.10.5.176:8000/api/v1/")
         .get()
         .replace("\\", "\\\\")
         .replace("\"", "\\\"")
