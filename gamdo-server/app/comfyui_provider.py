@@ -247,14 +247,14 @@ def _outpaint_upload_path(image_path: Path, operation: dict[str, Any]) -> Path:
     with Image.open(image_path) as source:
         source = source.convert("RGB")
         width, height = source.size
-        extra_width = round(width * ratio) * (2 if direction == "all" else 1) if direction in {"left", "right", "all"} else 0
-        extra_height = round(height * ratio) * (2 if direction == "all" else 1) if direction in {"top", "bottom", "all"} else 0
+        desired_width, desired_height, offset_x, offset_y = _outpaint_geometry((width, height), operation)
+        canvas_width = _ceil_multiple(desired_width, 16)
+        canvas_height = _ceil_multiple(desired_height, 16)
         # ComfyUI's LoadImage exposes the inverse alpha channel as its MASK
         # output. Keep source pixels opaque and expansion pixels transparent so
-        # the fill workflow receives an exact generation region.
-        canvas = Image.new("RGBA", (width + extra_width, height + extra_height), (128, 128, 128, 0))
-        offset_x = extra_width if direction == "left" else extra_width // 2 if direction == "all" else 0
-        offset_y = extra_height if direction == "top" else extra_height // 2 if direction == "all" else 0
+        # the fill workflow receives an exact generation region. The extra
+        # right/bottom padding is removed before candidate validation.
+        canvas = Image.new("RGBA", (canvas_width, canvas_height), (128, 128, 128, 0))
         canvas.paste(source.convert("RGBA"), (offset_x, offset_y))
     handle = tempfile.NamedTemporaryFile(prefix="gamdo-outpaint-", suffix=".png", delete=False)
     path = Path(handle.name)
@@ -268,13 +268,32 @@ def _restore_outpaint_interior(candidate_path: Path, original_path: Path, operat
     with Image.open(original_path) as source, Image.open(candidate_path) as generated:
         source = source.convert("RGB")
         generated = generated.convert("RGB")
-        direction = operation.get("direction")
-        extra_x = generated.width - source.width if direction in {"left", "right", "all"} else 0
-        extra_y = generated.height - source.height if direction in {"top", "bottom", "all"} else 0
-        offset_x = extra_x if direction == "left" else extra_x // 2 if direction == "all" else 0
-        offset_y = extra_y if direction == "top" else extra_y // 2 if direction == "all" else 0
+        desired_width, desired_height, offset_x, offset_y = _outpaint_geometry(source.size, operation)
+        if generated.width < desired_width or generated.height < desired_height:
+            raise ProviderNotReady("ComfyUI outpaint output is smaller than requested")
+        generated = generated.crop((0, 0, desired_width, desired_height))
         generated.paste(source, (offset_x, offset_y))
         generated.save(candidate_path, format="PNG")
+
+
+def _outpaint_geometry(
+    source_size: tuple[int, int],
+    operation: dict[str, Any],
+) -> tuple[int, int, int, int]:
+    width, height = source_size
+    direction = operation.get("direction")
+    ratio = float(operation.get("ratio", 0.0))
+    side_width = round(width * ratio)
+    side_height = round(height * ratio)
+    extra_width = side_width * (2 if direction == "all" else 1) if direction in {"left", "right", "all"} else 0
+    extra_height = side_height * (2 if direction == "all" else 1) if direction in {"top", "bottom", "all"} else 0
+    offset_x = side_width if direction in {"left", "all"} else 0
+    offset_y = side_height if direction in {"top", "all"} else 0
+    return width + extra_width, height + extra_height, offset_x, offset_y
+
+
+def _ceil_multiple(value: int, multiple: int) -> int:
+    return ((value + multiple - 1) // multiple) * multiple
 
 
 def _masked_upload_path(image_path: Path, operations: list[dict[str, Any]]) -> Path:
