@@ -1,6 +1,7 @@
 package com.gamdo.app.ui.camera
 
 import androidx.camera.view.PreviewView
+import com.gamdo.app.BuildConfig
 
 /**
  * Whether the preview rate (§7-1) can be read, and when it cannot, why.
@@ -31,8 +32,7 @@ enum class PreviewFpsAvailability {
  * Whether this build measures the preview rate, at the cost of rendering the
  * preview through a `TextureView`.
  *
- * **Left off, because turning it on changes the preview pipeline and that is not
- * this vertical's call to make (W3-2, reported to lead 2026-07-29).** The full
+ * **On in debug builds, off in release (owner decision, 2026-07-29).** The full
  * position:
  *
  * CameraX 1.4.1 does expose a genuine per-preview-frame callback —
@@ -48,10 +48,16 @@ enum class PreviewFpsAvailability {
  *
  * So measuring costs a switch to `COMPATIBLE`, i.e. one extra copy per preview
  * frame — spending preview performance to measure preview performance. The trade
- * is defensible (a `TextureView` reading is a lower bound for the cheaper
- * `SurfaceView` path, and it need only be on in debug builds) but it is a
- * behaviour change to the exact thing W3 is protecting, so it waits for a
- * decision. Flip this to true to take the measurement.
+ * is accepted only in debug: a `TextureView` reading is a **lower bound** for the
+ * cheaper `SurfaceView` path, so a debug reading of ≥30fps means the shipped path
+ * is at least that fast — which is exactly the direction §7-1's "프리뷰 30FPS"
+ * needs. Release keeps the `PERFORMANCE` default and reports 미측정.
+ *
+ * **This means the demo measures itself.** The build on the device is
+ * `com.gamdo.app.debug`, so the rehearsal (W4-2) runs the `TextureView` path.
+ * That is the conservative direction — the release build can only be faster — but
+ * anyone comparing a debug preview against a release one should expect debug to
+ * be the slower of the two, not treat the difference as a regression.
  *
  * Note the `PreviewView` factory in `CameraScreen` carries a comment claiming the
  * app already runs `COMPATIBLE`. It does not, and never has —
@@ -60,7 +66,7 @@ enum class PreviewFpsAvailability {
  * neighbouring comment records that `COMPATIBLE` "changed nothing" for the bug
  * being fixed.
  */
-const val MEASURE_PREVIEW_FPS: Boolean = false
+val MEASURE_PREVIEW_FPS: Boolean = BuildConfig.DEBUG
 
 /**
  * Attaches a per-preview-frame tick to [onFrameNs], reporting whether it took.
