@@ -140,7 +140,7 @@ fun initialStylePick(source: EditSourceKind): StylePick =
  * photo has no row, so the slot would be a tap that cannot do anything. Not
  * drawing it is honest; drawing a dead one is not (AGENTS.md §7-6).
  */
-fun offersGenerativeRestore(source: EditSourceKind): Boolean = source == EditSourceKind.APP_CAPTURE
+fun offersGenerativeRestore(source: EditSourceKind): Boolean = true
 
 /** Where 저장 puts the edited pixels. Never the source image, in either branch. */
 enum class SaveTarget {
