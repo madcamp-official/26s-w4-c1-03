@@ -8,6 +8,19 @@ import org.junit.Test
 
 class LayoutTemplateCatalogTest {
     @Test
+    fun `public manual catalog contains twelve previewable layouts`() {
+        assertEquals(12, LayoutTemplateCatalog.manualSummaries.size)
+        assertEquals(12, LayoutTemplateCatalog.manualSummaries.map { it.id }.distinct().size)
+        assertEquals(4, LayoutTemplateCatalog.manualSummaries.count { it.poseTemplateId != null })
+        assertEquals(12, LayoutTemplateCatalog.manualSummaries.count { it.slots.isNotEmpty() })
+    }
+
+    @Test
+    fun `legacy manual ids remain resolvable`() {
+        assertEquals(9, LayoutTemplateCatalog.legacyIds.count { LayoutTemplateCatalog.resolve(it) != null })
+    }
+
+    @Test
     fun `catalog exposes stable cafe and multi-slot ids`() {
         val cafe = LayoutTemplateCatalog.resolve(LayoutTemplateCatalog.CAFE_TABLE)!!
         assertEquals(3, cafe.slots.size)

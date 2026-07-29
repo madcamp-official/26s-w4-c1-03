@@ -3,6 +3,8 @@ package com.gamdo.app.detect
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.gamdo.app.guide.PointN
+import com.gamdo.app.guide.ScenePolygonRegion
 
 class StableSceneTrackerTest {
     private fun objectAt(index: Int, category: GuideObjectCategory = GuideObjectCategory.UNKNOWN) =
@@ -232,5 +234,21 @@ class StableSceneTrackerTest {
             stableWithCompanion = tracker.accept(ObjectDetectionBatch(objects, true, (sequence + 10).toLong()))
         }
         assertEquals(2, stableWithCompanion.size)
+    }
+
+    @Test
+    fun `polygon search excludes stable objects outside the lasso`() {
+        val tracker = StableSceneTracker()
+        val inside = ObjectObservation(NormalizedBox(0.30f, 0.35f, 0.42f, 0.55f), trackingId = 1)
+        val outside = ObjectObservation(NormalizedBox(0.65f, 0.35f, 0.77f, 0.55f), trackingId = 2)
+        val polygon = ScenePolygonRegion.fromNormalized(listOf(
+            PointN(0.20f, 0.20f), PointN(0.50f, 0.20f), PointN(0.50f, 0.70f), PointN(0.20f, 0.70f),
+        ))!!
+        tracker.rescanInPolygon(polygon)
+        var stable = emptyList<ObjectObservation>()
+        repeat(5) { sequence ->
+            stable = tracker.accept(ObjectDetectionBatch(listOf(inside, outside), true, sequence.toLong()))
+        }
+        assertEquals(listOf(1), stable.mapNotNull { it.trackingId })
     }
 }

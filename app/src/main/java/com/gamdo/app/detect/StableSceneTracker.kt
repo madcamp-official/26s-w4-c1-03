@@ -1,5 +1,6 @@
 package com.gamdo.app.detect
 
+import com.gamdo.app.guide.ScenePolygonRegion
 import kotlin.math.hypot
 
 /** All object-guide quality thresholds live in guide_config.json. */
@@ -67,6 +68,7 @@ class StableSceneTracker(
 
     private val window = ArrayDeque<Sample>()
     private var region = config.interestRegion
+    private var polygonRegion: ScenePolygonRegion? = null
     private var lastStable = emptyList<ObjectObservation>()
 
     fun accept(batch: ObjectDetectionBatch): List<ObjectObservation> {
@@ -108,6 +110,7 @@ class StableSceneTracker(
 
     /** Starts automatic search around the supplied normalized preview point. */
     fun rescanAt(anchorX: Float, anchorY: Float) {
+        polygonRegion = null
         region = SceneInterestRegion(
             anchorX.coerceIn(0.16f, 0.84f),
             anchorY.coerceIn(0.18f, 0.82f),
@@ -119,10 +122,25 @@ class StableSceneTracker(
         lastStable = emptyList()
     }
 
+    /** Starts a fresh 3/5 confirmation window restricted to a user lasso. */
+    fun rescanInPolygon(polygon: ScenePolygonRegion) {
+        polygonRegion = polygon
+        window.clear()
+        lastStable = emptyList()
+    }
+
+    fun cancelPolygonSearch() {
+        polygonRegion = null
+        region = config.interestRegion
+        window.clear()
+        lastStable = emptyList()
+    }
+
     fun reset() {
         window.clear()
         lastStable = emptyList()
         region = config.interestRegion
+        polygonRegion = null
     }
 
     private fun sanitize(objects: List<ObjectObservation>): List<ObjectObservation> {
@@ -132,7 +150,10 @@ class StableSceneTracker(
             .filter { SceneRecognitionPolicy.isValidBox(it.box) }
             .filter { area(it.box) in config.minimumAreaRatio..config.maximumAreaRatio }
             .filter { it.category == GuideObjectCategory.PERSON || !isClippedBackground(it) }
-            .filter { it.category == GuideObjectCategory.PERSON || region.contains(it.box) }
+            .filter { candidate ->
+                polygonRegion?.accepts(candidate.box)
+                    ?: (candidate.category == GuideObjectCategory.PERSON || region.contains(candidate.box))
+            }
             .filter { it.category == GuideObjectCategory.PERSON || isPlausibleSubject(it) }
             .sortedByDescending(::rankingScore)
             .forEach { candidate ->

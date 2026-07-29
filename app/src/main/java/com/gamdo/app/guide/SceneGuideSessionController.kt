@@ -19,25 +19,10 @@ class SceneGuideSessionController(
     private val _layoutState = MutableStateFlow<GuideLayoutState>(GuideLayoutState.Searching)
     val layoutState: StateFlow<GuideLayoutState> = _layoutState.asStateFlow()
 
-    val availableManualLayouts: List<LayoutTemplateSummary> = LayoutTemplateCatalog.manualIds.mapNotNull { id ->
-        LayoutTemplateCatalog.resolve(id)?.let { template ->
-            LayoutTemplateSummary(
-                id = id,
-                slotCount = template.slots.size,
-                displayName = when (id) {
-                    LayoutTemplateCatalog.PORTRAIT_PERSON -> "인물"
-                    LayoutTemplateCatalog.CAFE_TABLE -> "카페 테이블"
-                    LayoutTemplateCatalog.DRINK_PAIR -> "음료 2개"
-                    LayoutTemplateCatalog.DRINK_TRIO -> "음료 3개"
-                    LayoutTemplateCatalog.STILL_LIFE -> "정물"
-                    LayoutTemplateCatalog.GENERIC_SINGLE -> "물체 1개"
-                    LayoutTemplateCatalog.GENERIC_PAIR -> "물체 2개"
-                    LayoutTemplateCatalog.GENERIC_TRIO -> "물체 3개"
-                    else -> "물체 4개"
-                },
-            )
-        }
-    }
+    private val _searchScope = MutableStateFlow<SceneSearchScope>(SceneSearchScope.Default)
+    val searchScope: StateFlow<SceneSearchScope> = _searchScope.asStateFlow()
+
+    val availableManualLayouts: List<LayoutTemplateSummary> = LayoutTemplateCatalog.manualSummaries
 
     fun updateScene(
         batch: ObjectDetectionBatch,
@@ -106,13 +91,16 @@ class SceneGuideSessionController(
 
     fun selectManualLayout(templateId: String, style: StyleTarget = StyleTarget()): Boolean {
         val selected = coordinator.selectManualLayout(templateId, style)
-        if (selected) _layoutState.value = coordinator.currentLayoutState
+        if (selected) {
+            _layoutState.value = coordinator.currentLayoutState
+        }
         return selected
     }
 
     fun rescan() {
         tracker.reset()
         coordinator.rescan()
+        _searchScope.value = SceneSearchScope.Default
         _layoutState.value = GuideLayoutState.Searching
     }
 
@@ -120,6 +108,33 @@ class SceneGuideSessionController(
     fun rescanAt(anchorX: Float, anchorY: Float) {
         tracker.rescanAt(anchorX, anchorY)
         coordinator.rescan()
+        _searchScope.value = SceneSearchScope.Tap(PointN(anchorX, anchorY).clamped())
+        _layoutState.value = GuideLayoutState.Searching
+    }
+
+    /** Restricts a fresh automatic search to a lasso drawn in PreviewView pixels. */
+    fun rescanInPolygon(points: List<Pair<Float, Float>>, geometry: PreviewGeometry): Boolean {
+        val polygon = ScenePolygonRegion.fromViewPath(points, geometry) ?: return false
+        tracker.rescanInPolygon(polygon)
+        coordinator.rescan()
+        _searchScope.value = SceneSearchScope.Polygon(polygon.points)
+        _layoutState.value = GuideLayoutState.Searching
+        return true
+    }
+
+    fun rescanInNormalizedPolygon(points: List<PointN>): Boolean {
+        val polygon = ScenePolygonRegion.fromNormalized(points) ?: return false
+        tracker.rescanInPolygon(polygon)
+        coordinator.rescan()
+        _searchScope.value = SceneSearchScope.Polygon(polygon.points)
+        _layoutState.value = GuideLayoutState.Searching
+        return true
+    }
+
+    fun cancelPolygonSearch() {
+        tracker.cancelPolygonSearch()
+        coordinator.rescan()
+        _searchScope.value = SceneSearchScope.Default
         _layoutState.value = GuideLayoutState.Searching
     }
 
@@ -131,6 +146,7 @@ class SceneGuideSessionController(
     fun endSession() {
         tracker.reset()
         coordinator.reset()
+        _searchScope.value = SceneSearchScope.Default
         _layoutState.value = GuideLayoutState.Searching
     }
 

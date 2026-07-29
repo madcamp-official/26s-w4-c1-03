@@ -101,6 +101,7 @@ class SceneGuideCoordinator(
                 styleTarget = styleTarget,
                 signals = signals,
                 referenceTemplate = referenceTemplate,
+                poseGuide = PoseGuideSelector.select(detection.pose),
             )
         }
         val template = baseTemplate?.let { GenericLayoutSynthesizer.transform(it, styleTarget, templateSafetyMargin) }
@@ -164,6 +165,7 @@ class SceneGuideCoordinator(
         styleTarget: StyleTarget,
         signals: SceneFrameSignals,
         referenceTemplate: LayoutTemplate?,
+        poseGuide: PoseGuideTemplate?,
     ): LayoutTemplate? {
         val sceneTemplate = autoLayoutResolver.resolve(
             detections = observation.slotDetections,
@@ -210,8 +212,16 @@ class SceneGuideCoordinator(
             // frames use fixedBaseTemplate and cannot move or resize the brackets
             // until the user explicitly rescans.
             GuideCompositionSource.SCENE -> sceneTemplate?.let { selected ->
+                val selectedWithPose = if (selected.slots.any { it.role == SlotRole.PERSON } && poseGuide != null) {
+                    selected.copy(
+                        poseGuide = poseGuide,
+                        slots = selected.slots.map { slot ->
+                            if (slot.role == SlotRole.PERSON) slot.copy(visualKind = SlotVisualKind.POSE_SKELETON) else slot
+                        },
+                    )
+                } else selected
                 GenericLayoutSynthesizer.snapshotObjectShapes(
-                    template = selected,
+                    template = selectedWithPose,
                     detections = observation.slotDetections,
                     config = detectedSlotShapeConfig,
                     safetyMargin = templateSafetyMargin,

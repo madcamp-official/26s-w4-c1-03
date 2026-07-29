@@ -8,7 +8,7 @@ import kotlin.math.sqrt
 
 enum class SlotRole { PERSON, OBJECT }
 
-enum class SlotVisualKind { PERSON_SILHOUETTE, GENERIC_OBJECT, CUP, PLATE }
+enum class SlotVisualKind { PERSON_SILHOUETTE, POSE_SKELETON, GENERIC_OBJECT, CUP, PLATE }
 
 /** Server-derived, normalized slot used only when a reference is active. */
 data class ReferenceTargetSlot(
@@ -39,6 +39,7 @@ data class LayoutSlot(
     /** Rendering hint only; it never changes the composition decision. */
     val preferredAspectRatio: Float = when (visualKind) {
         SlotVisualKind.PERSON_SILHOUETTE -> 0.52f
+        SlotVisualKind.POSE_SKELETON -> 0.52f
         SlotVisualKind.CUP -> 0.78f
         SlotVisualKind.PLATE -> 1.15f
         SlotVisualKind.GENERIC_OBJECT -> 1f
@@ -52,6 +53,7 @@ data class LayoutTemplate(
     val horizonY: Float? = null,
     val opacity: Float = 0.30f,
     val viewportAspect: GuideViewportAspect = GuideViewportAspect.FOUR_TO_FIVE,
+    val poseGuide: PoseGuideTemplate? = null,
 ) {
     init {
         require(id.isNotBlank())
@@ -200,17 +202,58 @@ object LayoutTemplateCatalog {
     const val GENERIC_TRIO = "generic_trio_v1"
     const val GENERIC_QUAD = "generic_quad_v1"
 
+    const val PERSON_FULL_CENTER = "person_full_center_v2"
+    const val PERSON_FULL_OFFSET = "person_full_offset_v2"
+    const val PERSON_UPPER = "person_upper_v2"
+    const val PERSON_SEATED = "person_seated_v2"
+    const val PERSON_OBJECT = "person_object_v2"
+    const val OBJECT_SINGLE = "object_single_v2"
+    const val OBJECT_PAIR_BALANCED = "object_pair_balanced_v2"
+    const val OBJECT_PAIR_DIAGONAL = "object_pair_diagonal_v2"
+    const val OBJECT_TRIO_TRIANGLE = "object_trio_triangle_v2"
+    const val OBJECT_TRIO_ROW = "object_trio_row_v2"
+    const val OBJECT_QUAD_GRID = "object_quad_grid_v2"
+    const val CAFE_TABLE_V2 = "cafe_table_v2"
+
     val manualIds = listOf(
+        PERSON_FULL_CENTER, PERSON_FULL_OFFSET, PERSON_UPPER, PERSON_SEATED,
+        PERSON_OBJECT, OBJECT_SINGLE, OBJECT_PAIR_BALANCED, OBJECT_PAIR_DIAGONAL,
+        OBJECT_TRIO_TRIANGLE, OBJECT_TRIO_ROW, OBJECT_QUAD_GRID, CAFE_TABLE_V2,
+    )
+
+    val legacyIds = listOf(
         PORTRAIT_PERSON, CAFE_TABLE, DRINK_PAIR, DRINK_TRIO, STILL_LIFE,
         GENERIC_SINGLE, GENERIC_PAIR, GENERIC_TRIO, GENERIC_QUAD,
     )
+
+    val manualSummaries: List<LayoutTemplateSummary> by lazy {
+        manualIds.mapNotNull { id ->
+            resolve(id)?.let { template ->
+                LayoutTemplateSummary(
+                    id = id,
+                    displayName = displayName(id),
+                    category = if (template.slots.any { it.role == SlotRole.PERSON }) LayoutCategory.PERSON else LayoutCategory.OBJECT,
+                    slots = template.slots.map { LayoutPreviewSlot(it.role, it.visualKind, it.bounds) },
+                    poseTemplateId = template.poseGuide?.id,
+                )
+            }
+        }
+    }
 
     fun resolve(
         id: String?,
         viewportAspect: GuideViewportAspect = GuideViewportAspect.FOUR_TO_FIVE,
     ): LayoutTemplate? = when (id) {
         PORTRAIT_PERSON -> LayoutTemplate(id, listOf(LayoutSlot("person", GuideObjectCategory.PERSON, RectN(0.25f, 0.14f, 0.75f, 0.86f), role = SlotRole.PERSON, visualKind = SlotVisualKind.PERSON_SILHOUETTE)), viewportAspect = viewportAspect)
-        CAFE_TABLE -> LayoutTemplate.cafeTable(viewportAspect)
+        PERSON_FULL_CENTER -> portraitTemplate(id, PoseGuideCatalog.FULL_CENTER, RectN(0.25f, 0.10f, 0.75f, 0.92f), viewportAspect)
+        PERSON_FULL_OFFSET -> portraitTemplate(id, PoseGuideCatalog.FULL_OFFSET, RectN(0.18f, 0.10f, 0.68f, 0.92f), viewportAspect)
+        PERSON_UPPER -> portraitTemplate(id, PoseGuideCatalog.UPPER_BODY, RectN(0.23f, 0.18f, 0.77f, 0.88f), viewportAspect)
+        PERSON_SEATED -> portraitTemplate(id, PoseGuideCatalog.SEATED, RectN(0.20f, 0.16f, 0.80f, 0.88f), viewportAspect)
+        PERSON_OBJECT -> LayoutTemplate(id, listOf(
+            LayoutSlot("person", GuideObjectCategory.PERSON, RectN(0.08f, 0.14f, 0.50f, 0.88f), role = SlotRole.PERSON, visualKind = SlotVisualKind.PERSON_SILHOUETTE),
+            LayoutSlot("object", null, RectN(0.60f, 0.56f, 0.84f, 0.78f)),
+        ), viewportAspect = viewportAspect)
+        CAFE_TABLE, CAFE_TABLE_V2 -> LayoutTemplate.cafeTable(viewportAspect).copy(id = id)
         DRINK_PAIR -> LayoutTemplate(id, listOf(
             LayoutSlot("drink_left", GuideObjectCategory.DRINKWARE, RectN(0.10f, 0.48f, 0.42f, 0.84f), visualKind = SlotVisualKind.CUP),
             LayoutSlot("drink_right", GuideObjectCategory.DRINKWARE, RectN(0.58f, 0.48f, 0.90f, 0.84f), visualKind = SlotVisualKind.CUP),
@@ -221,11 +264,36 @@ object LayoutTemplateCatalog {
             LayoutSlot("drink_right", GuideObjectCategory.DRINKWARE, RectN(0.66f, 0.48f, 0.94f, 0.84f), visualKind = SlotVisualKind.CUP),
         ), viewportAspect = viewportAspect)
         STILL_LIFE -> LayoutTemplate(id, listOf(LayoutSlot("main_plate", GuideObjectCategory.FOOD_TABLEWARE, RectN(0.29f, 0.52f, 0.71f, 0.86f), visualKind = SlotVisualKind.PLATE)), viewportAspect = viewportAspect)
-        GENERIC_SINGLE -> GenericLayoutSynthesizer.generic(1, Arrangement.SINGLE, viewportAspect = viewportAspect)
-        GENERIC_PAIR -> GenericLayoutSynthesizer.generic(2, Arrangement.ROW, viewportAspect = viewportAspect)
-        GENERIC_TRIO -> GenericLayoutSynthesizer.generic(3, Arrangement.TRIANGLE, viewportAspect = viewportAspect)
-        GENERIC_QUAD -> GenericLayoutSynthesizer.generic(4, Arrangement.GRID, viewportAspect = viewportAspect)
+        GENERIC_SINGLE, OBJECT_SINGLE -> GenericLayoutSynthesizer.generic(1, Arrangement.SINGLE, id = id, viewportAspect = viewportAspect)
+        GENERIC_PAIR, OBJECT_PAIR_BALANCED -> GenericLayoutSynthesizer.generic(2, Arrangement.ROW, id = id, viewportAspect = viewportAspect)
+        OBJECT_PAIR_DIAGONAL -> GenericLayoutSynthesizer.generic(2, Arrangement.DIAGONAL, id = id, viewportAspect = viewportAspect)
+        GENERIC_TRIO, OBJECT_TRIO_TRIANGLE -> GenericLayoutSynthesizer.generic(3, Arrangement.TRIANGLE, id = id, viewportAspect = viewportAspect)
+        OBJECT_TRIO_ROW -> GenericLayoutSynthesizer.generic(3, Arrangement.ROW, id = id, viewportAspect = viewportAspect)
+        GENERIC_QUAD, OBJECT_QUAD_GRID -> GenericLayoutSynthesizer.generic(4, Arrangement.GRID, id = id, viewportAspect = viewportAspect)
         else -> null
+    }
+
+    private fun portraitTemplate(id: String, poseId: String, bounds: RectN, viewportAspect: GuideViewportAspect) = LayoutTemplate(
+        id = id,
+        slots = listOf(LayoutSlot("person", GuideObjectCategory.PERSON, bounds, role = SlotRole.PERSON, visualKind = SlotVisualKind.POSE_SKELETON)),
+        viewportAspect = viewportAspect,
+        poseGuide = PoseGuideCatalog.resolve(poseId),
+    )
+
+    private fun displayName(id: String): String = when (id) {
+        PERSON_FULL_CENTER -> "전신 중앙"
+        PERSON_FULL_OFFSET -> "전신 비대칭"
+        PERSON_UPPER -> "상반신"
+        PERSON_SEATED -> "앉은 인물"
+        PERSON_OBJECT -> "인물과 소품"
+        OBJECT_SINGLE -> "물체 1개"
+        OBJECT_PAIR_BALANCED -> "물체 2개 균형"
+        OBJECT_PAIR_DIAGONAL -> "물체 2개 대각"
+        OBJECT_TRIO_TRIANGLE -> "물체 3개 삼각"
+        OBJECT_TRIO_ROW -> "물체 3개 연속"
+        OBJECT_QUAD_GRID -> "물체 4개 2×2"
+        CAFE_TABLE_V2 -> "카페 테이블"
+        else -> id
     }
 }
 
@@ -236,7 +304,19 @@ sealed interface GuideLayoutState {
     data class Fixed(val template: LayoutTemplate, val source: LayoutSource) : GuideLayoutState
 }
 
-data class LayoutTemplateSummary(val id: String, val slotCount: Int, val displayName: String)
+enum class LayoutCategory { PERSON, OBJECT }
+
+data class LayoutPreviewSlot(val role: SlotRole, val visualKind: SlotVisualKind, val bounds: RectN)
+
+data class LayoutTemplateSummary(
+    val id: String,
+    val displayName: String,
+    val category: LayoutCategory,
+    val slots: List<LayoutPreviewSlot>,
+    val poseTemplateId: String? = null,
+) {
+    val slotCount: Int get() = slots.size
+}
 
 enum class Arrangement { SINGLE, ROW, COLUMN, DIAGONAL, TRIANGLE, GRID }
 
