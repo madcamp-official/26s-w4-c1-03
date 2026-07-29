@@ -6,6 +6,7 @@ import pytest
 
 from app.provider_capabilities import _service_ready
 from model_services.service import ModelService
+from model_services.viewcrafter_service import ViewCrafterBackend
 
 
 class FakeBackend:
@@ -48,3 +49,28 @@ def test_provider_capability_requires_ready_health(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("GAMDO_TEST_MODEL_URL", "http://127.0.0.1:8199")
     monkeypatch.setattr("urllib.request.urlopen", lambda *_args, **_kwargs: Response())
     assert _service_ready("GAMDO_TEST_MODEL_URL") is True
+
+
+def test_viewcrafter_partial_checkpoint_is_not_reported_ready(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "ViewCrafter"
+    checkpoint = repository / "checkpoints" / "model.ckpt"
+    dust3r = repository / "checkpoints" / "dust3r.pth"
+    python = tmp_path / "python"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"partial")
+    dust3r.write_bytes(b"complete-enough-for-this-test")
+    python.write_bytes(b"executable")
+    monkeypatch.setenv("GAMDO_VIEWCRAFTER_REPOSITORY", str(repository))
+    monkeypatch.setenv("GAMDO_VIEWCRAFTER_PYTHON", str(python))
+    monkeypatch.setenv("GAMDO_VIEWCRAFTER_CHECKPOINT", str(checkpoint))
+    monkeypatch.setenv("GAMDO_DUST3R_CHECKPOINT", str(dust3r))
+    monkeypatch.setenv("GAMDO_VIEWCRAFTER_MIN_CHECKPOINT_BYTES", "8")
+    monkeypatch.setenv("GAMDO_DUST3R_MIN_CHECKPOINT_BYTES", "8")
+
+    ready, reason = ViewCrafterBackend().ready()
+
+    assert ready is False
+    assert "incomplete" in reason
