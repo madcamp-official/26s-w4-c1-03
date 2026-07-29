@@ -32,11 +32,16 @@ data class AnalysisStats(
  *   `assets/guide_config.json` (CFG-1). Deliberately has **no default**: a default
  *   here would be a second place the number lives, and the one that wins on device
  *   would depend on which call site forgot to pass it.
+ * @param pauseGate consulted before [onFrame], so a capture in flight gets the CPU
+ *   this pipeline would otherwise be holding. Null means "never pause". The frame
+ *   is still closed, and the detector is untouched — see [AnalysisPauseGate] for
+ *   why this is a skip and not a release.
  */
 class FrameAnalyzer(
     targetFps: Int,
     private val onStats: (AnalysisStats) -> Unit,
     private val onFrame: (ImageProxy) -> Unit = {},
+    private val pauseGate: AnalysisPauseGate? = null,
 ) : ImageAnalysis.Analyzer {
 
     private val cadence = AnalysisCadence(targetFps)
@@ -45,6 +50,14 @@ class FrameAnalyzer(
     override fun analyze(image: ImageProxy) {
         val now = System.nanoTime()
         try {
+            // Checked before the cadence, and returning here deliberately does not
+            // advance the cadence clock: the first frame after a capture is
+            // analysed immediately rather than waiting out an interval measured
+            // from before the shutter.
+            if (pauseGate?.isPaused(now) == true) {
+                window.onDropped()
+                return
+            }
             if (!cadence.shouldProcess(now)) {
                 window.onDropped()
                 return

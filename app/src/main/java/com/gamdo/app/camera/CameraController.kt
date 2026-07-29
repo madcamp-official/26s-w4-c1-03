@@ -235,18 +235,30 @@ class CameraController(context: Context) {
      *
      * Decode/rotate run on a background dispatcher, not the main thread: a
      * full-resolution JPEG decode is hundreds of ms and ~50MB per copy.
+     *
+     * @param trace debug instrumentation, null in release builds. Marks
+     *   [CapturePhase.CAMERA_X] the instant CameraX hands the image over and
+     *   [CapturePhase.DECODE] once the upright bitmap exists. **Those two are worth
+     *   separating precisely because logcat cannot separate them**: the work below
+     *   runs inside CameraX's own callback, so from the outside it is
+     *   indistinguishable from CameraX being slow — and up to three
+     *   full-resolution `Bitmap` copies happen in these four lines.
      */
-    suspend fun capture(): Bitmap =
+    suspend fun capture(trace: CaptureTrace? = null): Bitmap =
         suspendCancellableCoroutine { cont ->
             camera.takePicture(
                 Dispatchers.Default.asExecutor(),
                 object : ImageCapture.OnImageCapturedCallback() {
                     override fun onCaptureSuccess(image: ImageProxy) {
+                        // First statement in the callback: everything before it is
+                        // CameraX, everything after it is ours.
+                        trace?.mark(CapturePhase.CAMERA_X)
                         try {
                             var bitmap = image.toBitmap()
                                 .cropped(image.cropRect)
                                 .rotated(image.imageInfo.rotationDegrees)
                             if (isFront) bitmap = bitmap.mirroredHorizontally()
+                            trace?.mark(CapturePhase.DECODE)
                             cont.resume(bitmap)
                         } catch (t: Throwable) {
                             cont.resumeWithException(t)
