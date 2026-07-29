@@ -315,8 +315,18 @@ fun ResultScreen(
     // Every style in presets.json now has a filter of its own, so this is a lookup
     // rather than a when-chain with a fallback. The chain listed four of the six
     // and sent `clean_social` and `casual_portrait` to a different style's look.
-    val preferredFilter by produceState(LocalFilter.ORIGINAL, container) {
-        value = LocalFilter.forPresetId(container.settingsRepository.getStylePresetId())
+    // O-15 (1): the preset that was on screen when the shutter was pressed, not the
+    // one chosen during onboarding. `CameraScreen` already records it on the
+    // session; this reads that row and falls back to the profile when there is no
+    // session (a gallery import) or the session recorded none. Keyed on `capture`
+    // so it re-resolves once the row arrives — the first pass sees null.
+    val preferredFilter by produceState(LocalFilter.ORIGINAL, container, capture) {
+        val sessionPresetId = capture?.sessionId?.let { sessionId ->
+            runCatching { container.database.sessionsDao().get(sessionId)?.stylePresetId }.getOrNull()
+        }
+        value = LocalFilter.forPresetId(
+            openingPresetId(sessionPresetId, container.settingsRepository.getStylePresetId()),
+        )
     }
     // O-12's quieter half: seeding the saved style would put a look nobody picked
     // onto a photo from the user's own library. An app capture keeps the seed.

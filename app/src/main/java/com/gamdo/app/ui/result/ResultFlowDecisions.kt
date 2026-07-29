@@ -167,3 +167,30 @@ fun saveTargetFor(source: EditSourceKind): SaveTarget = when (source) {
     EditSourceKind.APP_CAPTURE -> SaveTarget.CAPTURE_DERIVATIVE
     EditSourceKind.DEVICE_PHOTO -> SaveTarget.NEW_FILE_ONLY
 }
+
+/**
+ * The preset an app capture opens on (**O-15 (1)**).
+ *
+ * The screen used to read `settingsRepository.getStylePresetId()` — the preset
+ * picked during onboarding. That was right while a preset meant *guide*: a
+ * mid-session camera pick configured one shot and had no business outliving it
+ * (TEAM.md §8 records that as deliberate).
+ *
+ * O-13 changed what a preset is. It is **colour** now, and colour belongs to the
+ * photograph. Shooting with 밤거리 on screen and opening the result in 깔끔한 소셜
+ * is therefore a defect rather than a policy — and O-14's preview colour turns it
+ * from a fact into something the user *watches* happen, because they will have
+ * framed the shot in 밤거리 before pressing the shutter.
+ *
+ * Nothing new is stored: `CameraScreen` already writes `stylePresetId = preset.id`
+ * into `sessions` at capture time. This only reads the right row.
+ *
+ * [sessionPresetId] is blank-tolerant because both it and [profilePresetId] come
+ * from nullable text columns, and a row that stored `""` is stating absence rather
+ * than naming a preset called empty string.
+ *
+ * Device photos never reach here — `opensOnPreferredStyle` keeps them on 원본
+ * (O-12), which is a different question with a different answer.
+ */
+fun openingPresetId(sessionPresetId: String?, profilePresetId: String?): String? =
+    sessionPresetId?.takeIf { it.isNotBlank() } ?: profilePresetId?.takeIf { it.isNotBlank() }
