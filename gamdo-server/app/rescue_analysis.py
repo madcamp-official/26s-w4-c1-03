@@ -7,9 +7,10 @@ from typing import Any
 from PIL import Image, ImageOps
 
 from .reference_analysis import get_reference_analyzer
+from .provider_capabilities import generation_capabilities
 
 
-ANALYSIS_VERSION = 1
+ANALYSIS_VERSION = 2
 MAX_REFERENCES = 4
 logger = logging.getLogger(__name__)
 
@@ -43,8 +44,10 @@ def analyze_rescue(
                 exc_info=True,
             )
         width, height = image.size
+        lighting = _lighting_diagnosis(image.convert("RGB"))
     analysis = get_reference_analyzer().analyze(payload)
     subjects = list(analysis.get("analysis", {}).get("subjects", []))
+    capabilities = generation_capabilities()
     recommendations: list[dict[str, Any]] = [{
         "id": "local_style",
         "kind": "local_style",
@@ -54,20 +57,27 @@ def analyze_rescue(
         "confidence": 1.0,
     }]
 
-    masks = _removal_masks(subjects)
-    if masks:
+    outpaint = _outpaint_recommendation(subjects, style_params, reference_composition)
+    if outpaint is not None and capabilities["outpaint"]:
+        recommendations.append(outpaint)
+
+    if capabilities["relight"] and lighting["backlightScore"] >= 0.18:
         recommendations.append({
-            "id": "remove_objects",
-            "kind": "remove_objects",
-            "title": "방해 요소 지우기",
-            "reason": "사진 가장자리나 주 피사체 주변의 방해 요소를 정리할 수 있습니다.",
-            "operation": {"type": "remove_objects", "masks": masks},
-            "confidence": round(min(0.95, 0.55 + 0.1 * len(masks)), 3),
+            "id": "relight",
+            "kind": "relight",
+            "title": "빛 균형 맞추기",
+            "reason": "피사체보다 뒤쪽이 밝아 얼굴과 주요 피사체가 어둡게 보입니다.",
+            "operation": {"type": "relight", "direction": "front", "strength": 0.65},
+            "confidence": round(min(0.95, 0.55 + lighting["backlightScore"]), 3),
         })
 
-    outpaint = _outpaint_recommendation(subjects, style_params, reference_composition)
-    if outpaint is not None:
-        recommendations.append(outpaint)
+    viewpoint = _viewpoint_recommendation(subjects)
+    if viewpoint is not None and capabilities["viewpoint"]:
+        recommendations.append(viewpoint)
+
+    # Object removal remains available from Direct edit, but is deliberately
+    # not a primary recommendation after AI3's composition-first product change.
+    masks = _removal_masks(subjects)
 
     return {
         "analysisVersion": ANALYSIS_VERSION,
@@ -75,11 +85,8 @@ def analyze_rescue(
         "image": {"width": width, "height": height},
         "analysis": analysis.get("analysis", {}),
         "recommendations": recommendations[:3],
-        "capabilities": {
-            "localStyle": True,
-            "removeObjects": bool(masks),
-            "outpaint": True,
-        },
+        "diagnostics": {"lighting": lighting},
+        "capabilities": {**capabilities, "removeObjects": capabilities["removeObjects"] and bool(masks)},
     }
 
 
@@ -142,3 +149,43 @@ def _target_margin(style_params: dict[str, Any] | None, reference: dict[str, Any
     if isinstance(ranges, list) and ranges:
         return max(0.05, min(0.35, float(ranges[-1]) * 0.25))
     return 0.08
+
+
+def _viewpoint_recommendation(subjects: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not subjects:
+        return None
+    primary = next((item for item in subjects if item.get("role") == "person"), subjects[0])
+    x, _, width, _ = primary.get("bbox", [0, 0, 0, 0])
+    center = float(x) + float(width) / 2.0
+    if 0.35 <= center <= 0.65:
+        return None
+    motion = "left" if center > 0.65 else "right"
+    return {
+        "id": "viewpoint",
+        "kind": "viewpoint",
+        "title": "보는 위치 바꾸기",
+        "reason": "피사체가 한쪽으로 치우쳐 작은 시점 이동으로 구도를 다시 만들 수 있습니다.",
+        "operation": {"type": "viewpoint", "motion": motion, "strength": "subtle"},
+        "confidence": round(min(0.9, 0.55 + abs(center - 0.5)), 3),
+    }
+
+
+def _lighting_diagnosis(image: Image.Image) -> dict[str, float]:
+    sample = image.resize((96, 96)).convert("L")
+    pixels = list(sample.getdata())
+    center: list[int] = []
+    border: list[int] = []
+    for y in range(96):
+        for x in range(96):
+            value = pixels[y * 96 + x]
+            if 24 <= x < 72 and 20 <= y < 82:
+                center.append(value)
+            else:
+                border.append(value)
+    center_luma = sum(center) / max(1, len(center)) / 255.0
+    border_luma = sum(border) / max(1, len(border)) / 255.0
+    return {
+        "centerLuminance": round(center_luma, 4),
+        "borderLuminance": round(border_luma, 4),
+        "backlightScore": round(max(0.0, border_luma - center_luma), 4),
+    }

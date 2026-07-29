@@ -148,6 +148,8 @@ enum class RescueOperation(val wire: String) {
     LOCAL_STYLE("local_style"),
     REMOVE_OBJECTS("remove_objects"),
     OUTPAINT("outpaint"),
+    VIEWPOINT("viewpoint"),
+    RELIGHT("relight"),
     ;
 
     companion object {
@@ -163,6 +165,8 @@ fun isEnabled(operation: RescueOperation, capabilities: RescueCapabilities): Boo
     // 운영 상태"). The app does not decide this — it just refuses to offer what the
     // response says is not runnable.
     RescueOperation.OUTPAINT -> capabilities.outpaint
+    RescueOperation.VIEWPOINT -> capabilities.viewpoint
+    RescueOperation.RELIGHT -> capabilities.relight
 }
 
 /**
@@ -194,7 +198,8 @@ fun operationType(operation: JsonObject): String? = operation["type"]?.jsonPrimi
  */
 fun requiresUpload(operation: JsonObject): Boolean =
     when (RescueOperation.fromWire(operationType(operation))) {
-        RescueOperation.REMOVE_OBJECTS, RescueOperation.OUTPAINT -> true
+        RescueOperation.REMOVE_OBJECTS, RescueOperation.OUTPAINT,
+        RescueOperation.VIEWPOINT, RescueOperation.RELIGHT -> true
         RescueOperation.LOCAL_STYLE, null -> false
     }
 
@@ -222,6 +227,8 @@ fun progressMessageFor(operation: JsonObject?): String =
     when (RescueOperation.fromWire(operation?.let(::operationType))) {
         RescueOperation.REMOVE_OBJECTS -> "방해 요소를 지우고 있어요"
         RescueOperation.OUTPAINT -> "여백을 넓히고 있어요"
+        RescueOperation.VIEWPOINT -> "보는 위치를 바꾸고 있어요"
+        RescueOperation.RELIGHT -> "빛의 균형을 맞추고 있어요"
         // Also the analyze step, which has no operation yet.
         RescueOperation.LOCAL_STYLE, null -> "사진을 살펴보고 있어요"
     }
@@ -237,6 +244,8 @@ fun confirmMessageFor(operation: JsonObject): String =
     when (RescueOperation.fromWire(operationType(operation))) {
         RescueOperation.REMOVE_OBJECTS -> "방해 요소를 지울게요"
         RescueOperation.OUTPAINT -> "여백을 넓힐게요"
+        RescueOperation.VIEWPOINT -> "보는 위치를 바꿀게요"
+        RescueOperation.RELIGHT -> "빛의 균형을 맞출게요"
         RescueOperation.LOCAL_STYLE -> "지금 보정만 그대로 둘게요"
         null -> "지금 보정만 그대로 둘게요"
     }

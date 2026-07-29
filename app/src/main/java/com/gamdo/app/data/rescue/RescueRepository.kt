@@ -13,8 +13,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 
 class RescueRepository(
@@ -46,8 +44,7 @@ class RescueRepository(
         style: JsonObject,
     ): RescueRunResult = withContext(Dispatchers.IO) {
         val jobId = "job_${Ulid.generate()}"
-        val operationType = operation["type"]?.jsonPrimitive?.contentOrNull
-        api.createEditJob(jobId, captureRef, kotlinx.serialization.json.JsonArray(listOf(operation)), style, if (operationType == "outpaint") 1 else 2, image)
+        api.createEditJob(jobId, captureRef, kotlinx.serialization.json.JsonArray(listOf(operation)), style, 2, image)
         val started = System.currentTimeMillis()
         var status: EditJobStatus
         while (true) {

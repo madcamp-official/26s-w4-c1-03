@@ -120,6 +120,7 @@ data class RescueAnalysisResponse(
     val captureRef: String = "",
     val image: RescueImageInfo = RescueImageInfo(),
     val analysis: JsonObject = JsonObject(emptyMap()),
+    val diagnostics: JsonObject = JsonObject(emptyMap()),
     val recommendations: List<RescueRecommendation> = emptyList(),
     val capabilities: RescueCapabilities = RescueCapabilities(),
 )
@@ -142,6 +143,8 @@ data class RescueCapabilities(
     val localStyle: Boolean = true,
     val removeObjects: Boolean = false,
     val outpaint: Boolean = false,
+    val viewpoint: Boolean = false,
+    val relight: Boolean = false,
 )
 
 /**

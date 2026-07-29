@@ -138,7 +138,7 @@ def test_rescue_analysis_returns_recommendations_without_creating_job() -> None:
         )
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["analysisVersion"] == 1
+    assert payload["analysisVersion"] == 2
     assert payload["captureRef"] == "cap_rescue_1"
     assert payload["recommendations"][0]["kind"] == "local_style"
     assert payload["capabilities"]["localStyle"] is True
@@ -260,6 +260,42 @@ def test_outpaint_is_accepted_as_a_single_explicit_operation() -> None:
         )
     assert response.status_code == 202
     assert response.json()["status"] == "queued"
+
+
+def test_outpaint_all_is_accepted_at_supported_steps() -> None:
+    form = {
+        "jobId": "job_outpaint_all",
+        "captureRef": "cap_outpaint_all",
+        "operations": json.dumps([{"type": "outpaint", "direction": "all", "ratio": 0.10}]),
+    }
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/edit-jobs",
+            headers={"X-Device-Id": "outpaint-all-device"},
+            data=form,
+            files={"image": ("input.png", image_bytes(), "image/png")},
+        )
+    assert response.status_code == 202, response.text
+
+
+@pytest.mark.parametrize("operation", [
+    {"type": "viewpoint", "motion": "left", "strength": "subtle"},
+    {"type": "relight", "direction": "front", "strength": 0.65},
+])
+def test_new_composition_operations_are_validated_and_queued(operation: dict) -> None:
+    suffix = operation["type"]
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/edit-jobs",
+            headers={"X-Device-Id": f"{suffix}-device"},
+            data={
+                "jobId": f"job_{suffix}_valid",
+                "captureRef": f"cap_{suffix}_valid",
+                "operations": json.dumps([operation]),
+            },
+            files={"image": ("input.png", image_bytes(), "image/png")},
+        )
+    assert response.status_code == 202, response.text
 
 
 def test_edit_job_rejects_non_image_payload_without_persisting_file() -> None:

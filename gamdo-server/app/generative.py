@@ -39,6 +39,16 @@ class GenerativeEditProvider(Protocol):
     ) -> list[GeneratedCandidate]:
         """Return candidates with a bounded extension on one image edge."""
 
+    def viewpoint(
+        self, image_path: Path, operations: list[dict[str, Any]], result_count: int,
+    ) -> list[GeneratedCandidate]:
+        """Return a bounded novel-view reconstruction."""
+
+    def relight(
+        self, image_path: Path, operations: list[dict[str, Any]], result_count: int,
+    ) -> list[GeneratedCandidate]:
+        """Return structure-preserving relighting candidates."""
+
 
 class UnavailableProvider:
     def remove_objects(
@@ -51,6 +61,12 @@ class UnavailableProvider:
 
     def outpaint(self, image_path: Path, operations: list[dict[str, Any]], result_count: int) -> list[GeneratedCandidate]:
         raise ProviderNotReady("generative provider is not configured")
+
+    def viewpoint(self, image_path: Path, operations: list[dict[str, Any]], result_count: int) -> list[GeneratedCandidate]:
+        raise ProviderNotReady("viewpoint provider is not configured")
+
+    def relight(self, image_path: Path, operations: list[dict[str, Any]], result_count: int) -> list[GeneratedCandidate]:
+        raise ProviderNotReady("relight provider is not configured")
 
 
 class IdentityVerifier(Protocol):
@@ -264,7 +280,10 @@ def _valid_outpaint_dimensions(
     ratio = float(operation.get("ratio", 0.0))
     direction = operation.get("direction")
     width, height = original
-    expected = (round(width * (1 + ratio)), height) if direction in {"left", "right"} else (width, round(height * (1 + ratio)))
+    if direction == "all":
+        expected = (round(width * (1 + ratio * 2)), round(height * (1 + ratio * 2)))
+    else:
+        expected = (round(width * (1 + ratio)), height) if direction in {"left", "right"} else (width, round(height * (1 + ratio)))
     return generated == expected
 
 
@@ -285,6 +304,10 @@ def _outpaint_interior_distance(
         crop = generated_rgb.crop((0, 0, width, height))
     elif direction == "top":
         crop = generated_rgb.crop((0, generated.height - height, width, generated.height))
+    elif direction == "all":
+        extra_x = generated.width - width
+        extra_y = generated.height - height
+        crop = generated_rgb.crop((extra_x // 2, extra_y // 2, extra_x // 2 + width, extra_y // 2 + height))
     else:
         crop = generated_rgb.crop((0, 0, width, height))
     # Downsampled mean absolute error avoids storing a second full-resolution copy.

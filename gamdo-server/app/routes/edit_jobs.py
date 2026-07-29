@@ -23,6 +23,7 @@ ALLOWED_OPERATIONS = {
     "remove_objects",
     "simplify_background",
     "outpaint",
+    "viewpoint",
     "fill_rotation_gap",
     "relight",
     "eye_fix",
@@ -120,19 +121,48 @@ def parse_operations(raw: str) -> list[dict[str, Any]]:
         elif operation.get("type") == "outpaint":
             direction = operation.get("direction")
             ratio = operation.get("ratio")
-            if direction not in {"top", "bottom", "left", "right"}:
+            if direction not in {"top", "bottom", "left", "right", "all"}:
                 raise HTTPException(status_code=422, detail={
                     "code": "invalid_outpaint_direction",
-                    "message": "outpaint direction must be top, bottom, left, or right",
+                    "message": "outpaint direction must be top, bottom, left, right, or all",
                     "retryable": False,
                 })
-            if not isinstance(ratio, (int, float)) or not math.isfinite(float(ratio)) or not 0 < float(ratio) <= 0.15:
+            allowed_ratios = (0.05, 0.10, 0.15)
+            if not isinstance(ratio, (int, float)) or not math.isfinite(float(ratio)) or not any(abs(float(ratio) - allowed) < 1e-6 for allowed in allowed_ratios):
                 raise HTTPException(status_code=422, detail={
                     "code": "invalid_outpaint_ratio",
-                    "message": "outpaint ratio must be greater than 0 and at most 0.15",
+                    "message": "outpaint ratio must be 0.05, 0.10, or 0.15",
                     "retryable": False,
                 })
             operation["ratio"] = round(float(ratio), 6)
+        elif operation.get("type") == "viewpoint":
+            if operation.get("motion") not in {"left", "right", "up", "down", "dolly_out"}:
+                raise HTTPException(status_code=422, detail={
+                    "code": "invalid_viewpoint_motion",
+                    "message": "viewpoint motion is not supported",
+                    "retryable": False,
+                })
+            if operation.get("strength") not in {"subtle", "standard"}:
+                raise HTTPException(status_code=422, detail={
+                    "code": "invalid_viewpoint_strength",
+                    "message": "viewpoint strength must be subtle or standard",
+                    "retryable": False,
+                })
+        elif operation.get("type") == "relight":
+            if operation.get("direction") not in {"front", "left", "right"}:
+                raise HTTPException(status_code=422, detail={
+                    "code": "invalid_relight_direction",
+                    "message": "relight direction must be front, left, or right",
+                    "retryable": False,
+                })
+            strength = operation.get("strength")
+            if not isinstance(strength, (int, float)) or not math.isfinite(float(strength)) or not 0.1 <= float(strength) <= 1.0:
+                raise HTTPException(status_code=422, detail={
+                    "code": "invalid_relight_strength",
+                    "message": "relight strength must be between 0.1 and 1.0",
+                    "retryable": False,
+                })
+            operation["strength"] = round(float(strength), 4)
     return value
 
 

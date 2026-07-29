@@ -57,7 +57,7 @@ class ComfyUiProvider(GenerativeEditProvider):
                 if not prompt_id:
                     raise ProviderNotReady("ComfyUI did not return a prompt id")
                 item = self._wait_for_history(str(prompt_id))
-                candidates.extend(self._download_outputs(item["outputs"], str(prompt_id), 1, seed))
+                candidates.extend(self._download_outputs(item["outputs"], str(prompt_id), 1, seed, "remove_objects"))
             return candidates
         finally:
             if temporary_upload is not None:
@@ -79,16 +79,14 @@ class ComfyUiProvider(GenerativeEditProvider):
         try:
             input_name = self._upload_image(prepared)
             candidates: list[GeneratedCandidate] = []
-            # AI3 deliberately keeps one candidate: outpaint is the slower,
-            # optional path and must never multiply queue time.
-            for seed in range(1):
+            for seed in range(max(1, result_count)):
                 seeded = _inject_workflow_inputs(workflow, input_name, operations, 1, seed)
                 prompt = self._request_json("/prompt", {"prompt": seeded})
                 prompt_id = prompt.get("prompt_id")
                 if not prompt_id:
                     raise ProviderNotReady("ComfyUI did not return an outpaint prompt id")
                 item = self._wait_for_history(str(prompt_id))
-                for candidate in self._download_outputs(item["outputs"], str(prompt_id), 1, seed):
+                for candidate in self._download_outputs(item["outputs"], str(prompt_id), 1, seed, "outpaint"):
                     _restore_outpaint_interior(candidate.path, image_path, operation)
                     candidates.append(GeneratedCandidate(candidate.path, candidate.seed, "outpaint"))
             return candidates
@@ -152,6 +150,7 @@ class ComfyUiProvider(GenerativeEditProvider):
         prompt_id: str,
         result_count: int,
         seed: int = 0,
+        operation: str = "remove_objects",
     ) -> list[GeneratedCandidate]:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         candidates: list[GeneratedCandidate] = []
@@ -171,7 +170,7 @@ class ComfyUiProvider(GenerativeEditProvider):
                         path.write_bytes(response.read())
                 except OSError as exc:
                     raise ProviderNotReady("ComfyUI output download failed") from exc
-        candidates.append(GeneratedCandidate(path=path, seed=seed + index, operation="remove_objects"))
+                candidates.append(GeneratedCandidate(path=path, seed=seed + index, operation=operation))
         return candidates
 
 
@@ -179,13 +178,18 @@ def provider_from_environment() -> GenerativeEditProvider:
     """Build the configured provider without making an unconfigured server call."""
     base_url = os.getenv("GAMDO_COMFYUI_URL")
     workflow_value = os.getenv("GAMDO_COMFYUI_WORKFLOW")
-    if not base_url or not workflow_value:
-        return UnavailableProvider()
-    return ComfyUiProvider(
+    comfy: GenerativeEditProvider = UnavailableProvider() if not base_url or not workflow_value else ComfyUiProvider(
         base_url=base_url,
         workflow_path=Path(workflow_value),
         output_dir=Path(os.getenv("GAMDO_GENERATED_OUTPUT_DIR", "storage/results")),
         timeout_seconds=float(os.getenv("GAMDO_COMFYUI_TIMEOUT_SECONDS", "120")),
+    )
+    from .http_generation_provider import CompositeGenerativeProvider, HttpOperationProvider
+    timeout = float(os.getenv("GAMDO_EXTERNAL_PROVIDER_TIMEOUT_SECONDS", "280"))
+    return CompositeGenerativeProvider(
+        comfy,
+        HttpOperationProvider(os.getenv("GAMDO_RELIGHT_URL"), "relight", timeout),
+        HttpOperationProvider(os.getenv("GAMDO_VIEWPOINT_URL"), "viewpoint", timeout),
     )
 
 
@@ -230,11 +234,11 @@ def _outpaint_upload_path(image_path: Path, operation: dict[str, Any]) -> Path:
     with Image.open(image_path) as source:
         source = source.convert("RGB")
         width, height = source.size
-        extra_width = round(width * ratio) if direction in {"left", "right"} else 0
-        extra_height = round(height * ratio) if direction in {"top", "bottom"} else 0
+        extra_width = round(width * ratio) * (2 if direction == "all" else 1) if direction in {"left", "right", "all"} else 0
+        extra_height = round(height * ratio) * (2 if direction == "all" else 1) if direction in {"top", "bottom", "all"} else 0
         canvas = Image.new("RGB", (width + extra_width, height + extra_height), (128, 128, 128))
-        offset_x = extra_width if direction == "left" else 0
-        offset_y = extra_height if direction == "top" else 0
+        offset_x = extra_width if direction == "left" else extra_width // 2 if direction == "all" else 0
+        offset_y = extra_height if direction == "top" else extra_height // 2 if direction == "all" else 0
         canvas.paste(source, (offset_x, offset_y))
     handle = tempfile.NamedTemporaryFile(prefix="gamdo-outpaint-", suffix=".png", delete=False)
     path = Path(handle.name)
@@ -249,10 +253,10 @@ def _restore_outpaint_interior(candidate_path: Path, original_path: Path, operat
         source = source.convert("RGB")
         generated = generated.convert("RGB")
         direction = operation.get("direction")
-        extra_x = generated.width - source.width if direction in {"left", "right"} else 0
-        extra_y = generated.height - source.height if direction in {"top", "bottom"} else 0
-        offset_x = extra_x if direction == "left" else 0
-        offset_y = extra_y if direction == "top" else 0
+        extra_x = generated.width - source.width if direction in {"left", "right", "all"} else 0
+        extra_y = generated.height - source.height if direction in {"top", "bottom", "all"} else 0
+        offset_x = extra_x if direction == "left" else extra_x // 2 if direction == "all" else 0
+        offset_y = extra_y if direction == "top" else extra_y // 2 if direction == "all" else 0
         generated.paste(source, (offset_x, offset_y))
         generated.save(candidate_path, format="PNG")
 

@@ -117,3 +117,19 @@ def test_candidate_validator_allows_bounded_outpaint_with_original_interior(tmp_
     )
 
     assert result.passed is True
+
+
+def test_candidate_validator_allows_all_side_outpaint_with_restored_interior(tmp_path: Path) -> None:
+    original = tmp_path / "original.png"
+    candidate = tmp_path / "candidate.png"
+    Image.new("RGB", (20, 20), (120, 140, 120)).save(original)
+    output = Image.new("RGB", (24, 24), (20, 30, 40))
+    output.paste(Image.open(original), (2, 2))
+    output.save(candidate)
+
+    result = CandidateValidator(SameIdentity()).validate(
+        original,
+        GeneratedCandidate(candidate, 5, operation="outpaint"),
+        [{"type": "outpaint", "direction": "all", "ratio": 0.10}],
+    )
+    assert result.passed is True

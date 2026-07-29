@@ -311,6 +311,21 @@ class RescueFlowDecisionsTest {
         assertTrue(requiresUpload(buildJsonObject { put("type", "remove_objects") }))
         assertTrue(requiresUpload(buildJsonObject { put("type", "outpaint") }))
         assertFalse(requiresUpload(buildJsonObject { put("type", "local_style") }))
+        assertTrue(requiresUpload(buildJsonObject { put("type", "viewpoint") }))
+        assertTrue(requiresUpload(buildJsonObject { put("type", "relight") }))
+    }
+
+    @Test
+    fun `viewpoint and relight require their own server capability`() {
+        val recommendations = listOf(
+            recommendation("viewpoint", "viewpoint"),
+            recommendation("relight", "relight"),
+        )
+        assertTrue(offerableRecommendations(response(recommendations, RescueCapabilities())).isEmpty())
+        val offered = offerableRecommendations(
+            response(recommendations, RescueCapabilities(viewpoint = true, relight = true)),
+        )
+        assertEquals(listOf("viewpoint", "relight"), offered.map { it.kind })
     }
 
     /**
@@ -355,6 +370,8 @@ class RescueFlowDecisionsTest {
         assertEquals("방해 요소를 지우고 있어요", progressMessageFor(buildJsonObject { put("type", "remove_objects") }))
         assertEquals("여백을 넓히고 있어요", progressMessageFor(buildJsonObject { put("type", "outpaint") }))
         assertEquals("사진을 살펴보고 있어요", progressMessageFor(null))
+        assertEquals("보는 위치를 바꾸고 있어요", progressMessageFor(buildJsonObject { put("type", "viewpoint") }))
+        assertEquals("빛의 균형을 맞추고 있어요", progressMessageFor(buildJsonObject { put("type", "relight") }))
     }
 
     @Test
@@ -363,6 +380,8 @@ class RescueFlowDecisionsTest {
         assertEquals("여백을 넓힐게요", confirmMessageFor(buildJsonObject { put("type", "outpaint") }))
         assertEquals("지금 보정만 그대로 둘게요", confirmMessageFor(buildJsonObject { put("type", "local_style") }))
         assertEquals("지금 보정만 그대로 둘게요", confirmMessageFor(JsonObject(emptyMap())))
+        assertEquals("보는 위치를 바꿀게요", confirmMessageFor(buildJsonObject { put("type", "viewpoint") }))
+        assertEquals("빛의 균형을 맞출게요", confirmMessageFor(buildJsonObject { put("type", "relight") }))
     }
 
     /**

@@ -64,4 +64,23 @@ def test_analyze_rescue_survives_a_corrupt_orientation_tag(monkeypatch: pytest.M
 
     result = analyze_rescue(payload)
 
-    assert result["analysisVersion"] == 1
+    assert result["analysisVersion"] == 2
+
+
+def test_generation_capabilities_follow_deployment_readiness(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GAMDO_COMFYUI_URL", raising=False)
+    monkeypatch.delenv("GAMDO_RELIGHT_URL", raising=False)
+    monkeypatch.delenv("GAMDO_VIEWPOINT_URL", raising=False)
+    result = analyze_rescue(_jpeg_bytes(_upright_image()))
+    assert result["capabilities"]["outpaint"] is False
+    assert result["capabilities"]["relight"] is False
+    assert result["capabilities"]["viewpoint"] is False
+
+
+def test_backlight_diagnostic_detects_bright_border_and_dark_subject() -> None:
+    image = Image.new("RGB", (200, 200), "white")
+    for y in range(45, 170):
+        for x in range(45, 155):
+            image.putpixel((x, y), (20, 20, 20))
+    result = analyze_rescue(_jpeg_bytes(image))
+    assert result["diagnostics"]["lighting"]["backlightScore"] >= 0.18

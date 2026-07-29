@@ -11,6 +11,7 @@ from app.comfyui_provider import (
     provider_from_environment,
 )
 from app.generative import ProviderNotReady
+from app.http_generation_provider import CompositeGenerativeProvider
 
 
 def test_comfyui_provider_falls_back_without_deployment_config(tmp_path: Path) -> None:
@@ -56,7 +57,15 @@ def test_masked_upload_uses_transient_alpha_mask(tmp_path: Path) -> None:
 def test_provider_from_environment_defaults_to_safe_fallback(monkeypatch) -> None:
     monkeypatch.delenv("GAMDO_COMFYUI_URL", raising=False)
     monkeypatch.delenv("GAMDO_COMFYUI_WORKFLOW", raising=False)
-    assert provider_from_environment().__class__.__name__ == "UnavailableProvider"
+    monkeypatch.delenv("GAMDO_RELIGHT_URL", raising=False)
+    monkeypatch.delenv("GAMDO_VIEWPOINT_URL", raising=False)
+    provider = provider_from_environment()
+    assert isinstance(provider, CompositeGenerativeProvider)
+    assert provider.comfy.__class__.__name__ == "UnavailableProvider"
+    with pytest.raises(ProviderNotReady):
+        provider.relight(Path("missing.png"), [], 1)
+    with pytest.raises(ProviderNotReady):
+        provider.viewpoint(Path("missing.png"), [], 1)
 
 
 def test_provider_from_environment_builds_comfy_provider(monkeypatch, tmp_path: Path) -> None:
@@ -66,5 +75,24 @@ def test_provider_from_environment_builds_comfy_provider(monkeypatch, tmp_path: 
     monkeypatch.setenv("GAMDO_COMFYUI_WORKFLOW", str(workflow))
     monkeypatch.setenv("GAMDO_GENERATED_OUTPUT_DIR", str(tmp_path / "results"))
     provider = provider_from_environment()
-    assert isinstance(provider, ComfyUiProvider)
-    assert provider.base_url == "http://127.0.0.1:18188"
+    assert isinstance(provider, CompositeGenerativeProvider)
+    assert isinstance(provider.comfy, ComfyUiProvider)
+    assert provider.comfy.base_url == "http://127.0.0.1:18188"
+
+
+def test_download_outputs_returns_each_downloaded_file_with_operation(monkeypatch, tmp_path: Path) -> None:
+    provider = ComfyUiProvider("http://127.0.0.1:18188", None, tmp_path)
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def read(self): return b"png"
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda *_args, **_kwargs: Response())
+    outputs = {"node": {"images": [
+        {"filename": "a.png", "subfolder": "", "type": "output"},
+        {"filename": "b.png", "subfolder": "", "type": "output"},
+    ]}}
+    candidates = provider._download_outputs(outputs, "prompt", 2, seed=7, operation="outpaint")
+    assert len(candidates) == 2
+    assert [item.operation for item in candidates] == ["outpaint", "outpaint"]
