@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from PIL import Image, ImageDraw
 
-from app.reference_analysis import analyze_reference
+from app.reference_analysis import analyze_reference, get_reference_analyzer
 
 
 def sample(index: int) -> bytes:
@@ -26,6 +26,9 @@ def sample(index: int) -> bytes:
 
 
 def main() -> None:
+    # Production warms the analyzer during FastAPI lifespan. Do the same here
+    # so model loading is not incorrectly counted as request latency.
+    get_reference_analyzer()
     durations = []
     for index in range(10):
         started = time.perf_counter()
