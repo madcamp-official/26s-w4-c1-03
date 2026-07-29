@@ -1,5 +1,7 @@
 package com.gamdo.app.detect
 
+import com.gamdo.app.guide.parseGuideConfigBundle
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -126,5 +128,46 @@ class ThrottledPoseDetectorTest {
             runCatching { ThrottledPoseDetector(Recording(listOf(null)), refreshEveryFrames = bad) }
                 .onSuccess { throw AssertionError("refreshEveryFrames=$bad should not be accepted") }
         }
+    }
+
+    /**
+     * The end-to-end shape of the line the camera host has to write, mirroring
+     * `the asset divisor drives the cadence when wired through` in
+     * [ThrottledFaceDetectorTest].
+     *
+     * Pose was the last divisor in the pipeline still compiled in, so this is the
+     * test that would have caught its absence: if the asset value stops reaching the
+     * constructor the throttle silently reverts to its code default, and the 89.8ms
+     * comes back with nothing failing. Parsing the shipped asset rather than a
+     * literal also pins `poseRefreshEveryFrames` as a real key — a typo in
+     * `guide_config.json` fails here instead of on a device.
+     */
+    @Test
+    fun `the asset divisor drives the cadence when wired through`() {
+        val bundle = parseGuideConfigBundle(
+            readAsset("guide_config.json").replace("\"poseRefreshEveryFrames\": 2", "\"poseRefreshEveryFrames\": 4"),
+        )
+        val delegate = Recording(listOf(pose(0.9f)))
+        val throttled = ThrottledPoseDetector(
+            delegate,
+            refreshEveryFrames = bundle.objectGuide.poseRefreshEveryFrames,
+        )
+
+        repeat(8) { throttled.detect(frame) }
+
+        // frames 1, 4, 8 with a divisor of 4 — not the 5 calls a divisor of 2 gives.
+        assertEquals("the asset value, not the code default, must set the cadence", 3, delegate.calls)
+    }
+
+    private fun readAsset(name: String): String {
+        var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
+        while (dir != null) {
+            for (candidate in listOf("src/main/assets/$name", "app/src/main/assets/$name")) {
+                val file = File(dir, candidate)
+                if (file.isFile) return file.readText()
+            }
+            dir = dir.parentFile
+        }
+        error("assets/$name not found from ${System.getProperty("user.dir")}")
     }
 }
