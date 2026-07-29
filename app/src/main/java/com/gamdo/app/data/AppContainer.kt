@@ -135,4 +135,12 @@ class AppContainer(context: Context) {
     )
 
     val rescueController: RescueController = RescueController(rescueRepository)
+
+    /** Delegated web-camera session; UI may render its QR/share link directly. */
+    val shootSessionRepository: ShootSessionRepository = ShootSessionRepository(
+        api = apiClient,
+        settings = settingsRepository,
+        cacheDir = File(appContext.cacheDir, "shoot-sessions"),
+        json = json,
+    )
 }

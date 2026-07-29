@@ -17,6 +17,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.http.GET
+import retrofit2.http.Body
 import retrofit2.http.Header
 import retrofit2.http.Multipart
 import retrofit2.http.POST
@@ -54,6 +55,10 @@ interface GamdoApiService {
         @Part("captureRef") captureRef: okhttp3.RequestBody,
         @Part("styleParams") styleParams: okhttp3.RequestBody,
         @Part("referenceComposition") referenceComposition: okhttp3.RequestBody,
+        @Part("profileVersion") profileVersion: okhttp3.RequestBody,
+        @Part("sceneContext") sceneContext: okhttp3.RequestBody,
+        @Part("gamdoPolicy") gamdoPolicy: okhttp3.RequestBody,
+        @Part("reinterpretationLevel") reinterpretationLevel: okhttp3.RequestBody,
         @Part image: MultipartBody.Part,
     ): RescueAnalysisResponse
 
@@ -74,7 +79,38 @@ interface GamdoApiService {
         @Header("X-Device-Id") deviceId: String,
         @Path("jobId") jobId: String,
     ): EditJobStatus
+
+    @POST("shoot-sessions")
+    suspend fun createShootSession(
+        @Header("X-Device-Id") deviceId: String,
+        @Body policy: JsonObject,
+    ): ShootSessionCreated
+
+    @GET("shoot-sessions/{sessionId}")
+    suspend fun getShootSession(
+        @Path("sessionId") sessionId: String,
+        @Header("X-Owner-Token") ownerToken: String,
+    ): ShootSessionStatus
+
+    @POST("shoot-sessions/{sessionId}/claim")
+    suspend fun claimShootSession(
+        @Path("sessionId") sessionId: String,
+        @Header("X-Owner-Token") ownerToken: String,
+    ): ShootSessionClaimed
 }
+
+@Serializable
+data class ShootSessionCreated(
+    val sessionId: String,
+    val ownerToken: String,
+    val shareUrl: String,
+    val expiresAt: Long,
+    val maxPhotos: Int,
+)
+
+@Serializable data class ShootPhotoInfo(val photoId: String, val createdAt: Long)
+@Serializable data class ShootSessionStatus(val sessionId: String, val expiresAt: Long, val maxPhotos: Int, val photos: List<ShootPhotoInfo>)
+@Serializable data class ShootSessionClaimed(val claimed: Boolean)
 
 @Serializable
 data class EditJobAccepted(
@@ -123,6 +159,9 @@ data class RescueAnalysisResponse(
     val diagnostics: JsonObject = JsonObject(emptyMap()),
     val recommendations: List<RescueRecommendation> = emptyList(),
     val capabilities: RescueCapabilities = RescueCapabilities(),
+    val profileVersion: Int = 1,
+    val sceneContext: String = "GENERAL",
+    val reinterpretationLevel: String = "GAMDO",
 )
 
 @Serializable
@@ -283,6 +322,10 @@ class GamdoApiClient(
         captureRef: String,
         styleParams: JsonObject = JsonObject(emptyMap()),
         referenceComposition: JsonObject = JsonObject(emptyMap()),
+        profileVersion: Int = 1,
+        sceneContext: String = "GENERAL",
+        gamdoPolicy: JsonObject = JsonObject(emptyMap()),
+        reinterpretationLevel: String = "GAMDO",
     ): RescueAnalysisResponse = callApi {
         val text = "text/plain".toMediaType()
         service.analyzeRescue(
@@ -290,8 +333,36 @@ class GamdoApiClient(
             captureRef.toRequestBody(text),
             json.encodeToString(JsonObject.serializer(), styleParams).toRequestBody(text),
             json.encodeToString(JsonObject.serializer(), referenceComposition).toRequestBody(text),
+            profileVersion.toString().toRequestBody(text),
+            sceneContext.toRequestBody(text),
+            json.encodeToString(JsonObject.serializer(), gamdoPolicy).toRequestBody(text),
+            reinterpretationLevel.toRequestBody(text),
             imagePart(image),
         )
+    }
+
+    suspend fun createShootSession(policy: JsonObject): ShootSessionCreated = callApi {
+        service.createShootSession(deviceIdStore.getOrCreate(), policy)
+    }
+
+    suspend fun getShootSession(sessionId: String, ownerToken: String): ShootSessionStatus = callApi {
+        service.getShootSession(sessionId, ownerToken)
+    }
+
+    suspend fun claimShootSession(sessionId: String, ownerToken: String): ShootSessionClaimed = callApi {
+        service.claimShootSession(sessionId, ownerToken)
+    }
+
+    suspend fun downloadShootPhoto(sessionId: String, photoId: String, ownerToken: String, destination: File) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val url = normalizedBaseUrl + "shoot-sessions/$sessionId/photos/$photoId"
+            val request = Request.Builder().url(url).header("X-Owner-Token", ownerToken).get().build()
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw IOException("shoot photo download failed: ${response.code}")
+                destination.parentFile?.mkdirs()
+                destination.outputStream().use { output -> response.body?.byteStream()?.copyTo(output) ?: error("empty shoot response") }
+            }
+        }
     }
 
     /** Runs [block], converting a raw [HttpException] into a parsed [GamdoApiException]. */
