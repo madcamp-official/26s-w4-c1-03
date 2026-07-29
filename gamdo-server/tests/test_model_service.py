@@ -101,3 +101,15 @@ def test_viewcrafter_supplies_every_camera_axis_as_a_list() -> None:
 def test_viewcrafter_rejects_unknown_camera_motion() -> None:
     with pytest.raises(ValueError, match="unsupported viewpoint motion"):
         camera_trajectory_args("orbit")
+
+
+def test_viewcrafter_defaults_to_camp2_safe_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for key in ("GAMDO_VIEWCRAFTER_CONFIG", "GAMDO_VIEWCRAFTER_HEIGHT", "GAMDO_VIEWCRAFTER_WIDTH"):
+        monkeypatch.delenv(key, raising=False)
+
+    backend = ViewCrafterBackend()
+
+    assert backend.config.name == "inference_pvd_512.yaml"
+    assert (backend.width, backend.height) == (512, 320)

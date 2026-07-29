@@ -37,8 +37,10 @@ class ViewCrafterBackend:
         self.dust3r = Path(os.getenv("GAMDO_DUST3R_CHECKPOINT", str(self.repository / "checkpoints/DUSt3R_ViTLarge_BaseDecoder_512_dpt.pth")))
         self.config = Path(os.getenv(
             "GAMDO_VIEWCRAFTER_CONFIG",
-            str(self.repository / "configs/inference_pvd_1024.yaml"),
+            str(self.repository / "configs/inference_pvd_512.yaml"),
         ))
+        self.height = int(os.getenv("GAMDO_VIEWCRAFTER_HEIGHT", "320"))
+        self.width = int(os.getenv("GAMDO_VIEWCRAFTER_WIDTH", "512"))
         self.video_length = int(os.getenv("GAMDO_VIEWCRAFTER_VIDEO_LENGTH", "16"))
         self._runtime_check: tuple[bool, str] | None = None
 
@@ -83,7 +85,8 @@ class ViewCrafterBackend:
                 self.python, "inference.py", "--image_dir", str(source), "--out_dir", str(work),
                 "--exp_name", name, "--mode", "single_view_target", "--ckpt_path", str(self.checkpoint),
                 "--model_path", str(self.dust3r), "--config", str(self.config),
-                "--height", "576", "--width", "1024", "--video_length", str(self.video_length), "--ddim_steps", "25",
+                "--height", str(self.height), "--width", str(self.width),
+                "--video_length", str(self.video_length), "--ddim_steps", "25",
                 "--seed", str(seed), *trajectory,
             ]
             timeout = float(os.getenv("GAMDO_VIEWCRAFTER_TIMEOUT_SECONDS", "600"))
