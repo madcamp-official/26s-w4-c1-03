@@ -82,6 +82,82 @@ class ThrottledObjectSceneDetector(
 }
 
 /**
+ * Halves how often the face model runs.
+ *
+ * Face was the **last stage in the pipeline with no throttle at all**. Measured on
+ * SM-G970N over 80 frames at AP ~50°C: face 103.0ms mean / 103.4ms median on every
+ * frame, against a total of 405.4 mean / 302.6 median — 34% of the median frame,
+ * for 3.31 fps overall. Pose was already at 1/2, segmentation at 1/12, and objects
+ * are deliberately 1/1. Like every model here it does not get cheaper on an empty
+ * frame — it scans for a face and reports none — so cadence is the only lever the
+ * app has. It is a particularly pure one in this case: the repeating
+ * `Replacing 65 out of 65 node(s)` TFLite pair, twice per frame forever, is ML
+ * Kit's own face detector rebuilding an interpreter per call, and the only way to
+ * pay for that less often is to call it less often.
+ *
+ * See `faceRefreshEveryFrames` in `ObjectGuideConfigJson` for why the divisor is 2
+ * and not 3 or 4; the value is an asset key, and this default is only the fallback
+ * for a missing or corrupt asset.
+ *
+ * **An empty list clears the cache.** This is the list-shaped version of the
+ * property [ThrottledPoseDetector] documents for `null`, and the reason
+ * `review_report` #15 is not reintroduced here. For a nullable result the trap is
+ * `?.let { lastResult = it }`; for a list it is `takeIf { it.isNotEmpty() }` — the
+ * same bug wearing a collection's clothes. An empty list is a *result*, not the
+ * absence of one: it says "no face in this frame", which is exactly what a person
+ * walking out of frame produces. Treating it as "no new information" would keep
+ * `SceneGuideSessionController` feeding a PERSON candidate into the 3/5 tracker
+ * after the person had gone, and keep `brightnessSample`'s face region pinned to
+ * empty wall. So the refresh frame assigns the delegate's list unconditionally,
+ * and between refreshes the last *decision* is reused, including a decision of
+ * "nobody there".
+ *
+ * A list can also go stale in a way a nullable cannot — in its **count**. Two
+ * faces down to one is a non-empty refresh, so an emptiness check would miss it,
+ * while whole-value replacement handles both. That matters because every consumer
+ * picks the *largest* face ([SceneDetector]'s callers, `SceneProposalEngine`), so
+ * a retained second entry can win the selection outright.
+ *
+ * The cost of the throttle is one frame of delay before an arriving or departing
+ * face is noticed. Note it does not *create* the empty-list risk it inherits:
+ * `MlKitFaceDetector` already returns `emptyList()` on a failed `Tasks.await`, so
+ * a transient ML Kit error has always been able to blank the face for a frame.
+ * This makes such a blank last up to one frame longer, which is well inside
+ * `OverlayStabilizer`'s `visibleHoldFrames`/`silhouetteHoldFrames` of 6.
+ */
+class ThrottledFaceDetector(
+    private val delegate: FaceDetector,
+    private val refreshEveryFrames: Int = 2,
+) : FaceDetector {
+    init {
+        require(refreshEveryFrames >= 1) { "refreshEveryFrames must be >= 1, was $refreshEveryFrames" }
+    }
+
+    private var frameCount = 0
+    private var lastResult: List<FaceObservation> = emptyList()
+
+    override fun detect(frame: AnalysisFrame): List<FaceObservation> {
+        frameCount++
+        // The explicit first-frame case matters: without it the very first analysed
+        // frame of every camera open has no face at all, so the bracket and the
+        // face-region brightness sample both arrive late.
+        if (frameCount == 1 || frameCount % refreshEveryFrames == 0) {
+            // Assign unconditionally — see the class KDoc. Never
+            // `takeIf { it.isNotEmpty() }`.
+            lastResult = delegate.detect(frame)
+        }
+        return lastResult
+    }
+
+    override fun close() = delegate.close()
+
+    fun reset() {
+        frameCount = 0
+        lastResult = emptyList()
+    }
+}
+
+/**
  * Halves how often the pose model runs.
  *
  * Measured on SM-G970N: pose cost **89.8ms of a 263ms frame** and ran on every
@@ -91,19 +167,42 @@ class ThrottledObjectSceneDetector(
  * smooths the guide between updates, so the silhouette and foot marker do not
  * visibly step at half rate.
  *
+ * See `poseRefreshEveryFrames` in `ObjectGuideConfigJson` for why the divisor is 2;
+ * the value is an asset key, and this default is only the fallback for a missing or
+ * corrupt asset.
+ *
  * **A null result clears the cache.** This is the deliberate difference from
  * [ThrottledSubjectSceneSegmenter], which writes `?.let { lastResult = it }` and
  * therefore never forgets — once a subject has been seen it keeps being reported
  * after they leave (review_report #15). A pose cache behaving that way would hold
  * a person silhouette over an empty wall. Between refreshes the *last decision* is
  * reused, including a decision of "nobody there".
+ *
+ * ## [phaseOffset] — why pose runs on the frames face does not
+ *
+ * [ThrottledFaceDetector] is also at 1/2 and counts from the same starting point,
+ * so with no offset the two refresh on exactly the same frames and their costs
+ * land together. Measured on SM-G970N once the face throttle was wired, that split
+ * the frame time in two: 376ms median when both ran, 118ms when neither did.
+ *
+ * Staggering them does not change throughput — the same two models run in the same
+ * two frames either way, and the FPS number does not move. It changes the worst
+ * case. Under `STRATEGY_KEEP_ONLY_LATEST` a 376ms frame is 376ms of dropped
+ * frames, so the guide advances in a lurch and then waits; two ~230ms frames
+ * advance it evenly. Face is the reference at offset 0 and pose is wired at 1;
+ * `DetectorPhaseInterleaveTest` pins the resulting property, which is that after
+ * frame 1 no frame runs both. Frame 1 is the exception both classes' first-frame
+ * cases create on purpose, and one heavy frame at camera open buys a guide that
+ * is not missing its silhouette.
  */
 class ThrottledPoseDetector(
     private val delegate: PoseDetector,
     private val refreshEveryFrames: Int = 2,
+    private val phaseOffset: Int = 0,
 ) : PoseDetector {
     init {
         require(refreshEveryFrames >= 1) { "refreshEveryFrames must be >= 1, was $refreshEveryFrames" }
+        require(phaseOffset >= 0) { "phaseOffset must be >= 0, was $phaseOffset" }
     }
 
     private var frameCount = 0
@@ -113,8 +212,9 @@ class ThrottledPoseDetector(
         frameCount++
         // The explicit first-frame case matters: without it the guide has no pose
         // at all until frame N, which is visible as a late-arriving silhouette on
-        // every camera open.
-        if (frameCount == 1 || frameCount % refreshEveryFrames == 0) {
+        // every camera open. It is also the one frame where pose and face
+        // deliberately run together — see [phaseOffset].
+        if (frameCount == 1 || (frameCount + phaseOffset) % refreshEveryFrames == 0) {
             lastResult = delegate.detect(frame)
         }
         return lastResult
@@ -181,11 +281,22 @@ class ThrottledSubjectSceneSegmenter(
  * costing ~0.1ms that reports comfortably inside its 30ms budget while the frame
  * takes 300. A green budget line on the wrong stage is worse than no line.
  *
- * [segRefreshed] and [objectsFresh] are the load-bearing fields. Segmentation runs
- * every 12th frame and object detection every 3rd; on the other frames both return
- * a cached value in microseconds. Averaging refresh and cache frames together
- * hides the real cost by an order of magnitude, so a reader must be able to
- * separate them.
+ * [segRefreshed] and [objectsFresh] are the load-bearing fields. On a throttled
+ * stage's cached frames the model does not run and the timing is microseconds, so
+ * averaging refresh and cache frames together hides the real cost by an order of
+ * magnitude; a reader must be able to separate them.
+ *
+ * The cadences are asset values, not constants — `objectRefreshEveryFrames`,
+ * `segmentationRefreshEveryFrames` and `faceRefreshEveryFrames` in
+ * `guide_config.json`. This KDoc used to name them ("every 12th … every 3rd") and
+ * went stale the moment objects moved to config and became 1/1. Read the asset.
+ *
+ * [faceMs] and [poseMs] have no `fresh` companion. That is a gap rather than a
+ * statement that they always run: both are throttled now, so their means mix
+ * refresh and cache frames exactly the way this doc warns about. It is left alone
+ * because adding fields means touching the host's log format, which is not this
+ * file's to change; a reader comparing face means across builds should divide by
+ * the asset divisor until then.
  */
 data class DetectStageTimings(
     val faceMs: Double,
