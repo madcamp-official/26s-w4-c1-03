@@ -1,6 +1,7 @@
 package com.gamdo.app.ui.result
 
 import android.graphics.Bitmap
+import android.net.Uri
 import android.util.Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -46,6 +47,7 @@ import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.local.entity.Captures
 import com.gamdo.app.data.SavedEdit
+import com.gamdo.app.data.preset.ResolvedStyle
 import com.gamdo.app.edit.CaptureConditions
 import com.gamdo.app.edit.EditPlan
 import com.gamdo.app.edit.EditSourceLoader
@@ -59,6 +61,11 @@ import com.gamdo.app.edit.pixelBuffer
 import com.gamdo.app.edit.renderForSave
 import com.gamdo.app.edit.renderLatest
 import com.gamdo.app.ui.components.PrimaryPillButton
+import com.gamdo.app.ui.reference.AiRestoreThumb
+import com.gamdo.app.ui.reference.CreateReferenceThumb
+import com.gamdo.app.ui.reference.MyReferenceThumb
+import com.gamdo.app.ui.reference.StripEntry
+import com.gamdo.app.ui.reference.buildFilterStrip
 import com.gamdo.app.ui.theme.Charcoal700
 import com.gamdo.app.ui.theme.Charcoal900
 import com.gamdo.app.ui.theme.Charcoal950
@@ -98,17 +105,65 @@ private data class PreviewRequest(
     val adjustments: FilterEngine.Adjustments,
 )
 
+/**
+ * Which item in the O-10-wrapped filter strip is driving the render — either one
+ * of the six [LocalFilter] presets (+ 원본), or the `내 레퍼런스` slot.
+ *
+ * A reference cannot be a [LocalFilter]: that enum is a closed, hand-authored set
+ * of [com.gamdo.app.edit.PhotoFilter] recipes, and a reference's colour target is
+ * arbitrary analysis output, not a recipe. So its render path is different too —
+ * see [ResultScreen]'s `corrected` computation — while everything downstream
+ * (the interactive sliders, the save path) treats [Reference] as riding on
+ * `LocalFilter.ORIGINAL` for its *own* recipe (identity) plus whatever the
+ * sliders add, exactly like every other selection.
+ */
+private sealed interface SelectedStripFilter {
+    data class Preset(val filter: LocalFilter) : SelectedStripFilter
+    data object Reference : SelectedStripFilter
+}
+
+/**
+ * @param activeReferenceStyle the active AI 2 reference's resolved
+ *   composition+color, or null. Only [ResolvedStyle.color] is consumed here —
+ *   composition is a camera-screen concern. See the integration contract's
+ *   "결과 화면의 `내 레퍼런스` 색감 항목".
+ * @param activeReferenceImageUri the picked photo behind [activeReferenceStyle],
+ *   for the strip thumbnail (see `CameraScreen`'s param of the same name for why
+ *   this can be null even when a reference is active).
+ * @param onCreateReference O-10's leading `+` — opens the same picker/flow as
+ *   the camera screen's.
+ * @param onDeleteReference the reference slot's `×` badge (삭제).
+ * @param onOpenAiRestore O-10's `AI로 보정` slot, immediately right of `+`. Wired
+ *   to nothing here by explicit instruction — this is AI 3's landing point.
+ */
 @Composable
 fun ResultScreen(
     container: AppContainer,
     captureId: String,
     onBack: () -> Unit,
+    activeReferenceStyle: ResolvedStyle? = null,
+    activeReferenceImageUri: Uri? = null,
+    onCreateReference: () -> Unit = {},
+    onDeleteReference: () -> Unit = {},
+    onOpenAiRestore: () -> Unit = {},
 ) {
     val capture by produceState<Captures?>(initialValue = null, captureId, container) {
         value = withContext(Dispatchers.IO) {
             container.database.capturesDao().get(captureId)
         }
     }
+    // §5-2 결과 화면의 `내 레퍼런스` 색감 항목. A reference is not a `LocalFilter`
+    // (see [SelectedStripFilter]'s KDoc), so which strip item is active has to be
+    // known *before* `corrected` below — selecting it changes which pass produces
+    // the base bitmap, not just what runs on top of it.
+    var selectedStrip by remember { mutableStateOf<SelectedStripFilter>(SelectedStripFilter.Preset(LocalFilter.ORIGINAL)) }
+    // Every style in presets.json now has a filter of its own, so this is a lookup
+    // rather than a when-chain with a fallback. The chain listed four of the six
+    // and sent `clean_social` and `casual_portrait` to a different style's look.
+    val preferredFilter by produceState(LocalFilter.ORIGINAL, container) {
+        value = LocalFilter.forPresetId(container.settingsRepository.getStylePresetId())
+    }
+    LaunchedEffect(preferredFilter) { selectedStrip = SelectedStripFilter.Preset(preferredFilter) }
     // §4-1 기하·광학 자동 보정 (O-2): levelling rotation + auto exposure, applied
     // when the photo opens, with **no visible control**.
     //
@@ -121,8 +176,16 @@ fun ResultScreen(
     // there from a larger decode would risk preview and save disagreeing about the
     // crop; `EditPlan.withProcessingMaxSide` exists for exactly this and
     // `EditPlanTest` pins the property.
-    val corrected by produceState<AutoCorrected?>(initialValue = null, capture?.filePath) {
+    //
+    // Keyed on `selectedStrip` too (not just the file path): selecting `내
+    // 레퍼런스` re-runs this pass with the reference's colour folded into the
+    // *plan* itself — `EditPlanner.plan`'s `resolvedStyle` parameter, the exact
+    // "ColorTarget → ColorParams → LocalEditor" seam the integration contract
+    // names — rather than through `QuickFilterEditor`/`PhotoFilter` like every
+    // preset. Deselecting it re-runs the plain geometry+optical pass again.
+    val corrected by produceState<AutoCorrected?>(initialValue = null, capture?.filePath, selectedStrip, activeReferenceStyle) {
         val captureValue = capture ?: return@produceState
+        val isReferenceSelected = selectedStrip is SelectedStripFilter.Reference
         // Decode off the composition thread so entering the editor never blocks
         // the first frame, and decode *small*.
         //
@@ -150,12 +213,15 @@ fun ResultScreen(
                     sourceWidth = fullSize.first,
                     sourceHeight = fullSize.second,
                 )
-                // preset = null → geometry + optical only. The style stage stays an
-                // identity, because auto-applying a look the user did not pick is a
-                // different feature and not the one O-2 approved.
+                // preset = null → geometry + optical only, *unless* the reference
+                // slot is selected, in which case `resolvedStyle` supplies the
+                // colour stage (O-2's "auto-applying a look the user did not pick"
+                // guard does not apply here — selecting the slot *is* the pick).
                 val plan = editor.plan(
                     sample = sample,
                     preset = null,
+                    applyStyle = isReferenceSelected,
+                    resolvedStyle = activeReferenceStyle.takeIf { isReferenceSelected },
                     subject = conditions.subject,
                     requestedMaxSide = EDITOR_DECODE_MAX_SIDE,
                 )
@@ -167,14 +233,23 @@ fun ResultScreen(
         }
     }
     val source: Bitmap? = corrected?.bitmap
-    var selectedFilter by remember { mutableStateOf(LocalFilter.ORIGINAL) }
-    // Every style in presets.json now has a filter of its own, so this is a lookup
-    // rather than a when-chain with a fallback. The chain listed four of the six
-    // and sent `clean_social` and `casual_portrait` to a different style's look.
-    val preferredFilter by produceState(LocalFilter.ORIGINAL, container) {
-        value = LocalFilter.forPresetId(container.settingsRepository.getStylePresetId())
+    // The strip's own recipe, on top of whichever bitmap `corrected` produced:
+    // ORIGINAL is an identity `PhotoFilter`, so selecting `내 레퍼런스` above means
+    // "no second colour pass here, only what the sliders add" — the reference's
+    // colour already rendered into `source`. Every preset keeps working exactly
+    // as before, unaffected by any of this.
+    val effectiveLocalFilter = when (val sel = selectedStrip) {
+        is SelectedStripFilter.Preset -> sel.filter
+        SelectedStripFilter.Reference -> LocalFilter.ORIGINAL
     }
-    LaunchedEffect(preferredFilter) { selectedFilter = preferredFilter }
+    // What actually gets written to `capture_edit_stack.paramsJson` (a free-form
+    // string column, no schema change needed). Distinct from `effectiveLocalFilter`
+    // — that one exists to reuse `QuickFilterEditor`'s ORIGINAL identity recipe,
+    // but recording "ORIGINAL" here would silently lose that a reference was used.
+    val filterRecordName = when (selectedStrip) {
+        is SelectedStripFilter.Preset -> effectiveLocalFilter.name
+        SelectedStripFilter.Reference -> "REFERENCE"
+    }
     // One luminance pass per photo, kept so seeding a filter does not re-measure.
     // It is only needed to cap a preset's exposure against this frame's headroom.
     val measure by produceState<FilterEngine.Measure?>(null, source) {
@@ -191,9 +266,17 @@ fun ResultScreen(
     // editor — so what a slider reads is what the renderer uses, with no second
     // hidden contribution. Keyed on the measurement too because exposure is seeded
     // from it, and it arrives one frame after the bitmap.
-    LaunchedEffect(selectedFilter, measure) {
+    //
+    // `내 레퍼런스` has no `PhotoFilter` recipe to seed from — its colour is
+    // already in `source` (see `corrected` above) — so it seeds to NEUTRAL: the
+    // sliders start at zero and only add a *further* adjustment on top, same as
+    // 원본 always has.
+    LaunchedEffect(selectedStrip, measure) {
         val m = measure ?: return@LaunchedEffect
-        val seeded = FilterEngine.seedFrom(selectedFilter.filter, m)
+        val seeded = when (val sel = selectedStrip) {
+            is SelectedStripFilter.Preset -> FilterEngine.seedFrom(sel.filter.filter, m)
+            SelectedStripFilter.Reference -> FilterEngine.Adjustments.NEUTRAL
+        }
         baseline = seeded
         adjustments = seeded
     }
@@ -218,7 +301,7 @@ fun ResultScreen(
     // Not `by`: the effect below has to read this *inside* `snapshotFlow` for the
     // flow to observe it. A captured value would pin the loop to whatever the first
     // composition happened to hold.
-    val request = rememberUpdatedState(PreviewRequest(source, selectedFilter, adjustments))
+    val request = rememberUpdatedState(PreviewRequest(source, effectiveLocalFilter, adjustments))
     LaunchedEffect(Unit) {
         // Owned by this loop and handed to nothing else. Safe only because
         // `renderLatest` serialises the renders — see `QuickFilterEditor.apply`.
@@ -298,7 +381,15 @@ fun ResultScreen(
                 modifier = Modifier.padding(12.dp).clip(RoundedCornerShape(5.dp))
                     .background(Sage).padding(horizontal = 8.dp, vertical = 3.dp),
             ) {
-                Text(selectedFilter.label, color = OnSage, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = when (val sel = selectedStrip) {
+                        is SelectedStripFilter.Preset -> sel.filter.label
+                        SelectedStripFilter.Reference -> "내 레퍼런스"
+                    },
+                    color = OnSage,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
         }
 
@@ -306,13 +397,55 @@ fun ResultScreen(
             modifier = Modifier.padding(start = 20.dp, top = 14.dp).horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            LocalFilter.entries.forEach { filter ->
-                FilterThumb(
-                    label = filter.label,
-                    asset = filterAsset(filter),
-                    selected = selectedFilter == filter,
-                    onClick = { selectedFilter = filter },
+            // O-10: `[+] [AI로 보정] [원본 + 6종…] [내 레퍼런스]?`. The trailing slot
+            // only appears when the reference has a colour half to offer — a
+            // 구도만 reference has nothing this screen can apply (composition is a
+            // camera-screen concern), and offering it here would silently do
+            // nothing when tapped.
+            val hasReferenceColor = activeReferenceStyle != null &&
+                activeReferenceStyle.referenceScope != ResolvedStyle.ReferenceScope.COMPOSITION
+            val strip = remember(hasReferenceColor) {
+                buildFilterStrip(
+                    presets = LocalFilter.entries.toList(),
+                    includeAiRestore = true,
+                    hasActiveReference = hasReferenceColor,
                 )
+            }
+            strip.forEach { entry ->
+                when (entry) {
+                    is StripEntry.CreateReference -> CreateReferenceThumb(
+                        shape = RoundedCornerShape(11.dp),
+                        size = 58.dp,
+                        onClick = onCreateReference,
+                    )
+                    is StripEntry.AiRestore -> AiRestoreThumb(
+                        shape = RoundedCornerShape(11.dp),
+                        size = 58.dp,
+                        onClick = onOpenAiRestore,
+                    )
+                    is StripEntry.Preset -> {
+                        val filter = entry.value
+                        FilterThumb(
+                            label = filter.label,
+                            asset = filterAsset(filter),
+                            selected = selectedStrip == SelectedStripFilter.Preset(filter),
+                            onClick = { selectedStrip = SelectedStripFilter.Preset(filter) },
+                        )
+                    }
+                    is StripEntry.MyReference -> MyReferenceThumb(
+                        shape = RoundedCornerShape(11.dp),
+                        size = 58.dp,
+                        imageUri = activeReferenceImageUri,
+                        selected = selectedStrip == SelectedStripFilter.Reference,
+                        onSelect = { selectedStrip = SelectedStripFilter.Reference },
+                        onDelete = {
+                            if (selectedStrip == SelectedStripFilter.Reference) {
+                                selectedStrip = SelectedStripFilter.Preset(preferredFilter)
+                            }
+                            onDeleteReference()
+                        },
+                    )
+                }
             }
             Box(Modifier.width(12.dp))
         }
@@ -385,7 +518,7 @@ fun ResultScreen(
                                         } ?: full
                                     },
                                     style = { levelled ->
-                                        QuickFilterEditor.apply(levelled, selectedFilter, adjustments)
+                                        QuickFilterEditor.apply(levelled, effectiveLocalFilter, adjustments)
                                     },
                                     onCorrectionFailed = {
                                         Log.w(TAG, "save-time auto-correction failed; saving uncorrected", it)
@@ -406,7 +539,7 @@ fun ResultScreen(
                                 // §4-1 비파괴: the record has to hold every control,
                                 // not the three the old panel happened to show, or a
                                 // saved edit cannot be reopened as what it was.
-                                paramsJson = "{\"filter\":\"${selectedFilter.name}\"," +
+                                paramsJson = "{\"filter\":\"$filterRecordName\"," +
                                     "\"adjustments\":${EditTool.toJson(adjustments)}}",
                             )
                             saved = written

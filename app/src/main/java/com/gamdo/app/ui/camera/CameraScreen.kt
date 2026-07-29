@@ -1,6 +1,7 @@
 package com.gamdo.app.ui.camera
 
 import android.content.Context
+import android.net.Uri
 import android.util.Log
 import android.widget.Toast
 import androidx.camera.view.PreviewView
@@ -86,12 +87,17 @@ import com.gamdo.app.camera.toAnalysisBitmap
 import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.GuideKpiRepository
+import com.gamdo.app.data.preset.ResolvedStyle
 import com.gamdo.app.data.preset.StylePreset
 import com.gamdo.app.detect.DetectionResult
 import com.gamdo.app.guide.toSceneObservation
 import com.gamdo.app.detect.toAnalysisFrame
 import com.gamdo.app.guide.toStyleTarget
 import com.gamdo.app.ui.components.moodBrush
+import com.gamdo.app.ui.reference.CreateReferenceThumb
+import com.gamdo.app.ui.reference.MyReferenceThumb
+import com.gamdo.app.ui.reference.StripEntry
+import com.gamdo.app.ui.reference.buildFilterStrip
 import com.gamdo.app.ui.theme.Charcoal600
 import com.gamdo.app.ui.theme.Charcoal950
 import com.gamdo.app.ui.theme.OnDarkHigh
@@ -164,12 +170,30 @@ private class SceneDetectorLease(
  *   and below the guide overlay — the reference translucent overlay (§5-2)
  *   mounts here. Receives [BoxScope] so it can size and align itself against the
  *   preview.
- * @param referenceEntry leading element of the top bar's trailing zone — the
- *   §5-1 reference entry point mounts here. Empty by default; the top bar lays
- *   out correctly with the zone empty, so nothing has to move when it lands.
+ * @param referenceEntry leading element of the top bar's trailing zone. Left
+ *   empty by [GamdoNavHost] as of O-10 (2026-07-29): the owner moved the AI 2
+ *   entry point from here into the bottom filter strip (see
+ *   [onCreateReference]/[hasActiveReference] below), so this slot has no current
+ *   occupant. Kept rather than removed — deleting a public parameter needs a
+ *   whole-tree grep and every caller notified (TEAM.md), and a slot costing
+ *   nothing when empty is cheaper than that churn for a rename.
  * @param demoControls trailing element of the top bar — the demo-mode toggle
  *   (§7-3) mounts here. Kept out of the preview area so it can never overlap
  *   the guide.
+ * @param onCreateReference O-10: the bottom strip's leading `+` icon opens the
+ *   photo picker (AI 2 "내 필터 만들기"). No-op by default so a caller that does
+ *   not wire AI 2 yet still compiles.
+ * @param hasActiveReference whether a `내 레퍼런스` slot should trail the preset
+ *   strip at all — a reference is a single local slot, not a list.
+ * @param activeReferenceImageUri the picked photo behind the current session's
+ *   reference, for the strip thumbnail. Null falls back to a plain background
+ *   rather than a fabricated image (AGENTS §7-6) — e.g. right after a relaunch,
+ *   before the session has re-picked anything.
+ * @param activeReferenceStyle the resolved composition/color for the active
+ *   reference. Only its composition half is consumed here (as a [StyleTarget]
+ *   via [toStyleTarget]) — the color half is a result-screen concern (§5-2:
+ *   "촬영 구도·촬영 후 색감에 적용").
+ * @param onDeleteReference the reference slot's `×` badge (삭제).
  */
 @Composable
 fun CameraScreen(
@@ -179,6 +203,11 @@ fun CameraScreen(
     referenceLayer: @Composable BoxScope.() -> Unit = {},
     referenceEntry: @Composable () -> Unit = {},
     demoControls: @Composable () -> Unit = {},
+    onCreateReference: () -> Unit = {},
+    hasActiveReference: Boolean = false,
+    activeReferenceImageUri: Uri? = null,
+    activeReferenceStyle: ResolvedStyle? = null,
+    onDeleteReference: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -246,6 +275,11 @@ fun CameraScreen(
     var sessionStyleId by rememberSaveable { mutableStateOf<String?>(null) }
     var stylePickerOpen by rememberSaveable { mutableStateOf(false) }
     var guideVisible by rememberSaveable { mutableStateOf(true) }
+    // §5-2: the `내 레퍼런스` strip slot and a preset are mutually exclusive — one
+    // active style at a time, same as the strip has always been. Selecting a
+    // preset below clears this; it is not itself in `presetIds`/`sessionStyleId`
+    // because a reference is not a StylePreset.
+    var referenceSelected by rememberSaveable { mutableStateOf(false) }
     // Both id lists below are derived from the *reordered* `presets`, which is what
     // keeps the selection on the same style across a reorder. See
     // `StyleSelectionTest.재정렬해도 선택된 스타일은 그대로 선택되어 있다`.
@@ -280,8 +314,17 @@ fun CameraScreen(
     // fresh scene search, so this is keyed on the preset value only.
     // `styleIndex = -1` (still reading / no presets) leaves the target
     // unpublished rather than publishing preset 0 and swapping it a frame later.
-    LaunchedEffect(activePreset) {
-        activePreset?.let { viewModel.setStyleTarget(it.toStyleTarget()) }
+    LaunchedEffect(activePreset, referenceSelected, activeReferenceStyle) {
+        // §5-2: the reference's composition wins over the preset while it is
+        // selected, exactly like a preset switch — `setStyleTarget` resets the
+        // smoothing window either way, so this must be the single place either
+        // kind of style reaches the guide (never two competing LaunchedEffects).
+        val referenceTarget = activeReferenceStyle?.takeIf { referenceSelected }
+        if (referenceTarget != null) {
+            viewModel.setStyleTarget(referenceTarget.toStyleTarget())
+        } else {
+            activePreset?.let { viewModel.setStyleTarget(it.toStyleTarget()) }
+        }
     }
 
     DisposableEffect(Unit) {
@@ -497,7 +540,19 @@ fun CameraScreen(
             // Session-only: this never reaches SettingsRepository (TEAM.md §8) —
             // that key is the D4 personalisation profile, so a relaunch returns to
             // the onboarding style.
-            onSelect = { index -> sessionStyleId = presetIds.getOrNull(index) },
+            onSelect = { index ->
+                sessionStyleId = presetIds.getOrNull(index)
+                referenceSelected = false
+            },
+            onCreateReference = onCreateReference,
+            hasActiveReference = hasActiveReference,
+            referenceSelected = referenceSelected,
+            activeReferenceImageUri = activeReferenceImageUri,
+            onSelectReference = { referenceSelected = true },
+            onDeleteReference = {
+                referenceSelected = false
+                onDeleteReference()
+            },
             modifier = Modifier.padding(top = 12.dp),
         )
 
@@ -718,12 +773,24 @@ private fun AspectChip(selected: CaptureAspect, onSelect: (CaptureAspect) -> Uni
  * presets’ own bundled images, so the strip shows what each look *is* rather than
  * only what it is called — which matters for `자연스러운 피드` and `밤거리`, whose
  * bracket geometry is identical and whose names are the only thing separating them.
+ *
+ * O-10 (2026-07-29) wraps this same row with the AI 2 entry point: a leading `+`
+ * and, once a reference is active, a trailing `내 레퍼런스` slot — built by
+ * [buildFilterStrip] and rendered with the shared thumb composables in
+ * `ui/reference/ReferenceStrip.kt` so this screen and the result screen stay
+ * pixel-consistent without duplicating the thumb shape twice.
  */
 @Composable
 private fun CameraStyleStrip(
     presets: List<StylePreset>,
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
+    onCreateReference: () -> Unit,
+    hasActiveReference: Boolean,
+    referenceSelected: Boolean,
+    activeReferenceImageUri: Uri?,
+    onSelectReference: () -> Unit,
+    onDeleteReference: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // Reserve the row even with nothing to put in it: `presets` arrives from disk a
@@ -731,14 +798,32 @@ private fun CameraStyleStrip(
     // preview visibly jump. (It no longer *breaks* anything — the preview spill that
     // used to follow a pane resize was an unclipped interop view, fixed at the
     // AndroidView — but a fixed height is still the right shape for a row whose
-    // contents are async.)
+    // contents are async.) The `+`/`내 레퍼런스` slots wait for the same frame as
+    // the presets rather than appearing first and shifting everything right.
     if (presets.isEmpty()) {
         Box(modifier = modifier.fillMaxWidth().height(STYLE_STRIP_HEIGHT))
         return
     }
+    // Presets carry their catalogue index through the wrapper so the click
+    // handler and the selection highlight keep working against `presetIds`
+    // exactly as before — `buildFilterStrip` itself does not know about indices.
+    val strip = remember(presets, hasActiveReference) {
+        buildFilterStrip(
+            presets = presets.mapIndexed { index, preset -> index to preset },
+            includeAiRestore = false,
+            hasActiveReference = hasActiveReference,
+        )
+    }
     val listState = rememberLazyListState()
-    LaunchedEffect(selectedIndex) {
-        if (selectedIndex >= 0) listState.animateScrollToItem(selectedIndex)
+    LaunchedEffect(selectedIndex, referenceSelected, strip) {
+        // Offset by one for the leading `+`; the reference slot, when present, is
+        // always last (buildFilterStrip's contract).
+        val target = when {
+            referenceSelected && strip.lastOrNull() is StripEntry.MyReference -> strip.lastIndex
+            selectedIndex >= 0 -> selectedIndex + 1
+            else -> null
+        }
+        if (target != null) listState.animateScrollToItem(target)
     }
     LazyRow(
         modifier = modifier.fillMaxWidth().height(STYLE_STRIP_HEIGHT),
@@ -747,39 +832,58 @@ private fun CameraStyleStrip(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        itemsIndexed(presets) { index, preset ->
-            val isSelected = index == selectedIndex
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.clickable { onSelect(index) },
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(52.dp)
-                        .then(
-                            if (isSelected) {
-                                Modifier.border(2.dp, Sage, CircleShape).padding(2.dp)
-                            } else {
-                                Modifier.padding(4.dp)
-                            },
+        itemsIndexed(strip) { _, entry ->
+            when (entry) {
+                is StripEntry.CreateReference -> CreateReferenceThumb(
+                    shape = CircleShape,
+                    size = 52.dp,
+                    onClick = onCreateReference,
+                )
+                is StripEntry.AiRestore -> Unit // camera strip never includes this (O-10)
+                is StripEntry.Preset -> {
+                    val (index, preset) = entry.value
+                    val isSelected = !referenceSelected && index == selectedIndex
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.clickable { onSelect(index) },
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(52.dp)
+                                .then(
+                                    if (isSelected) {
+                                        Modifier.border(2.dp, Sage, CircleShape).padding(2.dp)
+                                    } else {
+                                        Modifier.padding(4.dp)
+                                    },
+                                )
+                                .clip(CircleShape)
+                                .background(Charcoal600),
+                        ) {
+                            AsyncImage(
+                                model = "file:///android_asset/" + (preset.thumbnail ?: "presets/${preset.id}.jpg"),
+                                contentDescription = preset.displayName,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                        Text(
+                            text = preset.displayName,
+                            color = if (isSelected) Sage else OnDarkMedium,
+                            fontSize = 10.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            maxLines = 1,
                         )
-                        .clip(CircleShape)
-                        .background(Charcoal600),
-                ) {
-                    AsyncImage(
-                        model = "file:///android_asset/" + (preset.thumbnail ?: "presets/${preset.id}.jpg"),
-                        contentDescription = preset.displayName,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    }
                 }
-                Text(
-                    text = preset.displayName,
-                    color = if (isSelected) Sage else OnDarkMedium,
-                    fontSize = 10.sp,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                    maxLines = 1,
+                is StripEntry.MyReference -> MyReferenceThumb(
+                    shape = CircleShape,
+                    size = 52.dp,
+                    imageUri = activeReferenceImageUri,
+                    selected = referenceSelected,
+                    onSelect = onSelectReference,
+                    onDelete = onDeleteReference,
                 )
             }
         }
