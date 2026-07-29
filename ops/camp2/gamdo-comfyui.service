@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/gamdo/ComfyUI
-ExecStart=/opt/gamdo/venv/bin/python main.py --listen 127.0.0.1 --port 8188 --disable-auto-launch
+ExecStart=/opt/gamdo/venv/bin/python main.py --listen 127.0.0.1 --port 8188 --disable-auto-launch --lowvram
 Restart=on-failure
 RestartSec=5
 User=root
