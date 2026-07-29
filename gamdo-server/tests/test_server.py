@@ -124,7 +124,9 @@ def test_reference_analysis_rejects_unsupported_content_type() -> None:
     assert response.json()["code"] == "unsupported_image_type"
 
 
-def test_rescue_analysis_returns_recommendations_without_creating_job() -> None:
+def test_rescue_analysis_returns_recommendations_without_creating_job(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GAMDO_COMFYUI_URL", raising=False)
+    monkeypatch.delenv("GAMDO_COMFYUI_OUTPAINT_WORKFLOW", raising=False)
     with TestClient(app) as client:
         response = client.post(
             "/api/v1/rescue/analyze",
@@ -142,6 +144,7 @@ def test_rescue_analysis_returns_recommendations_without_creating_job() -> None:
     assert payload["captureRef"] == "cap_rescue_1"
     assert payload["recommendations"][0]["kind"] == "local_style"
     assert payload["capabilities"]["localStyle"] is True
+    assert payload["capabilities"]["outpaint"] is False
 
 
 def test_rescue_analysis_rejects_invalid_parameters() -> None:

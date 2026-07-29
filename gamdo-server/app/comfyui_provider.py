@@ -14,6 +14,19 @@ from PIL import Image, ImageDraw, ImageFilter
 from .generative import GeneratedCandidate, GenerativeEditProvider, ProviderNotReady, UnavailableProvider
 
 
+def is_outpaint_ready() -> bool:
+    """Whether this deployment can actually execute a FLUX outpaint request.
+
+    The API must not recommend an outpaint operation merely because the Python
+    path supports one. Operations become available only after the deployment has
+    explicitly supplied its dedicated workflow path; that is the final setup
+    step after the matching FLUX model has been installed on ComfyUI.
+    """
+    base_url = os.getenv("GAMDO_COMFYUI_URL")
+    workflow_value = os.getenv("GAMDO_COMFYUI_OUTPAINT_WORKFLOW")
+    return bool(base_url and workflow_value and Path(workflow_value).is_file())
+
+
 class ComfyUiProvider(GenerativeEditProvider):
     """Small HTTP adapter for a headless ComfyUI instance.
 
@@ -71,7 +84,7 @@ class ComfyUiProvider(GenerativeEditProvider):
     ) -> list[GeneratedCandidate]:
         workflow_value = os.getenv("GAMDO_COMFYUI_OUTPAINT_WORKFLOW")
         workflow_path = Path(workflow_value) if workflow_value else None
-        if not self.base_url or workflow_path is None or not workflow_path.exists():
+        if not is_outpaint_ready() or workflow_path is None:
             raise ProviderNotReady("ComfyUI outpaint workflow is not configured")
         workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
         operation = operations[0] if operations else {}
