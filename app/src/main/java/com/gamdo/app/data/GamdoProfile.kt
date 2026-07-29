@@ -1,6 +1,7 @@
 package com.gamdo.app.data
 
 import com.gamdo.app.data.preset.ColorParams
+import com.gamdo.app.guide.StyleTarget
 import kotlinx.serialization.Serializable
 import kotlin.math.abs
 
@@ -147,3 +148,18 @@ object GamdoProfileFactory {
         return current.copy(contexts = current.contexts + (context to blended), updatedAt = now)
     }
 }
+
+/** Shared camera seam: every context resolves to a bounded composition target. */
+fun GamdoProfileV2.toCameraStyleTarget(context: SceneContext = SceneContext.GENERAL): StyleTarget =
+    policyFor(context).toCameraStyleTarget()
+
+fun GamdoPolicy.toCameraStyleTarget(): StyleTarget = StyleTarget(
+    subjectScaleRange = (capture.subjectScale - 0.10f).coerceIn(0.2f, 0.75f)..
+        (capture.subjectScale + 0.10f).coerceIn(0.25f, 0.85f),
+    subjectAnchorX = capture.anchorX.coerceIn(0.1f, 0.9f),
+    subjectAnchorY = capture.anchorY.coerceIn(0.1f, 0.9f),
+    backgroundRatioRange = (capture.backgroundRatio - 0.12f).coerceIn(0.05f, 0.7f)..
+        (capture.backgroundRatio + 0.12f).coerceIn(0.15f, 0.85f),
+    cameraPitchRange = (capture.tiltPreference - 5f).coerceIn(-15f, 5f)..
+        (capture.tiltPreference + 5f).coerceIn(-5f, 15f),
+)

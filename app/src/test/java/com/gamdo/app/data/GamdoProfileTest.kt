@@ -31,4 +31,13 @@ class GamdoProfileTest {
         assertTrue(merged.policyFor(SceneContext.CAFE_FOOD).capture.preferredZoom <= 2f)
         assertEquals(2L, merged.updatedAt)
     }
+
+    @Test fun `contextual policy maps to a bounded camera target`() {
+        val target = GamdoProfileV2(
+            global = policy.copy(capture = policy.capture.copy(anchorX = 2f)),
+            updatedAt = 1,
+        ).toCameraStyleTarget()
+        assertTrue(target.subjectAnchorX <= 0.9f)
+        assertTrue(target.subjectScaleRange.start >= 0.2f)
+    }
 }
