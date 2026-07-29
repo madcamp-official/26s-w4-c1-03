@@ -22,6 +22,7 @@ class ViewCrafterBackend:
             str(self.repository / "configs/inference_pvd_1024.yaml"),
         ))
         self.video_length = int(os.getenv("GAMDO_VIEWCRAFTER_VIDEO_LENGTH", "16"))
+        self._runtime_check: tuple[bool, str] | None = None
 
     def ready(self) -> tuple[bool, str]:
         missing = [str(path) for path in (Path(self.python), self.checkpoint, self.dust3r, self.config) if not path.is_file()]
@@ -33,7 +34,20 @@ class ViewCrafterBackend:
         minimum_dust3r_bytes = int(os.getenv("GAMDO_DUST3R_MIN_CHECKPOINT_BYTES", "1000000000"))
         if self.dust3r.stat().st_size < minimum_dust3r_bytes:
             return False, "DUSt3R checkpoint is incomplete"
-        return True, "model files present"
+        if self._runtime_check is None:
+            try:
+                subprocess.run(
+                    [self.python, "-c", "import pytorch3d; import imageio; import pytorch_lightning"],
+                    cwd=self.repository,
+                    check=True,
+                    timeout=30,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                self._runtime_check = True, "model files and runtime present"
+            except (OSError, subprocess.SubprocessError):
+                self._runtime_check = False, "ViewCrafter runtime dependencies are unavailable"
+        return self._runtime_check
 
     def generate(self, image: Path, operation: dict, output: Path, seed: int) -> None:
         import imageio.v3 as iio
