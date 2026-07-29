@@ -1,6 +1,8 @@
 package com.gamdo.app.guide
 
 import java.io.File
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -120,6 +122,67 @@ class GuideConfigJsonTest {
         assertTrue(multiScale.enabled)
         assertEquals(6, multiScale.fallbackEveryFrames)
         assertEquals(1.60f, multiScale.cropScale, 0.0001f)
+    }
+
+    /**
+     * W3-1: the analysis cadence must live in the asset, not in a Kotlin literal.
+     *
+     * Asserted against the **raw JSON** rather than the parsed bundle on purpose. A
+     * parsed assertion would pass while the key was absent — the field would simply
+     * resolve to its fallback — which is precisely the failure this guards.
+     */
+    @Test
+    fun `the shipped asset supplies the analysis cadence`() {
+        val features = Json.parseToJsonElement(readAsset("guide_config.json"))
+            .jsonObject["features"]
+            ?.jsonObject
+            ?: error("guide_config.json has no `features` block")
+
+        assertTrue(
+            "features.analysisTargetFps is missing — FrameAnalyzer would fall back to its code default",
+            features.containsKey("analysisTargetFps"),
+        )
+    }
+
+    /**
+     * The other half of "the asset is the only truth": the parser has to read the
+     * key, not merely tolerate it. A value that differs from the code fallback is
+     * what tells the two apart.
+     */
+    @Test
+    fun `the analysis cadence comes from the asset and not from the code fallback`() {
+        val bundle = parseGuideConfigBundle(
+            readAsset("guide_config.json").replace("\"analysisTargetFps\": 12", "\"analysisTargetFps\": 7"),
+        )
+
+        assertEquals(7, bundle.features.analysisTargetFps)
+    }
+
+    @Test
+    fun `a zero analysis cadence is rejected instead of dividing by zero on device`() {
+        val failure = runCatching {
+            parseGuideConfigBundle("""{ "features": { "analysisTargetFps": 0 } }""")
+        }.exceptionOrNull()
+
+        assertTrue("expected the require to fire, got $failure", failure is IllegalArgumentException)
+    }
+
+    /**
+     * `stability.sequenceFps` is the rate the §0.4 harness simulates and it exists
+     * to match the real one. Two keys holding the same number is a drift waiting to
+     * happen — someone lowers the analysis rate and the harness keeps generating
+     * frames at the old one, so a stability report describes a build that no longer
+     * exists. Cheaper to fail here than to trust a comment.
+     */
+    @Test
+    fun `the stability harness simulates the cadence the app actually runs`() {
+        val bundle = parseGuideConfigBundle(readAsset("guide_config.json"))
+
+        assertEquals(
+            "stability.sequenceFps must track features.analysisTargetFps",
+            bundle.features.analysisTargetFps,
+            bundle.stability.sequenceFps,
+        )
     }
 
     @Test

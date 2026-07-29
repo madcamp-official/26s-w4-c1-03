@@ -3,7 +3,17 @@ package com.gamdo.app.camera
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 
-/** Rolling per-second analysis metrics for the debug HUD (§2-1). */
+/**
+ * Rolling per-second **analysis** metrics for the debug HUD (§2-1).
+ *
+ * [fps] is how often the detection stack ran, which is not how often the preview
+ * updated — see [PreviewFrameMeter] for that one. The HUD labels both, because
+ * printing this number alone read as a failed §7-1 preview target that had never
+ * been measured.
+ *
+ * [dropRatePercent] is what the throttle refused. It is expected to be 0 on this
+ * device: see [AnalysisCadence].
+ */
 data class AnalysisStats(
     val processMs: Double,
     val fps: Int,
@@ -17,53 +27,38 @@ data class AnalysisStats(
  *
  * Every frame is closed exactly once — required or the KEEP_ONLY_LATEST pipeline
  * would starve.
+ *
+ * @param targetFps analysis ceiling, from `features.analysisTargetFps` in
+ *   `assets/guide_config.json` (CFG-1). Deliberately has **no default**: a default
+ *   here would be a second place the number lives, and the one that wins on device
+ *   would depend on which call site forgot to pass it.
  */
 class FrameAnalyzer(
-    targetFps: Int = 12,
+    targetFps: Int,
     private val onStats: (AnalysisStats) -> Unit,
     private val onFrame: (ImageProxy) -> Unit = {},
 ) : ImageAnalysis.Analyzer {
 
-    private val minIntervalNs = 1_000_000_000L / targetFps
-
-    private var lastProcessedNs = 0L
-    private var windowStartNs = 0L
-    private var processed = 0
-    private var dropped = 0
-    private var sumProcessMs = 0.0
+    private val cadence = AnalysisCadence(targetFps)
+    private val window = AnalysisStatsWindow()
 
     override fun analyze(image: ImageProxy) {
         val now = System.nanoTime()
-        if (windowStartNs == 0L) windowStartNs = now
         try {
-            if (now - lastProcessedNs < minIntervalNs) {
-                dropped++
+            if (!cadence.shouldProcess(now)) {
+                window.onDropped()
                 return
             }
-            lastProcessedNs = now
             val t0 = System.nanoTime()
             onFrame(image)
-            sumProcessMs += (System.nanoTime() - t0) / 1_000_000.0
-            processed++
+            window.onProcessed((System.nanoTime() - t0) / 1_000_000.0)
         } finally {
             image.close()
-            maybeEmit(now)
+            // Closed on a stamp taken *after* the work, not on `now`. `now` is the
+            // arrival time; using it here left each window's last frame counted but
+            // not timed, which inflated the rate on top of the divisor bug that
+            // [AnalysisStatsWindow] documents.
+            window.maybeEmit(System.nanoTime())?.let(onStats)
         }
-    }
-
-    private fun maybeEmit(now: Long) {
-        if (now - windowStartNs < 1_000_000_000L) return
-        val total = processed + dropped
-        onStats(
-            AnalysisStats(
-                processMs = if (processed > 0) sumProcessMs / processed else 0.0,
-                fps = processed,
-                dropRatePercent = if (total > 0) dropped * 100 / total else 0,
-            ),
-        )
-        windowStartNs = now
-        processed = 0
-        dropped = 0
-        sumProcessMs = 0.0
     }
 }

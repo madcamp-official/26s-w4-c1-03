@@ -72,6 +72,7 @@ import com.gamdo.app.BuildConfig
 import com.gamdo.app.camera.AnalysisStats
 import com.gamdo.app.camera.CameraController
 import com.gamdo.app.camera.FrameAnalyzer
+import com.gamdo.app.camera.PreviewStats
 import com.gamdo.app.camera.SceneDetectorWarmup
 import com.gamdo.app.camera.ShakeMeter
 import com.gamdo.app.camera.TiltSensor
@@ -260,6 +261,8 @@ fun CameraScreen(
     val shakeMeter = remember { ShakeMeter(context) }
 
     val stats by viewModel.stats.collectAsState()
+    val previewStats by viewModel.previewStats.collectAsState()
+    val previewFpsAvailability by viewModel.previewFpsAvailability.collectAsState()
     val detection by viewModel.detectionLabel.collectAsState()
     val overlay by viewModel.overlay.collectAsState()
     val guideDebug by viewModel.guideDebug.collectAsState()
@@ -351,7 +354,10 @@ fun CameraScreen(
         controller.setAnalyzer(
             analysisExecutor,
             FrameAnalyzer(
-                targetFps = 12,
+                // W3-1 (CFG-1): the cadence is the asset's, not a literal's. See
+                // `FeaturesConfigJson.analysisTargetFps` for why 12 is a ceiling
+                // this device does not reach.
+                targetFps = guideConfig.features.analysisTargetFps,
                 onStats = viewModel::onStats,
                 onFrame = onFrame@{ imageProxy ->
                     // Read before any conversion work. The detector is built on
@@ -462,12 +468,16 @@ fun CameraScreen(
             onRescan = { viewModel.rescanLayout() },
             onRescanAt = { anchorX, anchorY -> viewModel.rescanLayoutAt(anchorX, anchorY) },
             onPaneRatio = { paneRatioWtoH = it },
+            onPreviewFrameNs = viewModel::onPreviewFrame,
+            onPreviewFpsAvailability = viewModel::onPreviewFpsAvailability,
             referenceLayer = referenceLayer,
             hud = {
                 if (hudAvailable && showHud) {
                     CameraHud(
                         modifier = Modifier.align(Alignment.TopStart),
                         stats = stats,
+                        previewStats = previewStats,
+                        previewFpsAvailability = previewFpsAvailability,
                         detection = detection,
                         rollDeg = tilt.rollDeg,
                         pitchDeg = tilt.pitchDeg,
@@ -830,6 +840,9 @@ private fun CameraPreviewPane(
     onRescan: () -> Unit,
     onRescanAt: (Float, Float) -> Unit,
     onPaneRatio: (Float) -> Unit,
+    /** One tick per delivered preview frame (§7-1). Main thread. */
+    onPreviewFrameNs: (Long) -> Unit,
+    onPreviewFpsAvailability: (PreviewFpsAvailability) -> Unit,
     referenceLayer: @Composable BoxScope.() -> Unit,
     hud: @Composable BoxScope.() -> Unit,
 ) {
@@ -881,30 +894,36 @@ private fun CameraPreviewPane(
             modifier = Modifier.fillMaxSize().clipToBounds(),
             factory = { ctx ->
                 PreviewView(ctx).apply {
-                    // COMPATIBLE (TextureView), not the PERFORMANCE default
-                    // (SurfaceView).
+                    // Implementation mode is left at CameraX's PERFORMANCE default,
+                    // i.e. a SurfaceView.
                     //
-                    // A SurfaceView's buffer is composited by SurfaceFlinger, not
-                    // drawn by the view tree, and it does not follow a layout change
-                    // reliably: whenever the preview pane's height changed after the
-                    // surface was created, the old size stayed and live camera image
-                    // bled over the rows above and below it — measured at 70px each
-                    // when the old style picker opened, and 36px each when the style
-                    // strip arrived a frame after `presets` loaded from disk.
-                    //
-                    // Fixing it by never resizing the pane worked twice and broke
-                    // twice, because *anything* that appears late resizes it. A
-                    // TextureView is an ordinary view: it resizes with layout and
-                    // clips to its bounds, so the failure mode does not exist. The
-                    // cost is one extra copy per frame, which on the target device
-                    // is a better trade than a band of camera image over the chrome.
+                    // A comment here used to claim the opposite — that the app runs
+                    // COMPATIBLE (TextureView) to stop live camera image bleeding
+                    // over the rows above and below the pane. It never did:
+                    // `git log -S "implementationMode ="` over this package is
+                    // empty. The comment arrived in 609f67b beside the real fix,
+                    // `clipToBounds()` on this AndroidView, in the same commit whose
+                    // neighbouring comment records that COMPATIBLE "changed nothing"
+                    // for that bug. The claim mattered because W3-2's preview-rate
+                    // measurement is only available in COMPATIBLE mode, so anyone
+                    // reading it would have concluded the measurement was already
+                    // reachable. See [MEASURE_PREVIEW_FPS].
+                    if (MEASURE_PREVIEW_FPS) {
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                    }
                     scaleType = PreviewView.ScaleType.FILL_CENTER
                     this.controller = controller.camera
                     controller.bind(lifecycleOwner)
                     previewView = this
+                    // §7-1: the preview rate, measured rather than inferred from the
+                    // analysis rate. Reports why it could not attach when it cannot.
+                    onPreviewFpsAvailability(attachPreviewFrameProbe(onPreviewFrameNs))
                 }
             },
-            onRelease = { previewView = null },
+            onRelease = {
+                previewView = null
+                onPreviewFpsAvailability(PreviewFpsAvailability.NOT_ATTACHED)
+            },
         )
 
         // The single pointer surface (see this function's KDoc). Both gestures are
@@ -1111,6 +1130,8 @@ private fun CameraBottomBar(
 private fun CameraHud(
     modifier: Modifier,
     stats: AnalysisStats?,
+    previewStats: PreviewStats?,
+    previewFpsAvailability: PreviewFpsAvailability,
     detection: String,
     rollDeg: Float,
     pitchDeg: Float,
@@ -1122,6 +1143,7 @@ private fun CameraHud(
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         stats?.let { DebugHud(stats = it) }
+        PreviewFpsHud(stats = previewStats, availability = previewFpsAvailability)
         if (detection.isNotEmpty()) DetectionBadge(detection)
         TiltBadge(rollDeg = rollDeg, pitchDeg = pitchDeg, shake = shake)
         // The debug preset-cycling badge lived here until the §3-2 style chip
@@ -1197,6 +1219,11 @@ private fun RuleOfThirds() {
     }
 }
 
+/**
+ * Analysis cost and rate. **The `fps` here is the detection stack's**, which on
+ * SM-G970N is 3-5 while the preview runs at 30 — the badge said only "fps" and was
+ * read as the §7-1 preview target failing. Both numbers now carry their subject.
+ */
 @Composable
 private fun DebugHud(stats: AnalysisStats, modifier: Modifier = Modifier) {
     Box(
@@ -1206,8 +1233,53 @@ private fun DebugHud(stats: AnalysisStats, modifier: Modifier = Modifier) {
             .padding(horizontal = 8.dp, vertical = 4.dp),
     ) {
         Text(
-            text = "%.1fms · %dfps · drop %d%%".format(stats.processMs, stats.fps, stats.dropRatePercent),
+            text = "분석 %.1fms · %dfps · drop %d%%".format(
+                stats.processMs,
+                stats.fps,
+                stats.dropRatePercent,
+            ),
             color = Sage,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+/**
+ * Preview rate (§7-1) — measured, or explicitly not.
+ *
+ * Never renders a number it did not measure. When no per-frame source could be
+ * attached it says so and names the reason, because a 0 here would be
+ * indistinguishable from a frozen preview.
+ */
+@Composable
+private fun PreviewFpsHud(
+    stats: PreviewStats?,
+    availability: PreviewFpsAvailability,
+    modifier: Modifier = Modifier,
+) {
+    val measured = availability == PreviewFpsAvailability.MEASURING && stats != null
+    val text = when {
+        measured -> "프리뷰 %dfps (%d프레임 / %.0fms)".format(
+            stats!!.fps,
+            stats.frames,
+            stats.windowMs,
+        )
+        availability == PreviewFpsAvailability.MEASURING -> "프리뷰 측정 중"
+        availability == PreviewFpsAvailability.UNAVAILABLE_PERFORMANCE_MODE ->
+            "프리뷰 미측정 · SurfaceView(PERFORMANCE)"
+        availability == PreviewFpsAvailability.UNAVAILABLE_ERROR -> "프리뷰 미측정 · 부착 실패"
+        else -> "프리뷰 미측정 · 미부착"
+    }
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color(0x99000000))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        Text(
+            text = text,
+            color = if (measured) Sage else OnDarkMedium,
             fontSize = 10.sp,
             fontWeight = FontWeight.Medium,
         )
