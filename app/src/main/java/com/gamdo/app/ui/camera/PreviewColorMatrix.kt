@@ -8,6 +8,38 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
+ * **Rejected. This is not the preview path — see
+ * [com.gamdo.app.camera.gl.PreviewColorEffect].**
+ *
+ * ## What this is for now
+ *
+ * O-14 chose an exact GLES pipeline over this approximation, on the strength of
+ * what this class measures. It is kept, with no production caller, because the
+ * measurement is the argument: `PreviewFilterModelTest`'s
+ * `the fitted colour matrix is the thing this replaces` fits a matrix here, runs it
+ * against [FilterEngine], and asserts the error is still large — **153 levels over
+ * the RGB cube and 90 on the grey ramp for `clean_social`** — while the shader model
+ * beside it stays within 3.
+ *
+ * Those two figures are the **exposure-omitted** fit, because that is the recipe
+ * the shader ships (O-15 (2)). [PreviewColorMatrixTest] fits the same preset with
+ * exposure at slider 25 and reports **154 / 89**; both are correct for their own
+ * seed, and the seed is the only thing that separates them. A matrix figure quoted
+ * without one is not reproducible — which is why both tests now pin theirs.
+ *
+ * That keeps O-14's premise executable rather than a claim in a decision table. If
+ * someone ever makes a matrix good enough, that test fails, and the GL pipeline and
+ * its second EGL context can be deleted. Until then this file is the reason they
+ * exist.
+ *
+ * Everything below describes the rejected design and is left intact as the record of
+ * it. The 입자/비네팅 and exposure caveats it lists are real, and two of them
+ * survived into the chosen path for the same underlying reasons — see
+ * [com.gamdo.app.camera.gl.PreviewFilterSpec.previewAdjustments] for exposure and
+ * [com.gamdo.app.camera.gl.grainAt] for grain.
+ *
+ * ---
+ *
  * O-13 (1) — the preset's colour, expressed as the one operator a live camera
  * preview can actually run.
  *
