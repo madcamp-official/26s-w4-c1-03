@@ -60,20 +60,20 @@ data class ObjectGuideConfigJson(
     val sceneModelMinimumConfidence: Float = 0.25f,
     val sceneModelMaxResults: Int = 8,
     /**
-     * Ask for the GPU delegate first, with CPU as the fallback.
+     * Whether the GPU delegate is **pursued**, with CPU as the fallback.
      *
-     * **This is a request, not a statement of fact.** On device it has so far
-     * always lost: the capture around detector init shows MediaPipe's CPU path
-     * (`"Created TensorFlow Lite XNNPACK delegate for CPU."`) and never the GPU
-     * one. The preference is still true because GPU is genuinely available in the
-     * artifact we ship — `libmediapipe_tasks_vision_jni.so` in tasks-vision
-     * 0.10.26 contains the GPU delegate and the `Delegate.GPU` request is plumbed
-     * all the way to `InferenceCalculatorOptions.Delegate.Gpu` — so turning it off
-     * would be giving up on the fast path rather than fixing it.
+     * **No longer the cold-start order.** It used to mean "build on GPU first", and
+     * on SM-G970N that cost 7570ms of delegate compilation before the first frame
+     * could be analysed — for a delegate whose *first inference* then failed with
+     * `[GL_INVALID_VALUE]: glMapBufferRange`. The same cold process builds on CPU in
+     * ~250ms. Since 2026-07-29 the first detector is always CPU and the GPU is built
+     * afterwards on its own thread, adopted only once a real inference on it
+     * returns; see `GpuUpgradePolicy`.
      *
-     * What was missing is the record. `EfficientDetSceneDetector` now logs a
-     * `DetectorAcceleratorReport` at init naming the accelerator it actually got
-     * and the reason GPU was refused; read that before changing this flag.
+     * So leave this true. It no longer costs anything at startup, and GPU does work
+     * on other hardware (owner, 2026-07-29) — turning it off globally would delete a
+     * working fast path elsewhere to route around one driver bug here. The outcome
+     * per session is in the `DetectorAcceleratorReport` line: grep `gpuUpgrade=`.
      */
     val sceneModelPreferGpu: Boolean = true,
     val sceneModelCenterCropEveryFrames: Int = 4,

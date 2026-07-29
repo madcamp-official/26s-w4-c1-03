@@ -2,14 +2,30 @@ package com.gamdo.app.detect
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Process
 import android.util.Log
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetector
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 private const val TAG = "EfficientDet"
+
+/**
+ * Named so a device trace says which thread spent 7.5s, rather than
+ * `pool-3-thread-1`, and so the GPU inference thread is identifiable once the
+ * upgrade is adopted and that same thread starts running one inference per frame.
+ */
+private const val GPU_UPGRADE_THREAD_NAME = "gamdo-gpu-upgrade"
+
+/** EfficientDet-Lite0's own input size, so validation runs the real tensor path. */
+private const val VALIDATION_INPUT_PX = 320
+
+/** Mid grey. Opaque and non-zero so nothing upstream can shortcut an empty image. */
+private const val VALIDATION_FILL = 0xFF808080.toInt()
 
 /** Runtime knobs for the bundled mobile object detector. */
 data class EfficientDetSceneDetectorConfig(
@@ -42,10 +58,18 @@ class EfficientDetSceneDetector(
     context: Context,
     private val config: EfficientDetSceneDetectorConfig = EfficientDetSceneDetectorConfig(),
 ) : CustomSceneDetector, AcceleratorReporting {
-    private data class DetectorHandle(
-        val detector: ObjectDetector,
+    /**
+     * A live detector plus the accelerator it is running on.
+     *
+     * [confined] is unconfined for the CPU detector (built and used on the analysis
+     * thread) and thread-confined for an upgraded GPU one — see [ThreadConfined].
+     */
+    private class DetectorHandle(
+        val confined: ThreadConfined<ObjectDetector>,
         val accelerator: DetectorAccelerator,
-    )
+    ) {
+        fun close() = confined.close { runCatching { it.close() } }
+    }
 
     override val modelId: String = "efficientdet-lite0-coco-int8"
 
@@ -53,20 +77,42 @@ class EfficientDetSceneDetector(
 
     // B 모듈 리드 승인 수정(오너 결정 O-6, 2026-07-28): 델리게이트 결과를 기록으로 남긴다.
     //
-    // preferGpu는 기본값도 true이고 guide_config.json도 true인데, 기기에서는 GPU가
-    // 잡히지 않는다. 검출기 init 부근 logcat에 "Created TensorFlow Lite XNNPACK
-    // delegate for CPU."만 있고 GPU 쪽 대응 문구는 한 번도 나오지 않는다 — 그 문구
-    // ("Created TensorFlow Lite delegate for GPU.")는 실제로 배포된
-    // libmediapipe_tasks_vision_jni.so 안에 문자열로 들어 있으므로, 없다는 사실
-    // 자체가 GPU 초기화가 성공하지 못했다는 증거다.
-    //
-    // 문제는 강등이 아니라 침묵이다. 예전 코드는 델리게이트 실패를 지역 변수
+    // 문제는 강등이 아니라 침묵이었다. 예전 코드는 델리게이트 실패를 지역 변수
     // lastFailure에 담았다가 뒤 델리게이트가 성공하는 순간 그대로 버렸고, 최종
     // 델리게이트는 아무도 읽지 않는 private 필드에만 남았다. 프레임당 가장 비싼
     // 단계가 GPU인지 CPU인지를 서드파티 로그의 노드 수로 추측해야 했다.
+
+    // B 모듈 리드 승인 수정(remain_plan W3-4, 2026-07-29): CPU 선행 + GPU 후행 검증.
+    //
+    // 위 O-6 주석은 "기기에서 GPU 초기화 자체가 실패한다"고 적고 있었고, 근거는
+    // logcat에 "Created TensorFlow Lite delegate for GPU."가 없다는 것이었다.
+    // **그 추론은 틀렸다.** O-6이 심은 기록이 실제로 찍히자 SM-G970N에서 이렇게
+    // 나왔다(2026-07-29, 3회 재현):
+    //
+    //   10:51:29.590 I/EfficientDet: accelerator=GPU requested=GPU degraded=false
+    //   10:51:29.606 D/CameraStartup: detectorBuild … object=7570 total=7630ms
+    //   10:51:31.320 W/EfficientDet: GPU inference failed mid-session
+    //   10:51:31.431 W/EfficientDet: accelerator=CPU degraded=true runtimeDowngrade=true
+    //
+    // 생성은 성공한다. 실패하는 것은 **첫 추론**이고, 원인은 gl_interop.cc의
+    // [GL_INVALID_VALUE]: glMapBufferRange다. 서드파티 라이브러리가 로그를 남길
+    // 의무는 없으므로 "문구가 없다"는 증거가 아니었다.
+    //
+    // 그래서 콜드 스타트가 7.6초 동안 만든 검출기를 1.7초 뒤에 버렸다. 격리된
+    // worktree에서 CPU 전용으로 콜드 프로세스를 2회 재면 object=281/228ms,
+    // total=376/313ms — 같은 4.5MB 에셋을 같은 콜드 캐시에서 읽는다. 즉 7.5초는
+    // 모델 파일 읽기가 아니라 **GPU 델리게이트 컴파일**이다.
+    //
+    // preferGpu=false 전역화는 답이 아니다. 담당 B 환경에서는 GPU가 정상 동작한다
+    // (오너 확인, 2026-07-29). 그래서 선택을 끄는 대신 **순서를 바꿨다**:
+    // CPU로 먼저 만들어 가이드를 ~350ms에 띄우고(GpuUpgradePolicy.coldStart),
+    // GPU는 별도 스레드에서 만들어 **실제 추론 1회가 성공한 경우에만** 교체한다.
     @Volatile
     private var acceleratorState: DetectorAcceleratorReport =
         DetectorAcceleratorReport(requestedGpu = config.preferGpu, accelerator = null)
+
+    /** Guards the transitions of [acceleratorState] and [upgraded] across two threads. */
+    private val lock = Any()
 
     override val acceleratorReport: DetectorAcceleratorReport
         get() = acceleratorState
@@ -84,11 +130,34 @@ class EfficientDetSceneDetector(
     //
     // EfficientDet은 1회당 ML Kit의 약 3배 빠르다. 문제는 느린 검출기를 **교체한**
     // 것이 아니라 **조건부로 덧붙인** 것이었다.
-    private var detector: DetectorHandle? = if (config.enabled) createInitialDetector() else null
+    private var detector: DetectorHandle? = if (config.enabled) createColdStartDetector() else null
+
+    /**
+     * A validated GPU detector waiting to be swapped in, published by the upgrade
+     * thread and consumed by the analysis thread.
+     *
+     * The swap is deliberately **not** performed by the thread that built it. The
+     * analysis thread is mid-`detect()` on the CPU detector for most of a frame, and
+     * closing a MediaPipe handle out from under a running inference is a native
+     * use-after-free. Handing it over instead means the only thread that ever
+     * mutates [detector], or closes a detector that has served a frame, is the one
+     * that uses it — the same invariant `AnalysisThreadResource` relies on.
+     */
+    @Volatile
+    private var upgraded: DetectorHandle? = null
+
+    @Volatile
+    private var closed = false
+
     private var frameCount = 0
     private var sequenceId = 0L
 
+    init {
+        if (config.enabled) startGpuUpgradeIfWanted()
+    }
+
     override fun detectBatch(frame: AnalysisFrame): ObjectDetectionBatch {
+        adoptPendingUpgrade()
         // Every "cannot run" path now reports **no objects** rather than reaching for
         // a second detector. An empty batch is the honest answer, and the guide
         // degrades to the person/preset path rather than to a 527ms frame.
@@ -134,57 +203,189 @@ class EfficientDetSceneDetector(
     override fun detect(frame: AnalysisFrame): List<ObjectObservation> = detectBatch(frame).objects
 
     override fun close() {
-        detector?.detector?.close()
+        closed = true
+        // Read again under the lock: the upgrade thread may be publishing right now,
+        // and a GPU detector published after teardown would never be closed at all.
+        synchronized(lock) { upgraded.also { upgraded = null } }?.close()
+        detector?.close()
+        detector = null
     }
 
     /**
-     * Tries each accelerator in [DetectorAcceleratorReport.plan] order and
-     * **records which one won**.
+     * Builds the detector the first frame will use — **on the CPU, always**.
      *
-     * Every early-exit here writes [acceleratorState] before returning, because
-     * the one thing this method must not do is leave the app guessing. The GPU
-     * throwable is logged where it happens rather than accumulated into a
-     * `lastFailure` that a later success discards — that discard is why a GPU
-     * refusal has never once been visible in a device capture.
+     * This method is the 7.5s. It used to walk `DetectorAcceleratorReport.plan`,
+     * which puts GPU first, so on SM-G970N it compiled a GPU delegate for 7570ms
+     * before the analysis thread could look at a single frame, and that delegate was
+     * discarded 1.7s later when its first inference threw. A cold CPU build of the
+     * same 4.5MB asset is ~250ms (281 / 228ms measured, cold process).
+     *
+     * The GPU is not abandoned, only deferred — see [startGpuUpgradeIfWanted].
      */
-    private fun createInitialDetector(): DetectorHandle? {
-        var gpuFailure: Throwable? = null
-        var lastFailure: Throwable? = null
-        DetectorAcceleratorReport.plan(config.preferGpu).forEach { accelerator ->
-            val attempt = runCatching { createDetector(appContext, accelerator) }
-            val handle = attempt.getOrNull()
-            if (handle != null) {
-                acceleratorState = DetectorAcceleratorReport(
-                    requestedGpu = config.preferGpu,
-                    accelerator = accelerator,
-                    gpuFailure = gpuFailure?.describe(),
-                )
-                // The line that makes the delegate discoverable without decompiling.
-                // Info, not debug: this is true of release builds too, and a reader
-                // chasing a slow frame should not have to rebuild to see it.
-                Log.i(TAG, acceleratorState.format())
-                return handle
-            }
-            lastFailure = attempt.exceptionOrNull()
-            if (accelerator == DetectorAccelerator.GPU) {
-                gpuFailure = lastFailure
-                Log.w(TAG, "GPU delegate refused — falling back to CPU", gpuFailure)
-            }
+    private fun createColdStartDetector(): DetectorHandle? {
+        val accelerator = GpuUpgradePolicy.coldStart
+        val attempt = runCatching {
+            DetectorHandle(
+                ThreadConfined.unconfined(createDetector(appContext, accelerator)),
+                accelerator,
+            )
         }
+        val handle = attempt.getOrNull()
         acceleratorState = DetectorAcceleratorReport(
             requestedGpu = config.preferGpu,
-            accelerator = null,
-            gpuFailure = gpuFailure?.describe(),
+            accelerator = handle?.accelerator,
+            upgrade = GpuUpgradePolicy.initialStage(config.preferGpu, handle?.accelerator),
         )
-        Log.w(
-            TAG,
-            "EfficientDet unavailable — object detection is off this session. " + acceleratorState.format(),
-            lastFailure,
-        )
-        return null
+        if (handle == null) {
+            Log.w(
+                TAG,
+                "EfficientDet unavailable — object detection is off this session. " +
+                    acceleratorState.format(),
+                attempt.exceptionOrNull(),
+            )
+            return null
+        }
+        // The line that makes the delegate discoverable without decompiling. Info,
+        // not debug: this is true of release builds too, and a reader chasing a slow
+        // frame should not have to rebuild to see it.
+        Log.i(TAG, acceleratorState.format())
+        return handle
     }
 
-    private fun createDetector(context: Context, accelerator: DetectorAccelerator): DetectorHandle {
+    /**
+     * Pursues the GPU delegate off the critical path, and adopts it **only if a real
+     * inference on it returns**.
+     *
+     * Three things about this method are load-bearing, and each of them is the
+     * device's doing rather than a preference:
+     *
+     *  - **Its own thread.** Queued on the analysis executor, a 7.5s build blocks
+     *    every frame behind it — the stall would move, not go away.
+     *  - **Background priority while building.** 7.5s of delegate compilation
+     *    competing with the guide on a 2019 mid-range phone is visible. The priority
+     *    is restored before the detector is published, because that same thread then
+     *    runs one inference per frame.
+     *  - **A validation inference.** `createFromOptions` returned a usable-looking
+     *    handle on the very device where the delegate does not work, and
+     *    `accelerator=GPU degraded=false` was logged about it. Creation proves
+     *    nothing here.
+     *
+     * Runs at most once per detector: [GpuUpgradePolicy.shouldAttempt] only permits
+     * [GpuUpgradeStage.PENDING], and no outcome resolves back to it. A driver that
+     * refuses once refuses in a loop, at 7.5s a turn.
+     */
+    private fun startGpuUpgradeIfWanted() {
+        if (!GpuUpgradePolicy.shouldAttempt(acceleratorState.upgrade)) return
+        val executor = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, GPU_UPGRADE_THREAD_NAME)
+        }
+        executor.execute {
+            Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+            val startNs = System.nanoTime()
+            val built = runCatching { createDetector(appContext, DetectorAccelerator.GPU) }
+            val gpu = built.getOrNull()
+            if (gpu == null) {
+                refuseUpgrade(executor, GpuUpgradeStage.CREATE_FAILED, built.exceptionOrNull(), startNs)
+                return@execute
+            }
+            // Confined here, on this thread, so the inference that validates it and
+            // every inference that follows run on the same thread it was built on.
+            val confined = ThreadConfined.confinedTo(executor, gpu)
+            val validation = runCatching { confined.use(::validateGpu) }
+            if (validation.isFailure) {
+                confined.close { runCatching { it.close() } }
+                refuseUpgrade(
+                    executor = null, // close() above already shut the thread down
+                    stage = GpuUpgradeStage.VALIDATION_FAILED,
+                    cause = validation.exceptionOrNull(),
+                    startNs = startNs,
+                )
+                return@execute
+            }
+            // Back to the analysis thread's priority: from here this thread is a
+            // per-frame inference thread, not a build thread.
+            Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT)
+            publishUpgrade(DetectorHandle(confined, DetectorAccelerator.GPU), startNs)
+        }
+    }
+
+    /**
+     * One real inference on a synthetic frame.
+     *
+     * [VALIDATION_INPUT_PX] is EfficientDet-Lite0's own input size, so this runs the
+     * same tensor path a camera frame does without an extra resize, for 410KB. The
+     * result is discarded — the only question is whether `detect()` returns, and on
+     * SM-G970N it does not: `[GL_INVALID_VALUE]: glMapBufferRange`.
+     */
+    private fun validateGpu(model: ObjectDetector) {
+        val probe = Bitmap.createBitmap(
+            VALIDATION_INPUT_PX,
+            VALIDATION_INPUT_PX,
+            Bitmap.Config.ARGB_8888,
+        )
+        try {
+            probe.eraseColor(VALIDATION_FILL)
+            model.detect(BitmapImageBuilder(probe).build())
+        } finally {
+            if (!probe.isRecycled) probe.recycle()
+        }
+    }
+
+    /** The GPU is validated and handed to the analysis thread to swap in. */
+    private fun publishUpgrade(handle: DetectorHandle, startNs: Long) {
+        val orphaned = synchronized(lock) {
+            if (closed) return@synchronized handle
+            upgraded = handle
+            null
+        }
+        if (orphaned != null) {
+            orphaned.close()
+            return
+        }
+        Log.i(TAG, "gpuUpgrade validated in ${elapsedMs(startNs)}ms on $GPU_UPGRADE_THREAD_NAME")
+    }
+
+    /** The GPU was refused. CPU keeps serving and nothing is retried. */
+    private fun refuseUpgrade(
+        executor: ExecutorService?,
+        stage: GpuUpgradeStage,
+        cause: Throwable?,
+        startNs: Long,
+    ) {
+        executor?.shutdown()
+        synchronized(lock) {
+            acceleratorState = acceleratorState.refusingGpu(stage, cause?.describe())
+        }
+        Log.w(
+            TAG,
+            "gpuUpgrade refused after ${elapsedMs(startNs)}ms — staying on CPU. " +
+                acceleratorState.format(),
+            cause,
+        )
+    }
+
+    /**
+     * Swaps a validated GPU detector in, on the analysis thread, between frames.
+     *
+     * The CPU detector is closed here rather than kept as a warm spare: it is ~5MB
+     * of native memory that a revoke can rebuild in ~250ms, and `DetectorWarmupGate`
+     * already treats that 5MB as worth releasing when nobody is looking at it.
+     */
+    private fun adoptPendingUpgrade() {
+        if (upgraded == null) return
+        val pending = synchronized(lock) { upgraded.also { upgraded = null } } ?: return
+        if (closed) {
+            pending.close()
+            return
+        }
+        val previous = detector
+        detector = pending
+        previous?.close()
+        synchronized(lock) { acceleratorState = acceleratorState.adoptingGpu() }
+        Log.i(TAG, acceleratorState.format())
+    }
+
+    private fun createDetector(context: Context, accelerator: DetectorAccelerator): ObjectDetector {
         val base = BaseOptions.builder()
             .setModelAssetPath(config.modelAsset)
             .setDelegate(accelerator.toDelegate())
@@ -195,8 +396,10 @@ class EfficientDetSceneDetector(
             .setMaxResults(config.maxResults)
             .setScoreThreshold(config.minimumConfidence)
             .build()
-        return DetectorHandle(ObjectDetector.createFromOptions(context, options), accelerator)
+        return ObjectDetector.createFromOptions(context, options)
     }
+
+    private fun elapsedMs(startNs: Long): Long = (System.nanoTime() - startNs) / 1_000_000L
 
     private fun shouldRunCenterCrop(primary: List<ObjectObservation>): Boolean {
         if (frameCount % config.centerCropEveryFrames != 0) return false
@@ -224,35 +427,45 @@ class EfficientDetSceneDetector(
         }
 
     /**
-     * Some Samsung GPU drivers can initialise the delegate successfully and
-     * still fail on a later GL buffer map. Keep that native failure inside the
-     * detector seam: retry once on CPU, then report no objects for this frame
+     * A GPU that passed validation and then faulted anyway.
+     *
+     * Validation is evidence, not a guarantee: a driver can serve inferences for
+     * minutes and then fail a GL buffer map under memory pressure or after another
+     * app takes the GPU. Keep that native failure inside the detector seam — rebuild
+     * once on CPU, never re-attempt the GPU, and report no objects for this frame
      * rather than crashing the CameraX analyzer thread.
      */
     private fun detectBitmap(bitmap: Bitmap): List<ObjectObservation> {
         val current = detector ?: return emptyList()
-        val first = runCatching { detectBitmap(current.detector, bitmap) }
+        // The bitmap is created on the analysis thread and, for a confined GPU
+        // detector, read on the upgrade thread. Safe: `use` blocks the caller for the
+        // whole read, so there is no concurrent access and no recycle underneath it.
+        val first = runCatching { current.confined.use { detectBitmap(it, bitmap) } }
         if (first.isSuccess) return first.getOrThrow()
 
         if (current.accelerator == DetectorAccelerator.GPU) {
             val cause = first.exceptionOrNull()
             Log.w(TAG, "GPU inference failed mid-session — rebuilding the detector on CPU", cause)
-            runCatching { current.detector.close() }
-            val rebuilt = runCatching { createDetector(appContext, DetectorAccelerator.CPU) }.getOrNull()
+            current.close()
+            val rebuilt = runCatching {
+                DetectorHandle(
+                    ThreadConfined.unconfined(createDetector(appContext, DetectorAccelerator.CPU)),
+                    DetectorAccelerator.CPU,
+                )
+            }.getOrNull()
             detector = rebuilt
             // Both outcomes are recorded, including the bad one. `rebuilt == null`
             // used to leave `detector` null for the rest of the session with no log
             // at all: object detection simply stopped and every later frame returned
             // an empty batch that looked like "nothing in view".
-            acceleratorState = DetectorAcceleratorReport(
-                requestedGpu = config.preferGpu,
-                accelerator = if (rebuilt != null) DetectorAccelerator.CPU else null,
-                gpuFailure = cause?.describe(),
-                runtimeDowngrade = true,
-            )
+            synchronized(lock) {
+                acceleratorState = acceleratorState.revokingGpu(cause?.describe())
+                    .copy(accelerator = rebuilt?.accelerator)
+            }
             Log.w(TAG, acceleratorState.format())
             rebuilt?.let { cpu ->
-                return runCatching { detectBitmap(cpu.detector, bitmap) }.getOrDefault(emptyList())
+                return runCatching { cpu.confined.use { detectBitmap(it, bitmap) } }
+                    .getOrDefault(emptyList())
             }
         }
         return emptyList()
