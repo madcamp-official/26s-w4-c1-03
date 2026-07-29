@@ -141,7 +141,13 @@ fun CameraOverlay(
         // than drawing over it. The way out of a latch is the 재탐색 button on the
         // preview, not a second set of marks on screen.
         data.guide
-            ?.takeIf { it.visible && data.layoutGuide?.fixedLayout == null }
+            // Searching deliberately shows only the compact loading indicator.
+            // A free-floating target bracket in an empty scene looked like a false
+            // recommendation despite there being no stable template to follow.
+            ?.takeIf {
+                it.visible && data.layoutState is GuideLayoutState.Fixed &&
+                    data.layoutGuide?.fixedLayout == null
+            }
             ?.let { guide ->
             // The composition target: where the subject should end up in the photo.
             val frame = mapRect(guide.targetFrame, data, vw, vh, OverlayMapping.Space.COMPOSITION)

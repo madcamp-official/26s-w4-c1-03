@@ -301,7 +301,13 @@ enum class LayoutSource { AUTO, MANUAL, REFERENCE }
 
 sealed interface GuideLayoutState {
     data object Searching : GuideLayoutState
-    data class Fixed(val template: LayoutTemplate, val source: LayoutSource) : GuideLayoutState
+    /** A fixed state is renderable by definition; an empty template must remain Searching. */
+    data class Fixed(val template: LayoutTemplate, val source: LayoutSource) : GuideLayoutState {
+        init {
+            require(template.id.isNotBlank()) { "Fixed layout requires a template id" }
+            require(template.slots.isNotEmpty()) { "Fixed layout requires at least one slot" }
+        }
+    }
 }
 
 enum class LayoutCategory { PERSON, OBJECT }
