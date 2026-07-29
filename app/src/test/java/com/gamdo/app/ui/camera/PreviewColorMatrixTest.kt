@@ -160,13 +160,12 @@ class PreviewColorMatrixTest {
                     filter.id, f.maxCubeError, f.rmsCubeError, f.maxGreyError, f.rmsGreyError,
                 ),
             )
-            val expected = PINNED_GREY_MAX.getValue(filter.id)
-            assertEquals(
-                "${filter.id} grey-ramp worst case moved",
-                expected.toDouble(),
-                f.maxGreyError.toDouble(),
-                1.0,
-            )
+            val (cube, grey) = PINNED_MAX.getValue(filter.id)
+            // Exact, not a tolerance. Every input here is deterministic — a fixed
+            // lattice, a fixed seed, a pure engine — so there is nothing for a
+            // tolerance to absorb except the drift this test exists to catch.
+            assertEquals("${filter.id} cube worst case moved", cube, f.maxCubeError)
+            assertEquals("${filter.id} grey-ramp worst case moved", grey, f.maxGreyError)
         }
     }
 
@@ -204,15 +203,38 @@ class PreviewColorMatrixTest {
     }
 
     private companion object {
-        /** Measured 2026-07-29 on `PhotoFilters` as shipped. Worst grey-ramp level. */
-        val PINNED_GREY_MAX = mapOf(
-            "original" to 0f,
-            "clean_social" to 89f,
-            "candid_feed" to 66f,
-            "bright_review" to 70f,
-            "soft_film" to 64f,
-            "casual_portrait" to 61f,
-            "night_street" to 67f,
+        /**
+         * Worst (cube, grey-ramp) level, measured 2026-07-29 on `PhotoFilters` as
+         * shipped, seeded from [nominal] — `Measure(0.45, 0.90)`.
+         *
+         * **The seed is part of the number.** `clean_social`'s grey-ramp worst case is
+         * 89 here and 90 in `PreviewFilterModelTest`, and neither is wrong: that test
+         * fits from `PreviewFilterSpec.previewAdjustments`, which omits exposure per
+         * O-15 (2). The error is not monotonic in exposure, so the two seeds land in
+         * different bands. Sweeping the exposure slider with everything else fixed:
+         *
+         * | slider | cube | grey |
+         * |---|---|---|
+         * | 0–10 | 153 | 90 |
+         * | 12–16 | 154 | 90 |
+         * | **18–28** | **154** | **89** |
+         * | 30–32 | 154 | 90 |
+         * | 34–40 | 153 | 90 |
+         *
+         * [nominal] puts `clean_social` at slider 25 — mid-band, but the band is only
+         * ten units wide. That is exactly why the assertion below is exact and why the
+         * seed is named here: a 1-level tolerance would have swallowed a move from 89
+         * to 90 in silence, and two agents already spent three messages establishing
+         * which of those digits belonged to which configuration.
+         */
+        val PINNED_MAX = mapOf(
+            "original" to (0f to 0f),
+            "clean_social" to (154f to 89f),
+            "candid_feed" to (174f to 66f),
+            "bright_review" to (171f to 70f),
+            "soft_film" to (170f to 64f),
+            "casual_portrait" to (179f to 61f),
+            "night_street" to (173f to 67f),
         )
     }
 }
