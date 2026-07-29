@@ -82,3 +82,16 @@
 - Face count, identity similarity, and histogram distance are quality signals; only file integrity, dimensions, input alias, and bounded operation geometry are hard gates.
 - FLUX outpaint preparation and original-interior restoration are implemented in the ComfyUI adapter, but the operation stays unavailable until the CAMP-2 workflow/model is configured.
 - P1 owns the visible rescue cards, direct-edit controls, candidate comparison, and save gestures.
+
+## 2026-07-29 — AI 3 생성형 구도 복구 운영 전환
+
+- FLUX.1 Fill dev를 CAMP-2 ComfyUI low-VRAM workflow로 배치했다. 실제 320×256 입력을 오른쪽 10% 확장해 352×256 PNG를 생성했고, 원본 내부 픽셀의 완전 일치를 확인했다. 공개 작업 `job_p2_flux_1785319309`도 `done`, `validation=passed`로 완료됐다.
+- IC-Light는 포트 8191의 격리 서비스에서 요청마다 자식 프로세스로 실행한다. 실제 재조명 후보를 생성한 뒤 GPU VRAM이 반환되는 것을 확인했다.
+- ViewCrafter_16과 DUSt3R 체크포인트를 포트 8192의 격리 서비스에 배치했다. PyTorch3D 0.7.8과 xFormers 0.0.27을 사용하며, xFormers가 없으면 readiness를 거짓으로 반환한다.
+- ViewCrafter의 scalar 기본 카메라 인자, Pillow 10 비호환, ImageIO FFMPEG 프레임 추출, 24GB VRAM OOM을 각각 전체 축 인자 전달, Pillow 9.4, v2 FFMPEG reader, xFormers 메모리 효율 attention으로 해결했다.
+- 직접 `dolly_out` smoke는 1440×2940 PNG를 실제 생성했다. 공개 작업 `job_p2_viewpoint_1785322183`은 후보 2개를 반환하고 두 후보 모두 `validation=passed`로 완료됐다.
+- 공개 `/api/v1/rescue/analyze` capability는 `localStyle/removeObjects/outpaint/relight/viewpoint`가 모두 `true`다. capability는 URL 존재만이 아니라 각 서비스 `/health`의 실제 readiness로 계산한다.
+- ViewCrafter는 요청마다 모델을 로드해 후보당 약 2분이 소요된다. 현재 정확성 우선 데모 설정이며, 후보 2개 작업은 약 5분이다. 앱 폴링 상한과 공급자 timeout은 각각 기존 장기 작업 계약과 650초로 맞췄다.
+- 모델 배치 후 루트 디스크 여유는 약 4GB다. 추가 대형 체크포인트 설치 전 공간 정리가 필요하다.
+
+이 절은 위의 “FLUX 미설치”와 “ViewCrafter 비활성” 기록보다 최신이며 운영 상태에 우선한다.

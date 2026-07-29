@@ -41,9 +41,12 @@ upstream license and notice requirements.
 
 - Source: [Drexubery/ViewCrafter](https://github.com/Drexubery/ViewCrafter)
 - Code license: Apache License 2.0.
-- Planned checkpoint: `Drexubery/ViewCrafter_16` plus the upstream DUSt3R
-  checkpoint. Model weights are server-side only and are not bundled in the
-  Android APK.
-- The runtime capability remains disabled until both complete checkpoints and
-  a successful CAMP-2 smoke test are present; partial files are not treated as
-  a deployed model.
+- Deployed checkpoint: `Drexubery/ViewCrafter_16` plus the upstream DUSt3R
+  `DUSt3R_ViTLarge_BaseDecoder_512_dpt` checkpoint. Model weights are
+  server-side only and are not bundled in the Android APK.
+- The CAMP-2 runtime uses PyTorch 2.3.1/CUDA 12.1, PyTorch3D 0.7.8 and
+  xFormers 0.0.27. xFormers is required to keep the 16-frame 1024 model within
+  RTX 3090 memory; readiness fails closed when it is unavailable.
+- A complete single-view `dolly_out` smoke and a public FastAPI edit job both
+  produced real PNG candidates. Partial model files are rejected by size and
+  runtime checks and never enable the capability.

@@ -156,7 +156,7 @@ class Database:
             connection.execute(
                 """
                 UPDATE edit_jobs
-                SET status = 'processing', progress_stage = 'removing',
+                SET status = 'processing', progress_stage = 'generating',
                     started_at = COALESCE(started_at, ?), updated_at = ?
                 WHERE id = ? AND status = 'queued'
                 """,

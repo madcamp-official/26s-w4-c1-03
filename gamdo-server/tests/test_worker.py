@@ -50,6 +50,20 @@ def test_worker_idle_tick_only_runs_purge(tmp_path: Path, monkeypatch) -> None:
     assert JobWorker(database).process_once() is False
 
 
+def test_claimed_job_uses_operation_neutral_progress_stage(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("app.db.DEFAULT_DB_PATH", tmp_path / "gamdo.sqlite3")
+    database = Database()
+    database.initialize()
+    input_path = tmp_path / "inputs" / "job_worker_001.png"
+    input_path.parent.mkdir()
+    seed_job(database, input_path)
+
+    claimed = database.claim_next_queued()
+
+    assert claimed is not None
+    assert database.get_job("job_worker_001")["progress_stage"] == "generating"
+
+
 class CopyProvider:
     def __init__(self, output: Path) -> None:
         self.output = output
