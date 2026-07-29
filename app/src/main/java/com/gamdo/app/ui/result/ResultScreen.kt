@@ -162,6 +162,21 @@ private sealed interface SelectedStripFilter {
 }
 
 /**
+ * Where a strip selection puts every slider, for this photograph.
+ *
+ * `내 레퍼런스` seeds to NEUTRAL rather than to a recipe: its colour is already
+ * rendered into the base bitmap (see [ResultScreen]'s `corrected`), so the sliders
+ * start at zero and only add a further adjustment on top — exactly as 원본 does.
+ */
+private fun seedFor(
+    selection: SelectedStripFilter,
+    measure: FilterEngine.Measure,
+): FilterEngine.Adjustments = when (selection) {
+    is SelectedStripFilter.Preset -> FilterEngine.seedFrom(selection.filter.filter, measure)
+    SelectedStripFilter.Reference -> FilterEngine.Adjustments.NEUTRAL
+}
+
+/**
  * @param activeReferenceStyle the active AI 2 reference's resolved
  *   composition+color, or null. Only [ResolvedStyle.color] is consumed here —
  *   composition is a camera-screen concern. See the integration contract's
@@ -450,14 +465,39 @@ fun ResultScreen(
     // already in `source` (see `corrected` above) — so it seeds to NEUTRAL: the
     // sliders start at zero and only add a *further* adjustment on top, same as
     // 원본 always has.
+    //
+    // This effect covers the two seedings a tap cannot: the selection the screen
+    // makes for itself when it opens (`opensOnPreferredStyle`), and `measure`
+    // arriving a frame after the bitmap. A **tap** seeds through [selectStrip]
+    // instead — see there for why the difference is worth a whole preview pass.
     LaunchedEffect(selectedStrip, measure) {
         val m = measure ?: return@LaunchedEffect
-        val seeded = when (val sel = selectedStrip) {
-            is SelectedStripFilter.Preset -> FilterEngine.seedFrom(sel.filter.filter, m)
-            SelectedStripFilter.Reference -> FilterEngine.Adjustments.NEUTRAL
-        }
+        val seeded = seedFor(selectedStrip, m)
         baseline = seeded
         adjustments = seeded
+    }
+    // Selecting a strip item and seeding its sliders, as **one** state change.
+    //
+    // Doing the seeding in the effect above and nothing else here meant composition
+    // saw an intermediate: the new filter with the *previous* filter's slider
+    // positions. That pair is not a state the user can produce, and it is not free —
+    // it is a distinct `PreviewRequest`, so the render loop spent a whole preview
+    // pass on it, published it, and only then rendered the pair the tap actually
+    // asked for. A filter tap cost two passes and showed the wrong one first, which
+    // on a phone is most of what "필터 적용이 너무 느려" was.
+    //
+    // Compose batches state writes made in one event handler into a single
+    // recomposition, so all three land together and the intermediate never exists.
+    // The effect above still runs afterwards and writes the identical value, which
+    // `mutableStateOf`'s structural equality turns into a no-op.
+    val selectStrip: (SelectedStripFilter) -> Unit = { pick ->
+        styleChosenByUser = true
+        selectedStrip = pick
+        measure?.let { m ->
+            val seeded = seedFor(pick, m)
+            baseline = seeded
+            adjustments = seeded
+        }
     }
     // Null until a save lands; then whether the gallery accepted it. Reduced from the
     // whole `SavedEdit` because the two save paths return different records — an app
@@ -646,10 +686,7 @@ fun ResultScreen(
                             selected = selectedStrip == SelectedStripFilter.Preset(filter),
                             // O-12: this tap, and the one below, are the only things
                             // that let a correction touch a device photo.
-                            onClick = {
-                                styleChosenByUser = true
-                                selectedStrip = SelectedStripFilter.Preset(filter)
-                            },
+                            onClick = { selectStrip(SelectedStripFilter.Preset(filter)) },
                         )
                     }
                     is StripEntry.MyReference -> MyReferenceThumb(
@@ -657,10 +694,7 @@ fun ResultScreen(
                         size = 58.dp,
                         imageUri = activeReferenceImageUri,
                         selected = selectedStrip == SelectedStripFilter.Reference,
-                        onSelect = {
-                            styleChosenByUser = true
-                            selectedStrip = SelectedStripFilter.Reference
-                        },
+                        onSelect = { selectStrip(SelectedStripFilter.Reference) },
                         onDelete = {
                             if (selectedStrip == SelectedStripFilter.Reference) {
                                 selectedStrip = SelectedStripFilter.Preset(preferredFilter)

@@ -96,8 +96,14 @@ object QuickFilterEditor {
      *   **Only a caller that renders one frame at a time may pass one** — two renders
      *   sharing a buffer would write over each other. `renderLatest` is that caller;
      *   everything else leaves this null and gets a fresh array.
+     *
+     * Suspending because the pixel pass runs across cores ([applyFilterInParallel]).
+     * `FilterCostHarness` measured one preview pass at 52–99 ms of single-threaded
+     * work on a desktop JVM — a floor for the phone, and far too long to hold a drag
+     * on one core. The split is still *one render at a time*: this returns before the
+     * next request is taken, so the scratch buffer stays exclusively owned.
      */
-    fun apply(
+    suspend fun apply(
         source: Bitmap,
         filter: LocalFilter,
         adjustments: FilterEngine.Adjustments = FilterEngine.Adjustments.NEUTRAL,
@@ -105,7 +111,7 @@ object QuickFilterEditor {
     ): Bitmap {
         val pixels = pixelBuffer(scratch, source.width, source.height)
         source.getPixels(pixels, 0, source.width, 0, 0, source.width, source.height)
-        FilterEngine.apply(
+        applyFilterInParallel(
             pixels = pixels,
             width = source.width,
             height = source.height,

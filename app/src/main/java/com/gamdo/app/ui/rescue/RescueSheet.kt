@@ -3,6 +3,8 @@ package com.gamdo.app.ui.rescue
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -97,9 +100,16 @@ fun RescueSheet(
     if (section == RescueSection.HIDDEN) return
 
     Box(modifier = modifier.fillMaxSize()) {
-        // Scrim and sheet as siblings, sheet drawn second — same reason as
-        // `ReferenceCreateSheet`: a tap on the sheet never reaches the scrim's
-        // clickable, with no second no-op clickable needed to swallow it.
+        // Scrim and sheet as siblings, sheet drawn second. Being drawn on top is
+        // **not** enough on its own — Compose hit-tests the topmost node that
+        // *handles pointer input*, not the topmost node that draws. `background`,
+        // `clip` and `padding` handle nothing, so a tap on the sheet's own body
+        // used to fall straight through to the scrim below and dismiss it. The
+        // owner hit this on the reference sheet (2026-07-29) and reported it as
+        // "사진을 클릭하면 갑자기 닫혀버려"; the photo was not special — headings,
+        // labels and padding all dismissed too. Buttons survived only because each
+        // is its own pointer handler. The sheet below claims the gesture; see
+        // `ReferenceCreateSheet`, which carries the same fix.
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -113,6 +123,14 @@ fun RescueSheet(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
                 .background(Charcoal900)
+                // Claims every gesture that starts on the sheet body, so the scrim
+                // beneath never sees it. Placed after `background` and before
+                // `padding` so the claimed area is exactly the painted area,
+                // inset included. Children are hit first, so the buttons and the
+                // cards keep their own taps.
+                .pointerInput(Unit) {
+                    awaitEachGesture { awaitFirstDown(requireUnconsumed = false) }
+                }
                 .padding(20.dp),
         ) {
             when (section) {

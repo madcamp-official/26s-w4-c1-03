@@ -4,6 +4,8 @@ import android.net.Uri
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +29,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -83,11 +86,12 @@ fun ReferenceCreateSheet(
     if (section == ReferenceSheetSection.HIDDEN) return
 
     Box(modifier = modifier.fillMaxSize()) {
-        // Scrim first, sheet after: as *siblings*, not nested, so a tap on the
-        // sheet never reaches this clickable — Compose hit-tests the topmost node
-        // at a point, and the sheet is drawn on top of the scrim within the same
-        // Box. Nesting the sheet inside the scrim's own clickable would need a
-        // second, no-op clickable to swallow taps; this ordering needs none.
+        // Tap-outside-to-dismiss. Drawn first so the sheet sits on top of it.
+        //
+        // Being underneath is **not** what keeps the sheet's own taps away from it.
+        // Compose stops hit-testing at the topmost node that *handles pointer input*,
+        // not at the topmost node that draws — so a tap only stops here if nothing in
+        // the sheet above claimed it. See the sheet's own handler below.
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -101,6 +105,28 @@ fun ReferenceCreateSheet(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
                 .background(Charcoal900)
+                // Claim every gesture that starts anywhere on the sheet body.
+                //
+                // Without this the sheet handled no pointer input of its own —
+                // `background`, `clip` and `padding` are not pointer handlers — so
+                // hit testing walked past it and landed on the scrim's `clickable`
+                // underneath. Tapping the analysed photo, a heading, the 적용 범위
+                // label or any of the padding therefore *dismissed the sheet*
+                // mid-flow. The buttons and the scope chips escaped it only because
+                // each of them is a pointer handler in its own right; that is what
+                // made the bug look like it was about the photo specifically.
+                //
+                // This node is hit before the scrim because it is above it, and after
+                // its own children because they are deeper — so a chip or a button
+                // still wins its own tap, and everything else stops here.
+                //
+                // Placed after `background` and before `padding` so the claimed area
+                // is exactly the area that is painted: inside the rounded clip, and
+                // including the 20dp inset, which is part of the sheet to anyone
+                // looking at it.
+                .pointerInput(Unit) {
+                    awaitEachGesture { awaitFirstDown(requireUnconsumed = false) }
+                }
                 .padding(20.dp),
         ) {
             when (section) {
