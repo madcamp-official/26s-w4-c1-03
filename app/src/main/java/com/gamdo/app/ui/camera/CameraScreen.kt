@@ -423,6 +423,7 @@ fun CameraScreen(
                     // "no analysis this frame", which costs one null check;
                     // FrameAnalyzer still closes the ImageProxy in its `finally`.
                     val detector = scene.get() ?: return@onFrame
+                    viewModel.attachDetector(detector)
                     imageProxy.toAnalysisFrame { crop ->
                         // Called synchronously by MlKitObjectDetector before this
                         // analyzer returns and FrameAnalyzer closes imageProxy.
