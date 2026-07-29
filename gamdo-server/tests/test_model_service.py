@@ -6,7 +6,7 @@ import pytest
 
 from app.provider_capabilities import _service_ready
 from model_services.service import ModelService
-from model_services.viewcrafter_service import ViewCrafterBackend
+from model_services.viewcrafter_service import ViewCrafterBackend, camera_trajectory_args
 
 
 class FakeBackend:
@@ -84,3 +84,20 @@ def test_viewcrafter_partial_checkpoint_is_not_reported_ready(
 
     assert ready is False
     assert "incomplete" in reason
+
+
+def test_viewcrafter_supplies_every_camera_axis_as_a_list() -> None:
+    args = camera_trajectory_args("dolly_out")
+
+    assert args == [
+        "--d_theta", "0",
+        "--d_phi", "0",
+        "--d_r", "0.12",
+        "--d_x", "0",
+        "--d_y", "0",
+    ]
+
+
+def test_viewcrafter_rejects_unknown_camera_motion() -> None:
+    with pytest.raises(ValueError, match="unsupported viewpoint motion"):
+        camera_trajectory_args("orbit")

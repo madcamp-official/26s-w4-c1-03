@@ -11,6 +11,24 @@ from PIL import Image
 from .service import ModelService, create_app, output_dir
 
 
+def camera_trajectory_args(motion: str) -> list[str]:
+    values = {
+        "left": {"d_x": "-45"},
+        "right": {"d_x": "45"},
+        "up": {"d_y": "35"},
+        "down": {"d_y": "-35"},
+        "dolly_out": {"d_r": "0.12"},
+    }.get(motion)
+    if values is None:
+        raise ValueError("unsupported viewpoint motion")
+    # ViewCrafter indexes every camera argument even when only one axis moves.
+    # Its argparse defaults are scalar values, so all axes must be supplied as
+    # one-element lists to keep single_view_target from failing at runtime.
+    defaults = {"d_theta": "0", "d_phi": "0", "d_r": "0", "d_x": "0", "d_y": "0"}
+    defaults.update(values)
+    return [item for key, value in defaults.items() for item in (f"--{key}", value)]
+
+
 class ViewCrafterBackend:
     def __init__(self) -> None:
         self.repository = Path(os.getenv("GAMDO_VIEWCRAFTER_REPOSITORY", "/opt/gamdo/model-services/ViewCrafter"))
@@ -53,15 +71,7 @@ class ViewCrafterBackend:
         import imageio.v3 as iio
 
         motion = operation.get("motion", "dolly_out")
-        trajectory = {
-            "left": ("--d_x", "-45"),
-            "right": ("--d_x", "45"),
-            "up": ("--d_y", "35"),
-            "down": ("--d_y", "-35"),
-            "dolly_out": ("--d_r", "0.12"),
-        }.get(motion)
-        if trajectory is None:
-            raise ValueError("unsupported viewpoint motion")
+        trajectory = camera_trajectory_args(motion)
         with tempfile.TemporaryDirectory(prefix="gamdo-viewcrafter-") as directory:
             work = Path(directory)
             source = work / "input.png"
@@ -74,7 +84,7 @@ class ViewCrafterBackend:
                 "--exp_name", name, "--mode", "single_view_target", "--ckpt_path", str(self.checkpoint),
                 "--model_path", str(self.dust3r), "--config", str(self.config),
                 "--height", "576", "--width", "1024", "--video_length", str(self.video_length), "--ddim_steps", "25",
-                "--seed", str(seed), trajectory[0], trajectory[1],
+                "--seed", str(seed), *trajectory,
             ]
             timeout = float(os.getenv("GAMDO_VIEWCRAFTER_TIMEOUT_SECONDS", "600"))
             subprocess.run(command, cwd=self.repository, check=True, timeout=timeout)
