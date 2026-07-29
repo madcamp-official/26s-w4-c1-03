@@ -78,7 +78,6 @@
     "multiScaleFallbackEveryFrames": 6,
     "multiScaleCropScale": 1.60,
     "multiScaleSmallObjectAreaRatio": 0.05,
-    "multiScaleDuplicateIou": 0.55,
-    "performanceTargetFps": 8
+    "multiScaleDuplicateIou": 0.55
   }
 }

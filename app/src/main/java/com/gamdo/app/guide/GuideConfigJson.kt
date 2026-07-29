@@ -158,7 +158,13 @@ data class ObjectGuideConfigJson(
     val multiScaleCropScale: Float = 1.60f,
     val multiScaleSmallObjectAreaRatio: Float = 0.05f,
     val multiScaleDuplicateIou: Float = 0.55f,
-    val performanceTargetFps: Int = 8,
+    // `performanceTargetFps: 8` was removed here (2026-07-29). It was parsed and
+    // `require`d but never read by anything, so it stood in the asset looking like
+    // §7-1's "발열 시 8fps 하향" was implemented when no such downgrade exists.
+    // Measurement also showed the rule it stood for would do nothing: the analysis
+    // pipeline already runs below 8fps, so capping at 8 changes no frame. See
+    // `AnalysisCadenceTest`, which pins that. A real thermal response has to move
+    // the model divisors, not a frame-rate ceiling.
 ) {
     init {
         require(sceneModelAsset.isNotBlank())
@@ -194,7 +200,6 @@ data class ObjectGuideConfigJson(
         require(interestCenterX in 0f..1f && interestCenterY in 0f..1f)
         require(interestRadiusX in 0.10f..0.50f && interestRadiusY in 0.10f..0.50f)
         require(tapInterestRadiusX in 0.10f..0.50f && tapInterestRadiusY in 0.10f..0.50f)
-        require(performanceTargetFps >= 1)
     }
 
     fun toTrackerConfig(): ObjectTrackerConfig = ObjectTrackerConfig(
