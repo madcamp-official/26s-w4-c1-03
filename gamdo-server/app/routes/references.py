@@ -7,6 +7,7 @@ from PIL import Image
 from PIL.Image import DecompressionBombError, UnidentifiedImageError
 
 from ..reference_analysis import analyze_reference
+from ..storage import strip_gps_exif
 from .common import require_device_id
 
 
@@ -36,6 +37,9 @@ async def analyze_reference_route(image: UploadFile = File(...)) -> dict:
             "message": "image is required",
             "retryable": False,
         })
+    # Earliest point on this path (O-9): strip GPS before the image is even
+    # decoded for validation, let alone analyzed.
+    payload = strip_gps_exif(payload)
     try:
         with Image.open(io.BytesIO(payload)) as decoded:
             decoded.verify()

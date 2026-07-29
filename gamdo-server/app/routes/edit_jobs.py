@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from PIL import Image
 
 from ..db import Database
-from ..storage import save_exif_stripped_input
+from ..storage import save_exif_stripped_input, strip_gps_exif
 from .common import require_device_id
 
 
@@ -303,6 +303,12 @@ async def create_edit_job(
             "message": f"image must be at most {MAX_UPLOAD_BYTES} bytes",
             "retryable": False,
         })
+    # Earliest point on this path (O-9): strip GPS before the dimension check
+    # even decodes the upload, and well before anything is written to disk.
+    # save_exif_stripped_input() below still drops the whole EXIF block for
+    # the persisted copy -- this call is what protects the in-flight `payload`
+    # bytes themselves and keeps all three upload paths on the same contract.
+    payload = strip_gps_exif(payload)
     try:
         with Image.open(io.BytesIO(payload)) as decoded:
             if max(decoded.size) > MAX_IMAGE_DIMENSION:
