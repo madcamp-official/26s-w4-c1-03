@@ -20,6 +20,8 @@ sealed interface FilterRenderState {
 data class ResultFilterState(
     val items: List<ResultFilterItem>,
     val selectedId: String,
+    /** Priority-resolved initial selection, independent from bitmap rendering. */
+    val recommendedDefaultFilterId: String,
     val activeReference: ResolvedStyle?,
     val renderState: FilterRenderState,
 )
@@ -34,6 +36,7 @@ class ResultFilterStateHolder {
         ResultFilterState(
             items = baseItems,
             selectedId = LocalFilter.ORIGINAL.filter.id,
+            recommendedDefaultFilterId = LocalFilter.ORIGINAL.filter.id,
             activeReference = null,
             renderState = FilterRenderState.Idle,
         ),
@@ -43,9 +46,22 @@ class ResultFilterStateHolder {
     fun synchronizeReference(reference: ResolvedStyle?) {
         val hasColor = reference != null && reference.referenceScope != ResolvedStyle.ReferenceScope.COMPOSITION
         val items = if (hasColor) baseItems + referenceItem else baseItems
-        val selected = _state.value.selectedId.takeIf { id -> items.any { it.id == id } }
+        val recommended = if (hasColor) REFERENCE_FILTER_ID else LocalFilter.ORIGINAL.filter.id
+        val selected = _state.value.selectedId.takeIf { id -> items.any { it.id == id } } ?: recommended
+        _state.value = _state.value.copy(
+            items = items,
+            selectedId = selected,
+            recommendedDefaultFilterId = recommended,
+            activeReference = reference,
+        )
+    }
+
+    /** Applies the resolved precedence: reference → session → onboarding → original. */
+    fun setRecommendedDefault(filterId: String?) {
+        val resolved = filterId?.takeIf { id -> _state.value.items.any { it.id == id } }
+            ?: _state.value.recommendedDefaultFilterId.takeIf { id -> _state.value.items.any { it.id == id } }
             ?: LocalFilter.ORIGINAL.filter.id
-        _state.value = _state.value.copy(items = items, selectedId = selected, activeReference = reference)
+        _state.value = _state.value.copy(recommendedDefaultFilterId = resolved)
     }
 
     fun select(filterId: String): Boolean {
@@ -78,4 +94,3 @@ class ResultFilterStateHolder {
         private val referenceItem = ResultFilterItem(REFERENCE_FILTER_ID, ResultFilterKind.REFERENCE, "내 감도")
     }
 }
-

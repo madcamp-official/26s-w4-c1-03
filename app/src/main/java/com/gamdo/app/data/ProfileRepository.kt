@@ -16,6 +16,7 @@ class ProfileRepository(
 ) {
     suspend fun saveInitialProfile(cardIds: Set<String>, profile: StyleProfileResult) {
         val now = System.currentTimeMillis()
+        val contextual = GamdoProfileFactory.fromInitial(profile, cardIds.size, now)
         cardSelectionsDao.deleteRound(INITIAL_ROUND)
         cardSelectionsDao.insertAll(
             cardIds.sorted().map { cardId ->
@@ -36,6 +37,7 @@ class ProfileRepository(
             StyleProfile(
                 compositionJson = json.encodeToString(profile.composition),
                 colorJson = json.encodeToString(profile.color),
+                subjectPrefsJson = json.encodeToString(contextual),
                 confidenceJson = json.encodeToString(
                     mapOf(
                         "composition" to profile.composition.mapValues { it.value.confidence },
@@ -44,6 +46,24 @@ class ProfileRepository(
                 ),
                 summaryText = profile.summary,
                 updatedAt = now,
+            ),
+        )
+    }
+
+    /** Reads the versioned policy while treating an older or malformed payload as absent. */
+    suspend fun loadGamdoProfileV2(): GamdoProfileV2? = runCatching {
+        styleProfileDao.get()?.subjectPrefsJson?.takeIf { it.isNotBlank() }?.let {
+            json.decodeFromString<GamdoProfileV2>(it).takeIf { profile -> profile.version == 2 }
+        }
+    }.getOrNull()
+
+    /** Persists a refinement without changing the frozen Room schema. */
+    suspend fun saveGamdoProfileV2(profile: GamdoProfileV2) {
+        val existing = styleProfileDao.get() ?: return
+        styleProfileDao.upsert(
+            existing.copy(
+                subjectPrefsJson = json.encodeToString(profile),
+                updatedAt = profile.updatedAt,
             ),
         )
     }

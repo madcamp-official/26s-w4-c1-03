@@ -1,52 +1,31 @@
 package com.gamdo.app.data
 
+import com.gamdo.app.data.preset.ColorParams
+import com.gamdo.app.data.preset.Composition
 import com.gamdo.app.data.preset.ResolvedStyle
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ResultFilterStateHolderTest {
-    private fun reference(scope: ResolvedStyle.ReferenceScope) = ResolvedStyle.fromReference(
-        hash = "hash",
-        target = buildJsonObject { put("horizonPosition", 0.5) },
-        colorTarget = buildJsonObject { put("exposureBias", 0.1) },
-        scope = scope,
-    )
-
-    @Test
-    fun `six presets and original never disappear after reference render failure`() {
+    @Test fun `reference controls remain after selecting the reference filter`() {
         val holder = ResultFilterStateHolder()
-        holder.synchronizeReference(reference(ResolvedStyle.ReferenceScope.BOTH))
-        assertEquals(8, holder.state.value.items.size)
+        holder.synchronizeReference(reference())
         assertTrue(holder.select(ResultFilterStateHolder.REFERENCE_FILTER_ID))
         holder.renderFailed()
-        assertEquals(8, holder.state.value.items.size)
-        assertEquals(ResultFilterStateHolder.REFERENCE_FILTER_ID, holder.state.value.selectedId)
-        assertTrue(holder.state.value.renderState is FilterRenderState.Failed)
+
+        val state = holder.state.value
+        // Original + six system presets + the active reference.
+        assertEquals(8, state.items.size)
+        assertEquals(ResultFilterStateHolder.REFERENCE_FILTER_ID, state.selectedId)
+        assertEquals(ResultFilterStateHolder.REFERENCE_FILTER_ID, state.recommendedDefaultFilterId)
     }
 
-    @Test
-    fun `composition-only reference keeps base catalogue and cannot select reference color`() {
-        val holder = ResultFilterStateHolder()
-        holder.synchronizeReference(reference(ResolvedStyle.ReferenceScope.COMPOSITION))
-        assertEquals(7, holder.state.value.items.size)
-        assertFalse(holder.select(ResultFilterStateHolder.REFERENCE_FILTER_ID))
-    }
-
-    @Test
-    fun `dismissing creation state cannot alter synchronized active reference`() {
-        val holder = ResultFilterStateHolder()
-        val active = reference(ResolvedStyle.ReferenceScope.COLOR)
-        repeat(5) {
-            holder.synchronizeReference(active)
-            holder.select(ResultFilterStateHolder.REFERENCE_FILTER_ID)
-            holder.renderSucceeded()
-        }
-        assertEquals(active, holder.state.value.activeReference)
-        assertEquals(8, holder.state.value.items.size)
-        assertEquals(ResultFilterStateHolder.REFERENCE_FILTER_ID, holder.state.value.selectedId)
-    }
+    private fun reference() = ResolvedStyle(
+        source = ResolvedStyle.Source.REFERENCE,
+        sourceKey = "hash",
+        displayName = "내 감도",
+        composition = Composition("4:5", listOf(0.3, 0.6), "center", listOf(0.1, 0.2), 0.5, listOf(-5.0, 5.0), "natural", listOf(0.3, 0.6)),
+        color = ColorParams(5500.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+    )
 }

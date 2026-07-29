@@ -144,6 +144,19 @@ def test_rescue_analysis_returns_recommendations_without_creating_job() -> None:
     assert payload["capabilities"]["localStyle"] is True
 
 
+def test_memory_reinterpretation_returns_local_result_only() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/rescue/analyze",
+            headers={"X-Device-Id": "rescue-device"},
+            data={"reinterpretationLevel": "MEMORY", "profileVersion": "2", "sceneContext": "CAFE_FOOD", "gamdoPolicy": "{\"capture\":{}}"},
+            files={"image": ("photo.png", image_bytes(), "image/png")},
+        )
+    assert response.status_code == 200
+    assert response.json()["reinterpretationLevel"] == "MEMORY"
+    assert [item["kind"] for item in response.json()["recommendations"]] == ["local_style"]
+
+
 def test_rescue_analysis_rejects_invalid_parameters() -> None:
     with TestClient(app) as client:
         response = client.post(

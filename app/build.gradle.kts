@@ -131,6 +131,9 @@ dependencies {
     // DataStore (device UUID persistence — Day 1 §1-3)
     implementation(libs.androidx.datastore.preferences)
 
+    // QR for account-free delegated shooting links.
+    implementation(libs.zxing.core)
+
     // Unit / instrumentation test
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.junit)

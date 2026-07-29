@@ -89,6 +89,11 @@ class SettingsRepository(private val appSettingsDao: AppSettingsDao) {
         put(KEY_ACTIVE_REFERENCE_STRENGTH, "0.7")
     }
 
+    /** Temporary delegated-shoot credentials; they expire with the server session. */
+    suspend fun saveShootSession(sessionJson: String) = put(KEY_ACTIVE_SHOOT_SESSION, sessionJson)
+    suspend fun getShootSession(): String? = appSettingsDao.get(KEY_ACTIVE_SHOOT_SESSION)?.takeIf { it.isNotBlank() }
+    suspend fun clearShootSession() = put(KEY_ACTIVE_SHOOT_SESSION, "")
+
     private suspend fun put(key: String, value: String) {
         appSettingsDao.put(AppSettings(key = key, value = value, updatedAt = System.currentTimeMillis()))
     }
@@ -111,5 +116,6 @@ class SettingsRepository(private val appSettingsDao: AppSettingsDao) {
         const val KEY_ACTIVE_REFERENCE_HASH = "active_reference_hash"
         const val KEY_ACTIVE_REFERENCE_SCOPE = "active_reference_scope"
         const val KEY_ACTIVE_REFERENCE_STRENGTH = "active_reference_strength"
+        const val KEY_ACTIVE_SHOOT_SESSION = "active_shoot_session"
     }
 }

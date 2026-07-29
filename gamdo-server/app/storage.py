@@ -12,12 +12,13 @@ SERVER_ROOT = Path(__file__).resolve().parents[1]
 INPUT_DIR = SERVER_ROOT / "storage" / "inputs"
 RESULT_DIR = SERVER_ROOT / "storage" / "results"
 TMP_DIR = SERVER_ROOT / "storage" / "tmp"
+SHOOT_DIR = SERVER_ROOT / "storage" / "shoot"
 
 logger = logging.getLogger(__name__)
 
 
 def ensure_storage() -> None:
-    for directory in (INPUT_DIR, RESULT_DIR, TMP_DIR):
+    for directory in (INPUT_DIR, RESULT_DIR, TMP_DIR, SHOOT_DIR):
         directory.mkdir(parents=True, exist_ok=True)
 
 
@@ -85,5 +86,22 @@ def save_exif_stripped_input(job_id: str, payload: bytes) -> tuple[str, int]:
         storage_path = str(path.relative_to(SERVER_ROOT))
     except ValueError:
         # Tests may use an isolated temporary directory outside the server root.
+        storage_path = str(path)
+    return storage_path, path.stat().st_size
+
+
+def save_shoot_photo(photo_id: str, payload: bytes) -> tuple[str, int]:
+    """Persist a claimed-session photo as EXIF-free PNG until its session is claimed or expires."""
+    SHOOT_DIR.mkdir(parents=True, exist_ok=True)
+    image = Image.open(io.BytesIO(payload))
+    image.load()
+    image = ImageOps.exif_transpose(image) or image
+    if image.mode not in ("RGB", "RGBA"):
+        image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+    path = SHOOT_DIR / f"{photo_id}.png"
+    image.save(path, format="PNG")
+    try:
+        storage_path = str(path.relative_to(SERVER_ROOT))
+    except ValueError:
         storage_path = str(path)
     return storage_path, path.stat().st_size

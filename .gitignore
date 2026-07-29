@@ -27,6 +27,7 @@ node_modules/
 .expo-shared/
 dist/
 coverage/
+*.tsbuildinfo
 
 # Python / FastAPI runtime files
 __pycache__/

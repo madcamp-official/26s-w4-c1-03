@@ -12,6 +12,8 @@ import com.gamdo.app.guide.FeaturesConfigJson
 import com.gamdo.app.guide.GuideConfigBundle
 import com.gamdo.app.guide.StyleTarget
 import com.gamdo.app.guide.LayoutTemplateCatalog
+import com.gamdo.app.guide.PreviewGeometry
+import com.gamdo.app.guide.SceneSearchScope
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -414,6 +416,27 @@ class CameraViewModelTest {
         viewModel.rescanLayout()
 
         assertEquals(target, viewModel.styleTarget.value)
+    }
+
+    @Test
+    fun `polygon rescan validates the lasso then exposes polygon search scope`() {
+        val viewModel = CameraViewModel(collectDebugSignals = false)
+        val geometry = PreviewGeometry(100, 100, 100, 100)
+
+        assertFalse(viewModel.rescanLayoutInPolygon(listOf(40f to 40f, 50f to 50f), geometry))
+        assertTrue(
+            viewModel.rescanLayoutInPolygon(
+                listOf(25f to 25f, 75f to 25f, 75f to 75f, 25f to 75f),
+                geometry,
+            ),
+        )
+
+        feed(viewModel, null, confidence = 0f)
+        assertTrue(viewModel.searchScope.value is SceneSearchScope.Polygon)
+
+        viewModel.cancelPolygonLayoutSearch()
+        feed(viewModel, null, confidence = 0f)
+        assertEquals(SceneSearchScope.Default, viewModel.searchScope.value)
     }
 
     // ------------------------------------------------------------------ util

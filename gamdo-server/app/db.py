@@ -31,13 +31,83 @@ class Database:
         return connection
 
     def initialize(self) -> None:
-        migration = SERVER_ROOT / "migrations" / "001_initial.sql"
         with self.connect() as connection:
-            connection.executescript(migration.read_text(encoding="utf-8"))
+            # The first migration owns schema_migrations itself, so bootstrap it
+            # before querying migration history on a brand-new database.
+            bootstrap = SERVER_ROOT / "migrations" / "001_initial.sql"
+            connection.executescript(bootstrap.read_text(encoding="utf-8"))
             connection.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                 ("001_initial", now_ms()),
             )
+            for migration in sorted((SERVER_ROOT / "migrations").glob("*.sql")):
+                version = migration.stem
+                if version == "001_initial":
+                    continue
+                already_applied = connection.execute(
+                    "SELECT 1 FROM schema_migrations WHERE version = ?", (version,)
+                ).fetchone()
+                if already_applied is None:
+                    connection.executescript(migration.read_text(encoding="utf-8"))
+                    connection.execute(
+                        "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                        (version, now_ms()),
+                    )
+
+    def create_shoot_session(
+        self, *, session_id: str, owner_token: str, policy: dict[str, Any], expires_at: int, max_photos: int = 5
+    ) -> None:
+        timestamp = now_ms()
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO shoot_sessions(id, owner_token, policy_json, max_photos, expires_at, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (session_id, owner_token, json.dumps(policy, separators=(",", ":")), max_photos, expires_at, timestamp, timestamp),
+            )
+
+    def get_shoot_session(self, session_id: str) -> sqlite3.Row | None:
+        with self.connect() as connection:
+            return connection.execute("SELECT * FROM shoot_sessions WHERE id = ?", (session_id,)).fetchone()
+
+    def list_shoot_photos(self, session_id: str) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return connection.execute(
+                "SELECT * FROM shoot_photos WHERE session_id = ? ORDER BY created_at", (session_id,)
+            ).fetchall()
+
+    def get_shoot_photo(self, session_id: str, photo_id: str) -> sqlite3.Row | None:
+        with self.connect() as connection:
+            return connection.execute(
+                "SELECT * FROM shoot_photos WHERE session_id = ? AND id = ?", (session_id, photo_id)
+            ).fetchone()
+
+    def add_shoot_photo(self, *, photo_id: str, session_id: str, storage_path: str, bytes_count: int) -> None:
+        timestamp = now_ms()
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO shoot_photos(id, session_id, storage_path, bytes, created_at) VALUES (?, ?, ?, ?, ?)",
+                (photo_id, session_id, storage_path, bytes_count, timestamp),
+            )
+            connection.execute("UPDATE shoot_sessions SET updated_at = ? WHERE id = ?", (timestamp, session_id))
+
+    def claim_shoot_session(self, session_id: str) -> list[sqlite3.Row]:
+        timestamp = now_ms()
+        with self.connect() as connection:
+            photos = connection.execute(
+                "SELECT * FROM shoot_photos WHERE session_id = ? ORDER BY created_at", (session_id,)
+            ).fetchall()
+            connection.execute("UPDATE shoot_sessions SET claimed_at = ?, updated_at = ? WHERE id = ?", (timestamp, timestamp, session_id))
+            return photos
+
+    def delete_shoot_session(self, session_id: str) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            photos = connection.execute("SELECT * FROM shoot_photos WHERE session_id = ?", (session_id,)).fetchall()
+            connection.execute("DELETE FROM shoot_sessions WHERE id = ?", (session_id,))
+            return photos
+
+    def expired_shoot_sessions(self) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return connection.execute("SELECT * FROM shoot_sessions WHERE expires_at <= ? OR claimed_at IS NOT NULL", (now_ms(),)).fetchall()
 
     def insert_job(
         self,

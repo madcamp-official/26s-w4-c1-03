@@ -20,6 +20,11 @@ def analyze_rescue(
     capture_ref: str = "",
     style_params: dict[str, Any] | None = None,
     reference_composition: dict[str, Any] | None = None,
+    *,
+    profile_version: int = 1,
+    scene_context: str = "GENERAL",
+    gamdo_policy: dict[str, Any] | None = None,
+    reinterpretation_level: str = "GAMDO",
 ) -> dict[str, Any]:
     """Return deterministic rescue suggestions without creating an edit job.
 
@@ -48,6 +53,9 @@ def analyze_rescue(
     analysis = get_reference_analyzer().analyze(payload)
     subjects = list(analysis.get("analysis", {}).get("subjects", []))
     capabilities = generation_capabilities()
+    level = reinterpretation_level.upper()
+    if level not in {"MEMORY", "GAMDO", "REIMAGINE"}:
+        level = "GAMDO"
     recommendations: list[dict[str, Any]] = [{
         "id": "local_style",
         "kind": "local_style",
@@ -58,10 +66,10 @@ def analyze_rescue(
     }]
 
     outpaint = _outpaint_recommendation(subjects, style_params, reference_composition)
-    if outpaint is not None and capabilities["outpaint"]:
+    if level != "MEMORY" and outpaint is not None and capabilities["outpaint"]:
         recommendations.append(outpaint)
 
-    if capabilities["relight"] and lighting["backlightScore"] >= 0.18:
+    if level != "MEMORY" and capabilities["relight"] and lighting["backlightScore"] >= 0.18:
         recommendations.append({
             "id": "relight",
             "kind": "relight",
@@ -72,7 +80,7 @@ def analyze_rescue(
         })
 
     viewpoint = _viewpoint_recommendation(subjects)
-    if viewpoint is not None and capabilities["viewpoint"]:
+    if level == "REIMAGINE" and viewpoint is not None and capabilities["viewpoint"]:
         recommendations.append(viewpoint)
 
     # Object removal remains available from Direct edit, but is deliberately
@@ -80,6 +88,10 @@ def analyze_rescue(
     return {
         "analysisVersion": ANALYSIS_VERSION,
         "captureRef": capture_ref,
+        "profileVersion": profile_version,
+        "sceneContext": scene_context,
+        "reinterpretationLevel": level,
+        "gamdoPolicyApplied": bool(gamdo_policy),
         "image": {"width": width, "height": height},
         "analysis": analysis.get("analysis", {}),
         "recommendations": recommendations[:3],
