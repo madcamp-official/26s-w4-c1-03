@@ -191,9 +191,19 @@ class StableSceneTracker(
             distance(a, b) <= config.nestedDuplicateCenterDistance
     }
 
-    private fun sameSubject(a: ObjectObservation, b: ObjectObservation): Boolean =
-        if (a.trackingId != null && b.trackingId != null) a.trackingId == b.trackingId
-        else intersectionOverUnion(a.box, b.box) >= config.minimumIoU || distance(a, b) <= config.maxCenterDistance
+    private fun sameSubject(a: ObjectObservation, b: ObjectObservation): Boolean {
+        if (a.trackingId != null && b.trackingId != null) return a.trackingId == b.trackingId
+        // Nearby centers are not identity. Two cups placed next to each other
+        // routinely fall within the old distance threshold, which collapsed a
+        // real scene into one slot. Without a tracker id, require spatial overlap
+        // or a genuinely nested duplicate box.
+        val iou = intersectionOverUnion(a.box, b.box)
+        if (iou >= config.minimumIoU) return true
+        val intersection = intersectionArea(a.box, b.box)
+        val smaller = minOf(area(a.box), area(b.box))
+        return smaller > 0f && intersection / smaller >= config.nestedDuplicateContainment &&
+            distance(a, b) <= config.nestedDuplicateCenterDistance
+    }
 
     private fun limitWithPersonPriority(items: List<ObjectObservation>): List<ObjectObservation> {
         val person = items.firstOrNull { it.category == GuideObjectCategory.PERSON }
