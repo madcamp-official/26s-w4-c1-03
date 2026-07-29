@@ -82,10 +82,15 @@ class ReferenceAnalyzer:
     def warmup(self) -> None:
         if self.segmenter is None:
             return
-        sample = Image.new("RGB", (256, 256), (128, 128, 128))
+        # Warm the same input scale used by `analyze()`. A 256px warmup leaves
+        # CUDA/TensorRT kernels for the first 1024px reference request cold and
+        # made the first request exceed the 5s contract on CAMP-2.
+        sample = Image.new("RGB", (1024, 1024), (128, 128, 128))
         self.segmenter(sample, verbose=False)
         if self.pose_model is not None:
             self.pose_model(sample, verbose=False)
+        if self.face_model is not None:
+            self._face_candidates(sample)
 
     def analyze(self, payload: bytes) -> dict[str, Any]:
         image = Image.open(io.BytesIO(payload))
@@ -184,12 +189,151 @@ class ReferenceAnalyzer:
                 if index < len(masks):
                     subject["maskAvailable"] = True
                 candidates.append(subject)
+
+            # Segmentation supplies the object candidates. Pose and face are
+            # separate signals: they enrich the person candidate and may
+            # recover a person whose body is partly outside the segmentation
+            # result. Neither signal is used to invent a non-person object.
+            pose_candidates = self._pose_candidates(image)
+            for subject in candidates:
+                if subject["role"] != "person":
+                    continue
+                match = _best_bbox_match(subject["bbox"], pose_candidates)
+                if match is not None:
+                    subject["pose"] = match["pose"]
+
+            face_candidates = self._face_candidates(image)
+            people = [candidate for candidate in candidates if candidate["role"] == "person"]
+            if people and face_candidates:
+                match = _best_bbox_match(people[0]["bbox"], face_candidates)
+                if match is not None:
+                    people[0]["faceBbox"] = match["bbox"]
+                    people[0]["faceConfidence"] = match["confidence"]
+            elif not people and face_candidates:
+                # Face-only references still provide a valid portrait target;
+                # use the largest detected face as a conservative person slot.
+                face = max(face_candidates, key=lambda item: item["bbox"][2] * item["bbox"][3])
+                candidates.append({
+                    "role": "person",
+                    "sourceLabel": "face",
+                    "bbox": face["bbox"],
+                    "confidence": face["confidence"],
+                    "faceBbox": face["bbox"],
+                    "faceConfidence": face["confidence"],
+                    "visualKind": "person_silhouette",
+                    "pose": {"confidence": 0.0, "keypoints": []},
+                })
+
             candidates.sort(key=lambda item: (item["role"] == "person", item["confidence"]), reverse=True)
             people = [candidate for candidate in candidates if candidate["role"] == "person"][:1]
             objects = [candidate for candidate in candidates if candidate["role"] != "person"]
             return people + _dedupe_subjects(objects)[:3]
         except Exception:
+            logger.warning("reference_segmentation_failed", exc_info=True)
             return []
+
+    def _pose_candidates(self, image: Image.Image) -> list[dict[str, Any]]:
+        if self.pose_model is None:
+            return []
+        try:
+            result = self.pose_model(image, verbose=False)[0]
+            boxes = result.boxes
+            keypoints = getattr(result, "keypoints", None)
+            xy_values = _value_list(getattr(keypoints, "xy", None)) if keypoints is not None else []
+            confidence_values = _value_list(getattr(keypoints, "conf", None)) if keypoints is not None else []
+            candidates: list[dict[str, Any]] = []
+            for index, box in enumerate(boxes):
+                x1, y1, x2, y2 = [float(value) for value in box.xyxy[0]]
+                bbox = _normalized_bbox(x1, y1, x2, y2, image.width, image.height)
+                if bbox is None:
+                    continue
+                points = xy_values[index] if index < len(xy_values) else []
+                point_conf = confidence_values[index] if index < len(confidence_values) else []
+                normalized_points = []
+                for point_index, point in enumerate(points):
+                    if len(point) < 2:
+                        continue
+                    confidence = float(point_conf[point_index]) if point_index < len(point_conf) else 0.0
+                    normalized_points.append([
+                        round(max(0.0, min(1.0, float(point[0]) / image.width)), 4),
+                        round(max(0.0, min(1.0, float(point[1]) / image.height)), 4),
+                        round(max(0.0, min(1.0, confidence)), 4),
+                    ])
+                candidates.append({
+                    "bbox": bbox,
+                    "pose": {
+                        "confidence": round(sum(point[2] for point in normalized_points) / len(normalized_points), 4)
+                        if normalized_points else 0.0,
+                        "keypoints": normalized_points,
+                    },
+                })
+            return candidates
+        except Exception:
+            logger.warning("reference_pose_failed", exc_info=True)
+            return []
+
+    def _face_candidates(self, image: Image.Image) -> list[dict[str, Any]]:
+        if self.face_model is None:
+            return []
+        try:
+            import numpy as np
+
+            # InsightFace expects BGR ndarray input, unlike Ultralytics' PIL
+            # path. Keep this conversion in the optional face branch so color
+            # analysis remains dependency-light when face detection is absent.
+            bgr = np.asarray(image)[:, :, ::-1].copy()
+            faces = self.face_model.get(bgr)
+            candidates: list[dict[str, Any]] = []
+            for face in faces:
+                raw_bbox = getattr(face, "bbox", None)
+                if raw_bbox is None or len(raw_bbox) < 4:
+                    continue
+                bbox = _normalized_bbox(
+                    float(raw_bbox[0]), float(raw_bbox[1]), float(raw_bbox[2]), float(raw_bbox[3]),
+                    image.width, image.height,
+                )
+                if bbox is None:
+                    continue
+                candidates.append({
+                    "bbox": bbox,
+                    "confidence": round(float(getattr(face, "det_score", 0.0)), 4),
+                })
+            return candidates
+        except Exception:
+            logger.warning("reference_face_failed", exc_info=True)
+            return []
+
+
+def _value_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    try:
+        value = value.detach().cpu()
+    except AttributeError:
+        pass
+    try:
+        return value.tolist()
+    except AttributeError:
+        return list(value)
+
+
+def _normalized_bbox(x1: float, y1: float, x2: float, y2: float, width: int, height: int) -> list[float] | None:
+    if width <= 0 or height <= 0 or x2 <= x1 or y2 <= y1:
+        return None
+    bbox = [
+        max(0.0, min(1.0, x1 / width)),
+        max(0.0, min(1.0, y1 / height)),
+        max(0.0, min(1.0, (x2 - x1) / width)),
+        max(0.0, min(1.0, (y2 - y1) / height)),
+    ]
+    area = bbox[2] * bbox[3]
+    return bbox if 0.003 <= area <= 0.85 else None
+
+
+def _best_bbox_match(target: list[float], candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: _iou(target, item["bbox"]))
 
 
 def _slot_for_subject(subject: dict[str, Any]) -> dict[str, Any]:

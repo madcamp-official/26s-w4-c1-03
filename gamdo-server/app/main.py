@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -9,6 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .db import Database
+from .reference_analysis import get_reference_analyzer
 from .storage import RESULT_DIR, ensure_storage
 from .routes import edit_jobs, presets, references, rescue
 
@@ -17,6 +19,11 @@ from .routes import edit_jobs, presets, references, rescue
 async def lifespan(_: FastAPI):
     ensure_storage()
     Database().initialize()
+    # Load and warm the optional GPU reference analyzer before accepting the
+    # first request. The analyzer is CPU-safe when models are disabled or
+    # unavailable, while production CAMP-2 keeps model compilation out of the
+    # Android request timeout window.
+    await asyncio.to_thread(get_reference_analyzer)
     yield
 
 
