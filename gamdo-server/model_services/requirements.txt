@@ -3,3 +3,5 @@ python-multipart>=0.0.9,<1
 uvicorn>=0.29,<1
 pillow>=10,<12
 imageio[ffmpeg]>=2.34,<3
+huggingface-hub>=0.20.2,<0.26
+peft>=0.7,<0.8

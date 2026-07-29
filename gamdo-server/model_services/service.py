@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 import uuid
@@ -9,6 +10,9 @@ from threading import Lock
 from typing import Protocol
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+
+
+logger = logging.getLogger(__name__)
 
 
 class ModelBackend(Protocol):
@@ -41,7 +45,14 @@ class ModelService:
             for index in range(max(1, min(result_count, 2))):
                 seed = int(requested.get("seed", 20260729)) + index
                 output = self.output_dir / f"{self.operation}_{uuid.uuid4().hex}.png"
-                self.backend.generate(source, requested, output, seed)
+                try:
+                    self.backend.generate(source, requested, output, seed)
+                except ValueError:
+                    raise
+                except Exception as exc:
+                    output.unlink(missing_ok=True)
+                    logger.exception("model_execution_failed operation=%s", self.operation)
+                    raise RuntimeError(f"{self.operation} model execution failed") from exc
                 if not output.is_file() or output.stat().st_size == 0:
                     raise RuntimeError("model backend produced no image")
                 results.append({"path": str(output), "seed": seed})
