@@ -349,6 +349,16 @@ fun CameraScreen(
     }
 
     var aspect by rememberSaveable { mutableStateOf(CaptureAspect.RATIO_4_5) }
+
+    // O-13 (1) / O-14: the preset's colour, on the preview, from the recipe the
+    // editor renders the saved file with. Detaches itself if this device's GL
+    // cannot run it, leaving the preview alive and uncoloured.
+    PreviewColorBinding(
+        controller = controller,
+        presetId = activePreset?.id,
+        aspect = aspect,
+    )
+
     val actualZoom by controller.zoomRatio.collectAsState()
     // Which stops the lens can actually reach — 2c's `.5` is absent, not
     // disabled, on a device without an ultra-wide.

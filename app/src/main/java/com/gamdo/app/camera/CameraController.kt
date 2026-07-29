@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
 import android.util.Size
+import androidx.camera.core.CameraEffect
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
@@ -54,6 +55,8 @@ private const val AUTO_CANCEL_SECONDS = 3L
 class CameraController(context: Context) {
 
     private var observedZoomState: LiveData<ZoomState>? = null
+    private var previewEffect: CameraEffect? = null
+    private var isBound = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private val attachZoomRunnable = Runnable { attachZoomObserver() }
 
@@ -115,13 +118,48 @@ class CameraController(context: Context) {
     var isFront: Boolean = false
         private set
 
+    /**
+     * O-14's preview colour effect, or null for none.
+     *
+     * Held rather than applied immediately when nothing is bound yet, because
+     * `setEffects` on a *bound* controller unbinds and rebinds the whole use-case
+     * group — a visible preview re-init. The GL pipeline is built asynchronously
+     * (see `PreviewColorEffect.create`), so it usually is not ready before [bind]
+     * and one rebind is paid; when it is ready in time, [bind] applies it as part of
+     * the initial bind and nothing is paid at all.
+     *
+     * Null clears. That is the fallback path: a GL failure ends here, CameraX
+     * rebinds the preview straight to its surface, and the camera keeps running
+     * without colour.
+     */
+    fun setPreviewEffect(effect: CameraEffect?) {
+        previewEffect = effect
+        if (isBound) applyPreviewEffect()
+    }
+
+    private fun applyPreviewEffect() {
+        val effect = previewEffect
+        runCatching {
+            if (effect == null) camera.clearEffects() else camera.setEffects(setOf(effect))
+        }.onFailure {
+            // An effect CameraX will not accept must not be the reason the camera
+            // fails to start. Drop it and carry on uncoloured.
+            Log.w(TAG, "preview effect rejected; continuing without it", it)
+            previewEffect = null
+            runCatching { camera.clearEffects() }
+        }
+    }
+
     fun bind(owner: LifecycleOwner) {
+        applyPreviewEffect()
         camera.bindToLifecycle(owner)
+        isBound = true
         attachZoomObserver()
         mainHandler.postDelayed(attachZoomRunnable, 300L)
     }
 
     fun unbind() {
+        isBound = false
         mainHandler.removeCallbacks(attachZoomRunnable)
         observedZoomState?.removeObserver(zoomObserver)
         observedZoomState = null
