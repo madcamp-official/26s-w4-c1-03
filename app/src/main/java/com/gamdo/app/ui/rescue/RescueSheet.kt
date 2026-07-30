@@ -131,6 +131,18 @@ fun RescueSheet(
         }
     }
 
+    // Every "put this away" in the sheet, routed through the one rule that knows
+    // whether there is anything to come back to. The **only** exit that bypasses it is
+    // the progress section's 취소, which is a different intent and stays a real cancel.
+    //
+    // This lives here rather than in the host so the host's two callbacks can each mean
+    // exactly one thing. Before §4 the host carried the split itself
+    // (`if (state is Candidates) close else cancel`); leaving it there and adding the
+    // running states would have put the same `when` in two files.
+    val dismiss: () -> Unit = {
+        if (dismissActionFor(state) == RescueDismiss.CLOSE_ONLY) onHide() else onDismiss()
+    }
+
     val section = rescueSectionFor(state, opened)
     if (section == RescueSection.HIDDEN) return
 
@@ -149,14 +161,10 @@ fun RescueSheet(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Scrim)
-                // §4: 화면 이탈·재진입 뒤 진행 중 job의 폴링 상태를 복원한다. Putting
-                // the sheet away is not the same intent as the progress section's own
-                // 취소, so for a state with something to come back to this hides and
-                // leaves the job running; re-opening lands on the same section, which
-                // is the restoration. [dismissActionFor] owns the split.
-                .clickable {
-                    if (dismissActionFor(state) == RescueDismiss.CLOSE_ONLY) onHide() else onDismiss()
-                },
+                // §4: 화면 이탈·재진입 뒤 진행 중 job의 폴링 상태를 복원한다. A tap out
+                // here keeps a running job running, and re-opening lands on the same
+                // section — which is the restoration.
+                .clickable(onClick = dismiss),
         )
 
         Column(
@@ -176,7 +184,7 @@ fun RescueSheet(
                 .padding(20.dp),
         ) {
             when (section) {
-                RescueSection.INTRO -> IntroSection(onAnalyze = onAnalyze, onCancel = onDismiss)
+                RescueSection.INTRO -> IntroSection(onAnalyze = onAnalyze, onCancel = dismiss)
                 RescueSection.PROGRESS -> ProgressSection(
                     message = progressMessageFor(runningOperation),
                     onCancel = onDismiss,
@@ -196,7 +204,7 @@ fun RescueSheet(
                             onConfirm = onChoose,
                             onRun = runOnce,
                             onBack = { directPane = false },
-                            onCancel = onDismiss,
+                            onCancel = dismiss,
                         )
                     } else {
                         PickSection(
@@ -205,7 +213,7 @@ fun RescueSheet(
                             onChoose = onChoose,
                             onRun = runOnce,
                             onKeepLocal = onKeepLocal,
-                            onCancel = onDismiss,
+                            onCancel = dismiss,
                             onDirectEdit = { directPane = true },
                         )
                     }
@@ -215,11 +223,11 @@ fun RescueSheet(
                     selectedCandidateId = selectedCandidateId,
                     onSelect = onSelectCandidate,
                     onKeepLocal = onKeepLocal,
-                    onClose = onDismiss,
+                    onClose = dismiss,
                 )
                 RescueSection.FALLBACK -> FallbackSection(
                     message = fallbackMessage((state as RescueState.LocalFallback).reason),
-                    onClose = onDismiss,
+                    onClose = dismiss,
                 )
                 RescueSection.HIDDEN -> Unit
             }
@@ -253,7 +261,10 @@ private fun IntroSection(onAnalyze: () -> Unit, onCancel: () -> Unit) {
  * D17 and AI 2's `AnalyzingSection` — no percentage, no stage name, no elapsed time.
  *
  * 취소 is §5-3's required cancel: the host cancels the coroutine driving the
- * controller and resets it, so this is a real cancel, not a hide.
+ * controller and resets it, so this is a real cancel, not a hide. It is the one exit in
+ * the sheet that does **not** go through [dismissActionFor] — tapping out of a running
+ * job leaves it running (P2 §4), and this button is how the user stops it. The two
+ * would be indistinguishable if both were wired the same way.
  */
 @Composable
 private fun ProgressSection(message: String, onCancel: () -> Unit) {
