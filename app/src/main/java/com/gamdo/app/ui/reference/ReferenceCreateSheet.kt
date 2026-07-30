@@ -40,12 +40,12 @@ import com.gamdo.app.data.ReferenceResolution
 import com.gamdo.app.data.preset.ResolvedStyle
 import com.gamdo.app.ui.components.PrimaryPillButton
 import com.gamdo.app.ui.components.SecondaryPillButton
-import com.gamdo.app.ui.theme.Charcoal800
-import com.gamdo.app.ui.theme.Charcoal900
-import com.gamdo.app.ui.theme.OnDarkHigh
-import com.gamdo.app.ui.theme.OnDarkMedium
-import com.gamdo.app.ui.theme.OnSage
-import com.gamdo.app.ui.theme.Sage
+import com.gamdo.app.ui.theme.Ink800
+import com.gamdo.app.ui.theme.Ink900
+import com.gamdo.app.ui.theme.TextHi
+import com.gamdo.app.ui.theme.TextMid
+import com.gamdo.app.ui.theme.OnAmber
+import com.gamdo.app.ui.theme.Amber
 import com.gamdo.app.ui.theme.Scrim
 
 /**
@@ -104,7 +104,7 @@ fun ReferenceCreateSheet(
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-                .background(Charcoal900)
+                .background(Ink900)
                 // Claim every gesture that starts anywhere on the sheet body.
                 //
                 // Without this the sheet handled no pointer input of its own —
@@ -157,14 +157,14 @@ fun ReferenceCreateSheet(
 /** §5-2 "업로드 목적·삭제 고지" — one line, shown before [onConfirm] ever fires. */
 @Composable
 private fun ConsentSection(uri: Uri, onConfirm: () -> Unit, onCancel: () -> Unit) {
-    Text("내 감도 만들기", color = OnDarkHigh, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+    Text("내 감도 만들기", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Bold)
     Box(
         modifier = Modifier
             .padding(top = 14.dp)
             .fillMaxWidth()
             .height(180.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(Charcoal800),
+            .background(Ink800),
     ) {
         AsyncImage(
             model = uri,
@@ -179,7 +179,7 @@ private fun ConsentSection(uri: Uri, onConfirm: () -> Unit, onCancel: () -> Unit
     // location metadata is stripped (ExifSanitizer + server-side GPS strip, O-9).
     Text(
         text = "선택한 사진은 구도와 색감을 분석하는 데 사용돼요. 위치 정보는 자동으로 제거돼요.",
-        color = OnDarkMedium,
+        color = TextMid,
         fontSize = 12.5.sp,
         modifier = Modifier.padding(top = 14.dp),
     )
@@ -195,8 +195,8 @@ private fun AnalyzingSection() {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            CircularProgressIndicator(color = Sage, strokeWidth = 2.5.dp, modifier = Modifier.size(28.dp))
-            Text("분석하고 있어요", color = OnDarkMedium, fontSize = 12.5.sp)
+            CircularProgressIndicator(color = Amber, strokeWidth = 2.5.dp, modifier = Modifier.size(28.dp))
+            Text("분석하고 있어요", color = TextMid, fontSize = 12.5.sp)
         }
     }
 }
@@ -234,7 +234,7 @@ private fun PreviewSection(
         }
     }
 
-    Text("구도와 색감을 확인해보세요", color = OnDarkHigh, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+    Text("구도와 색감을 확인해보세요", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Bold)
 
     Box(
         modifier = Modifier
@@ -242,7 +242,7 @@ private fun PreviewSection(
             .fillMaxWidth()
             .height(200.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(Charcoal800),
+            .background(Ink800),
     ) {
         if (imageUri != null) {
             AsyncImage(
@@ -263,7 +263,7 @@ private fun PreviewSection(
                         val width = (bounds[2] * size.width).toFloat()
                         val height = (bounds[3] * size.height).toFloat()
                         drawRect(
-                            color = Sage,
+                            color = Amber,
                             topLeft = Offset(left, top),
                             size = Size(width, height),
                             style = stroke,
@@ -276,7 +276,7 @@ private fun PreviewSection(
 
     Text(
         text = "적용 범위",
-        color = OnDarkMedium,
+        color = TextMid,
         fontSize = 12.sp,
         modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
     )
@@ -300,12 +300,12 @@ private fun scopeLabel(scope: ResolvedStyle.ReferenceScope): String = when (scop
 private fun ScopeChip(scope: ResolvedStyle.ReferenceScope, selected: Boolean, onClick: () -> Unit) {
     Text(
         text = scopeLabel(scope),
-        color = if (selected) OnSage else OnDarkMedium,
+        color = if (selected) OnAmber else TextMid,
         fontSize = 12.5.sp,
         fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
         modifier = Modifier
             .clip(RoundedCornerShape(16.dp))
-            .background(if (selected) Sage else Charcoal800)
+            .background(if (selected) Amber else Ink800)
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 8.dp),
     )
@@ -313,10 +313,10 @@ private fun ScopeChip(scope: ResolvedStyle.ReferenceScope, selected: Boolean, on
 
 @Composable
 private fun AppliedSection(onClose: () -> Unit) {
-    Text("내 감도가 적용됐어요", color = OnDarkHigh, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+    Text("내 감도가 적용됐어요", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Bold)
     Text(
         "촬영과 보정에 바로 반영돼요.",
-        color = OnDarkMedium,
+        color = TextMid,
         fontSize = 12.5.sp,
         modifier = Modifier.padding(top = 8.dp),
     )
@@ -346,11 +346,11 @@ private fun AppliedSection(onClose: () -> Unit) {
 @Composable
 private fun ErrorSection(retryable: Boolean, onRetry: () -> Unit, onClose: () -> Unit) {
     if (retryable) {
-        Text("서버에 연결하지 못했어요", color = OnDarkHigh, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Text("서버에 연결하지 못했어요", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         PrimaryPillButton(text = "다시 시도", onClick = onRetry, modifier = Modifier.padding(top = 16.dp))
         SecondaryPillButton(text = "닫기", onClick = onClose, modifier = Modifier.padding(top = 10.dp))
     } else {
-        Text("이 사진은 사용할 수 없어요", color = OnDarkHigh, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Text("이 사진은 사용할 수 없어요", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         PrimaryPillButton(text = "닫기", onClick = onClose, modifier = Modifier.padding(top = 16.dp))
     }
 }

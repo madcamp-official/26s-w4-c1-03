@@ -2,6 +2,8 @@ package com.gamdo.app.ui.camera
 
 import android.content.Context
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.widget.Toast
 import androidx.camera.view.PreviewView
@@ -68,7 +70,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.gamdo.app.BuildConfig
 import com.gamdo.app.camera.AnalysisPauseGate
 import com.gamdo.app.camera.AnalysisStats
@@ -101,22 +102,24 @@ import com.gamdo.app.ui.reference.CreateReferenceThumb
 import com.gamdo.app.ui.reference.MyReferenceThumb
 import com.gamdo.app.ui.reference.StripEntry
 import com.gamdo.app.ui.reference.buildFilterStrip
-import com.gamdo.app.ui.theme.Charcoal600
-import com.gamdo.app.ui.theme.Charcoal950
-import com.gamdo.app.ui.theme.OnDarkHigh
-import com.gamdo.app.ui.theme.OnDarkMedium
-import com.gamdo.app.ui.theme.OnDarkMuted
-import com.gamdo.app.ui.theme.OnSage
-import com.gamdo.app.ui.theme.Sage
+import com.gamdo.app.ui.theme.Ink700
+import com.gamdo.app.ui.theme.Ink950
+import com.gamdo.app.ui.theme.TextHi
+import com.gamdo.app.ui.theme.TextMid
+import com.gamdo.app.ui.theme.TextLow
+import com.gamdo.app.ui.theme.OnAmber
+import com.gamdo.app.ui.theme.Amber
 import kotlin.math.abs
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-// Sage is the single accent (D11-5); no opaque chromatic constant is defined here.
+// Amber is the single accent (D11-5); no opaque chromatic constant is defined here.
 // GridLine is white at 28% alpha — a translucent neutral, not a hue.
 private val GridLine = Color(0x47FFFFFF)
 private const val TAG = "CameraScreen"
@@ -137,6 +140,9 @@ private const val LATENCY_TAG = "CaptureLatency"
 
 /** 52dp thumbnail + 4dp gap + label, fixed so the preview pane is laid out once. */
 private val STYLE_STRIP_HEIGHT = 78.dp
+
+/** How much later than the deadline [scheduleTeardownWatchdog] pokes. See there. */
+private const val TEARDOWN_WATCHDOG_SLACK_MS = 50L
 
 enum class CaptureAspect(val label: String, val ratioWtoH: Float) {
     RATIO_4_5("4:5", 4f / 5f),
@@ -221,7 +227,14 @@ fun CameraScreen(
     onDeleteReference: () -> Unit = {},
 ) {
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
+    // **The Activity's lifecycle, not this destination's.** Inside a
+    // Navigation-Compose `composable { }`, `LocalLifecycleOwner` is the
+    // NavBackStackEntry, and binding CameraX to it made navigating to the album
+    // detach the use cases and abort the in-flight capture from underneath us —
+    // `ImageCapture.onStateDetached`, 7ms after the tap, before any code of ours
+    // ran. See [rememberCameraBindingOwner]; this file must not read
+    // `LocalLifecycleOwner` again, and `CameraBindingOwnerTest` enforces that.
+    val cameraLifecycleOwner = rememberCameraBindingOwner()
     val scope = rememberCoroutineScope()
 
     val controller = remember { CameraController(context) }
@@ -318,13 +331,16 @@ fun CameraScreen(
     val guideDebug by viewModel.guideDebug.collectAsState()
     val tilt by tiltSensor.reading.collectAsState()
     val shake by shakeMeter.shake.collectAsState()
-    // The debug read-outs must stay unreachable in release. Gate the toggle *and*
-    // the render: `showHud` is rememberSaveable, so a value restored from a bundle
-    // written by a debug build must not be able to surface them either.
-    // BuildConfig.DEBUG is a compile-time constant, so the whole HUD branch is
-    // dead code in release. (§7-2's developer-gesture entry point is wave 3.)
-    val hudAvailable = BuildConfig.DEBUG
-    var showHud by rememberSaveable { mutableStateOf(BuildConfig.DEBUG) }
+    // The debug read-outs must stay unreachable in release, and must not be the
+    // state a debug build *starts* in either (P1-C1). Both answers come from
+    // [DebugHudGate] rather than from a boolean written here, because a decision
+    // inside a @Composable cannot be unit-tested on the JVM and this one has
+    // already regressed once: the initial value used to be `BuildConfig.DEBUG`, so
+    // clearing app data left the HUD on screen before anyone asked for it.
+    // (§7-2's developer-gesture entry point is wave 3; the top-bar chip is the
+    // explicit act for now.)
+    val hudAvailable = DebugHudGate.availableIn(BuildConfig.DEBUG)
+    var showHud by rememberSaveable { mutableStateOf(DebugHudGate.initialVisible(BuildConfig.DEBUG)) }
 
     // O-13 (1): **a preset is colour. It does not reach the guide.**
     //
@@ -493,7 +509,29 @@ fun CameraScreen(
         )
         onDispose {
             controller.clearAnalyzer()
-            controller.unbind()
+            // **This line used to be the bug, and it is no longer unconditional.**
+            //
+            // `LifecycleCameraController.unbind()` is
+            // `ProcessCameraProvider.unbindAll()`, and unbinding an `ImageCapture`
+            // runs `abortImageCaptureRequests()` → `TakePictureManager.abortRequests()`,
+            // which fails every request *still in flight* with
+            // `ImageCaptureException(ERROR_CAMERA_CLOSED, "Camera is closed.")`. So
+            // leaving the camera screen mid-capture destroyed the photo inside
+            // CameraX, before the shutter coroutine could reach any code that saves
+            // it — which is why making that coroutine uncancellable was necessary
+            // and not sufficient. Confirmed on SM-G970N 2026-07-30 from both ends:
+            // the camera-core 1.4.1 disassembly, and the device's own
+            // `ImageCaptureException: Camera is closed. at
+            // TakePictureManager.abortRequests(TakePictureManager.java:159)` with
+            // zero `CaptureLatency` lines.
+            //
+            // With no capture in flight this runs right here, exactly as before.
+            // With one, the release is handed to the shutter's `finally`. See
+            // [CameraTeardownGate] for the two things that makes safe — a handed-off
+            // release must not tear down the *next* screen's camera, and it must not
+            // fail to happen at all.
+            releaseCamera("dispose", cameraTeardownGate.screenDisposed { controller.unbind() })
+            if (cameraTeardownGate.hasDeferredTeardown) scheduleTeardownWatchdog()
             // Resume guarantee 2 of 3 (see AnalysisPauseGate): the shutter's
             // `finally` cannot run if its coroutine was cancelled by this very
             // disposal, so the pause is released unconditionally here as well.
@@ -515,7 +553,7 @@ fun CameraScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(Charcoal950),
+            .background(Ink950),
     ) {
         CameraTopBar(
             guideVisible = guideVisible,
@@ -534,7 +572,7 @@ fun CameraScreen(
                 .fillMaxWidth()
                 .padding(top = 8.dp),
             controller = controller,
-            lifecycleOwner = lifecycleOwner,
+            cameraLifecycleOwner = cameraLifecycleOwner,
             aspect = aspect,
             overlay = overlay,
             rollDeg = tilt.rollDeg,
@@ -545,7 +583,7 @@ fun CameraScreen(
             showGuide = guideVisible,
             // §3-2: the product overlay is bracket + silhouette + horizon only.
             // Raw face boxes / centre dot ride the same toggle as the HUD.
-            showDetections = hudAvailable && showHud,
+            showDetections = DebugHudGate.visible(BuildConfig.DEBUG, showHud),
             // Pinch-to-zoom lives inside the pane and drives CameraX directly;
             // this is the read-back of CameraX's actual ZoomState, not a request.
             zoomRatio = actualZoom,
@@ -558,7 +596,7 @@ fun CameraScreen(
             onPreviewFpsAvailability = viewModel::onPreviewFpsAvailability,
             referenceLayer = referenceLayer,
             hud = {
-                if (hudAvailable && showHud) {
+                if (DebugHudGate.visible(BuildConfig.DEBUG, showHud)) {
                     CameraHud(
                         modifier = Modifier.align(Alignment.TopStart),
                         stats = stats,
@@ -617,6 +655,16 @@ fun CameraScreen(
                     // One line per capture, DEBUG only. Null in release, which is
                     // what keeps `CaptureTrace` out of the shipped shutter path.
                     val trace = if (BuildConfig.DEBUG) CaptureTrace() else null
+                    // Two claims, released together in the same `finally`. This one
+                    // is first so that `pause()` keeps the position its KDoc pins;
+                    // neither call can throw, so nothing can be lost between them.
+                    //
+                    // What it claims: for as long as this capture runs, the camera
+                    // is not released even if the screen goes away. Held here rather
+                    // than around `capture()` alone because the abort window is the
+                    // whole CameraX request, and the request has already been issued
+                    // by the time `capture()` suspends.
+                    val teardownToken = cameraTeardownGate.captureStarted()
                     // The statement immediately before `try`, with nothing between
                     // them, so its `finally` is unconditionally paired with it:
                     // `finally` runs on success, on throw and on cancellation
@@ -624,62 +672,132 @@ fun CameraScreen(
                     // the same reason — a body that never starts cannot pause.
                     val pauseToken = analysisPauseGate.pause()
                     try {
-                        // capture() must be called on the main thread: it reaches
-                        // CameraX's takePicture(), which asserts it outright
-                        // (Threads.checkMainThread). It is already off-main where it
-                        // matters — the decode/rotate runs on the callback executor
-                        // it passes in. Wrapping the call in withContext(Default)
-                        // therefore bought nothing and threw IllegalStateException on
-                        // every shutter press, losing the shot; three presses, three
-                        // "촬영에 실패했어요" toasts, verified on SM-G970N.
                         // §3-3: read the analysis state *before* awaiting the
                         // capture. takePicture() takes a few hundred ms, during
                         // which the analyzer keeps publishing — awaiting first
                         // would record the frame the shutter produced rather than
                         // the one the user was looking at when they pressed it.
+                        //
+                        // Outside the uncancellable region below because it cannot
+                        // block: it is a `.value` read of a StateFlow.
                         val frame = viewModel.lastFrame.value
 
-                        // The aspect crop is part of the capture's single transform
-                        // now, not a fifth full-resolution copy afterwards — see
-                        // `captureGeometryFor`. `capture()` already runs its work on
-                        // Dispatchers.Default inside CameraX's callback.
-                        val bitmap = controller.capture(trace, aspect.ratioWtoH)
-                        // The thumb stays a separate downscale: it is a different
-                        // size from the photo, so it cannot share the same pass. It
-                        // is small and it means no full-resolution bitmap is
-                        // retained for a 44dp preview.
-                        lastThumb = withContext(Dispatchers.Default) {
-                            bitmap.scaledToMaxSide(256)
-                        }
-                        trace?.mark(CapturePhase.CROP)
+                        // ── The photo's life. Nothing in here may be cancelled. ──
+                        //
+                        // `scope` is `rememberCoroutineScope()`, so leaving the
+                        // camera screen cancels this coroutine. Pressing the shutter
+                        // and then tapping 앨범 0.3s later therefore threw the photo
+                        // away at whichever suspension point it happened to be
+                        // sitting on — usually inside `capture()`, since
+                        // `CapturePhase.CAMERA_X` measures 290-1613ms. A user who
+                        // pressed the shutter asked for a photo; not waiting for it
+                        // is not a reason to discard it.
+                        //
+                        // The region ends where the photo stops depending on this
+                        // screen. `saveCameraCapture` writes the private file
+                        // (`CapturePhase.APP_FILE`, "the photo is safe") and the
+                        // `captures` row in one call, and the row is inside the
+                        // region rather than after it on purpose: a file with no row
+                        // is invisible to the album and the editor, which is not a
+                        // saved photo in any sense the user would recognise.
+                        //
+                        // Everything else in here is between those two points and
+                        // must not be reordered out — the thumbnail because moving
+                        // it would print `CapturePhase.CROP` after ENCODE/ROW and
+                        // silently corrupt every latency breakdown, and the two log
+                        // lines because they are the only evidence that any of this
+                        // ran. In particular the `capture ...` line is what the
+                        // on-device check for this fix reads.
+                        //
+                        // `NonCancellable` replaces the Job, not the dispatcher, so
+                        // this still runs on Main — which `capture()` requires:
+                        // it reaches CameraX's takePicture(), which asserts the main
+                        // thread outright (Threads.checkMainThread). It is already
+                        // off-main where it matters, since the decode/rotate runs on
+                        // the callback executor it passes in. Wrapping the call in
+                        // withContext(Default) bought nothing and threw
+                        // IllegalStateException on every shutter press, losing the
+                        // shot; three presses, three "촬영에 실패했어요" toasts,
+                        // verified on SM-G970N.
+                        val score = withContext(NonCancellable) {
+                            // The aspect crop is part of the capture's single
+                            // transform now, not a fifth full-resolution copy
+                            // afterwards — see `captureGeometryFor`. `capture()`
+                            // already runs its work on Dispatchers.Default inside
+                            // CameraX's callback.
+                            val bitmap = controller.capture(trace, aspect.ratioWtoH)
+                            // The thumb stays a separate downscale: it is a different
+                            // size from the photo, so it cannot share the same pass.
+                            // It is small and it means no full-resolution bitmap is
+                            // retained for a 44dp preview.
+                            lastThumb = withContext(Dispatchers.Default) {
+                                bitmap.scaledToMaxSide(256)
+                            }
+                            trace?.mark(CapturePhase.CROP)
 
-                        val score = frame?.let { viewModel.matchScoreOf(it) }
-                        container.captureRepository.saveCameraCapture(
-                            bitmap,
-                            buildCaptureSnapshot(
-                                frame = frame,
-                                matchScore = score,
-                                sessionId = sessionId,
-                                paneRatioWtoH = paneRatioWtoH,
-                                targetRatioWtoH = aspect.ratioWtoH,
-                                mirror = isFront,
-                                tiltRecorded = tiltSensor.hasReading,
-                            ),
-                            trace = trace,
-                        )
-                        // Logged here rather than in `finally`: this is the point
-                        // the user's photo is safe and the shutter's job is done.
-                        // The gallery copy is still running and reports itself on
-                        // the same tag when it finishes.
-                        trace?.let {
-                            Log.d(
-                                LATENCY_TAG,
-                                "capture ${it.format()} pause=" +
-                                    (if (analysisPauseGate.isEnabled) "on" else "off") +
-                                    " watchdogTrips=${analysisPauseGate.watchdogTrips}",
+                            // Geometry evidence line, DEBUG only. **Measurement, not
+                            // behaviour** — nothing reads this back.
+                            //
+                            // It settled the full-bleed question from a single photo:
+                            // `saved.width == buffer.width` means CameraX's viewport
+                            // is not cropping the width and the preview shows less
+                            // than the file holds. Measured 2026-07-30 on SM-G970N —
+                            // 3024×3780 rear, 2736×3420 front, both exactly 4:5 at the
+                            // sensor's full width, so there is no viewport width crop.
+                            //
+                            // ⚠️ `SubjectProjection`'s KDoc still predicts 2904×3630
+                            // from a 1080×1500 pane and has not been corrected — that
+                            // file is out of scope here. Believe this line, not that
+                            // one, until someone owns the fix.
+                            if (BuildConfig.DEBUG) {
+                                Log.d(
+                                    LATENCY_TAG,
+                                    "geometry pane=%.4f target=%.4f saved=%dx%d (%.4f)".format(
+                                        paneRatioWtoH,
+                                        aspect.ratioWtoH,
+                                        bitmap.width,
+                                        bitmap.height,
+                                        bitmap.width.toFloat() / bitmap.height.toFloat(),
+                                    ),
+                                )
+                            }
+
+                            val score = frame?.let { viewModel.matchScoreOf(it) }
+                            container.captureRepository.saveCameraCapture(
+                                bitmap,
+                                buildCaptureSnapshot(
+                                    frame = frame,
+                                    matchScore = score,
+                                    sessionId = sessionId,
+                                    paneRatioWtoH = paneRatioWtoH,
+                                    targetRatioWtoH = aspect.ratioWtoH,
+                                    mirror = isFront,
+                                    tiltRecorded = tiltSensor.hasReading,
+                                ),
+                                trace = trace,
                             )
+                            // Logged here rather than in `finally`: this is the point
+                            // the user's photo is safe and the shutter's job is done.
+                            // The gallery copy is still running and reports itself on
+                            // the same tag when it finishes.
+                            trace?.let {
+                                Log.d(
+                                    LATENCY_TAG,
+                                    "capture ${it.format()} pause=" +
+                                        (if (analysisPauseGate.isEnabled) "on" else "off") +
+                                        " watchdogTrips=${analysisPauseGate.watchdogTrips}",
+                                )
+                            }
+                            score
                         }
 
+                        // Outside the region: the photo is already saved, and this is
+                        // a session aggregate rather than the shot's own record. The
+                        // score itself is not at risk — `buildCaptureSnapshot` wrote
+                        // it into the `captures` row above — so what a navigate-away
+                        // costs here is `sessions.final_match_score` for that session,
+                        // not any part of the photo.
+                        //
                         // KPI, and never a reason to fail a capture — the repository
                         // swallows its own errors. `ended_at` is refreshed with every
                         // press so it tracks the last shot of the session; the screen
@@ -690,6 +808,20 @@ fun CameraScreen(
                             container.guideKpiRepository.recordFinalScore(sid, score)
                             container.guideKpiRepository.endSession(sid)
                         }
+                    } catch (t: CancellationException) {
+                        // The screen was left. Everything the user asked for already
+                        // happened inside the region above; what was cancelled is the
+                        // KPI tail. Rethrown rather than swallowed so this coroutine
+                        // still completes as cancelled, and — the visible half —
+                        // ahead of the generic catch so it cannot reach the toast.
+                        //
+                        // It used to. `catch (t: Throwable)` catches
+                        // CancellationException too, so walking away from the camera
+                        // mid-capture reported "촬영에 실패했어요" for a capture that
+                        // had not failed. Only the two clauses together are correct:
+                        // a real failure must still say so (W2-2 — silence about a
+                        // failure is its own defect), and a cancellation must not.
+                        throw t
                     } catch (t: Throwable) {
                         Log.e(TAG, "capture failed", t)
                         Toast.makeText(context, "촬영에 실패했어요", Toast.LENGTH_SHORT).show()
@@ -698,12 +830,96 @@ fun CameraScreen(
                         // that no ordering of the two can leave the shutter usable
                         // again while the guide is still stood down.
                         analysisPauseGate.resume(pauseToken)
+                        // The screen may have been disposed while this capture was
+                        // in flight, in which case `onDispose` left the camera to
+                        // us. Null in the ordinary case — and null too when someone
+                        // else already spent the release, which is what keeps a late
+                        // arrival from unbinding a camera that is back on screen.
+                        releaseCamera("shutter", cameraTeardownGate.captureFinished(teardownToken))
                         capturing = false
                     }
                 }
             },
         )
     }
+}
+
+/**
+ * Runs a camera release [CameraTeardownGate] handed back, or does nothing when it
+ * handed back nothing.
+ *
+ * ## Why every release goes through one function
+ *
+ * The camera is bound to the **Activity** (see [rememberCameraBindingOwner]), so
+ * leaving the camera screen no longer detaches it. That was previously a safety
+ * net underneath every mistake in this file: whatever we forgot, navigating away
+ * cleaned it up. It is gone, and what replaces it is an argument that has to hold
+ * link by link:
+ *
+ *  1. `bind()` is called from the `AndroidView` factory and nowhere else, so a
+ *     binding exists only for a composition that was **applied** — an abandoned
+ *     one never creates the node. (`CameraBindingOwnerTest` pins both halves.)
+ *  2. An applied composition always runs its `DisposableEffect`'s `onDispose`.
+ *  3. `onDispose` always asks the gate, never unbinds directly
+ *     (`CameraTeardownGateTest`).
+ *  4. The gate either hands the release back immediately or records a deferral —
+ *     never neither, and a recorded deferral is always visible as
+ *     [CameraTeardownGate.hasDeferredTeardown].
+ *  5. A deferral always gets [scheduleTeardownWatchdog], which fires on the main
+ *     looper — which runs while the Activity is stopped, so backgrounding cannot
+ *     postpone it.
+ *  6. And any deferral still outstanding is spent by the next
+ *     [CameraTeardownGate.releaseBeforeBind].
+ *
+ * So every binding is released within about four seconds of its screen going
+ * away. This function closes the one silent gap left in that chain: a release
+ * that throws. Logged rather than rethrown because the alternative is crashing
+ * the app during a navigation, and step 6 still recovers — the next time the user
+ * opens the camera, the stale binding is torn down before the new one is made.
+ */
+private fun releaseCamera(where: String, release: (() -> Unit)?) {
+    if (release == null) return
+    runCatching(release).onFailure {
+        Log.e(TAG, "camera release failed at '$where'; camera stays open until the next bind", it)
+    }
+}
+
+/**
+ * Pokes a deferred camera release once its deadline has passed.
+ *
+ * `AnalysisPauseGate` gets its expiry for free — the analysis thread asks
+ * `isPaused()` on every frame, so a stuck pause is noticed by the next one. This
+ * gate has no such visitor: `clearAnalyzer()` has already run by the time anything
+ * is deferred, so there is no frame loop left to ask. Hence one delayed post,
+ * which is the only timer in the arrangement.
+ *
+ * Idempotent and cheap to be wrong about: if the capture finished normally the
+ * poke finds nothing and does nothing. Logged at `w` rather than behind
+ * `BuildConfig.DEBUG` because a non-zero count is a defect — a capture that
+ * neither succeeded nor failed — and the same reasoning as
+ * `AnalysisPauseGate.watchdogTrips` applies: it should be visible in whatever
+ * build it happens in, not inferred later from a camera indicator that stayed on.
+ */
+private fun scheduleTeardownWatchdog() {
+    Handler(Looper.getMainLooper()).postDelayed(
+        {
+            val expired = cameraTeardownGate.releaseIfExpired()
+            if (expired != null) {
+                Log.w(
+                    TAG,
+                    "camera teardown waited ${cameraTeardownGate.maxDeferMs}ms for a capture " +
+                        "that never finished; releasing anyway " +
+                        "(expiredDefers=${cameraTeardownGate.expiredDefers})",
+                )
+            }
+            releaseCamera("watchdog", expired)
+        },
+        // The gate's deadline is nanoTime-based and this post is uptimeMillis-based.
+        // Landing a hair *early* would find the deferral unexpired and never come
+        // back, so the poke is deliberately late by a margin larger than the two
+        // clocks can disagree by.
+        cameraTeardownGate.maxDeferMs + TEARDOWN_WATCHDOG_SLACK_MS,
+    )
 }
 
 /**
@@ -748,11 +964,11 @@ private fun CameraTopBar(
                     modifier = Modifier
                         .size(7.dp)
                         .clip(CircleShape)
-                        .background(if (guideVisible) Sage else OnDarkMuted),
+                        .background(if (guideVisible) Amber else TextLow),
                 )
                 Text(
                     text = "가이드",
-                    color = if (guideVisible) OnDarkHigh else OnDarkMuted,
+                    color = if (guideVisible) TextHi else TextLow,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -762,7 +978,7 @@ private fun CameraTopBar(
             // what the caller passes.
             if (BuildConfig.DEBUG && hudToggleEnabled) {
                 BarChip(onClick = onToggleHud) {
-                    Text("HUD", color = OnDarkMedium, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Text("HUD", color = TextMid, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -774,15 +990,15 @@ private fun CameraTopBar(
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(16.dp))
-                    .background(Charcoal600.copy(alpha = 0.9f))
+                    .background(Ink700.copy(alpha = 0.9f))
                     .padding(horizontal = 11.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Sage))
+                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Amber))
                 Text(
                     text = "내 감도 적용 중",
-                    color = OnDarkHigh,
+                    color = TextHi,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
@@ -815,7 +1031,7 @@ private fun AspectChip(selected: CaptureAspect, onSelect: (CaptureAspect) -> Uni
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(16.dp))
-            .background(Charcoal600.copy(alpha = 0.9f))
+            .background(Ink700.copy(alpha = 0.9f))
             .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
@@ -823,12 +1039,12 @@ private fun AspectChip(selected: CaptureAspect, onSelect: (CaptureAspect) -> Uni
             val isSelected = option == selected
             Text(
                 text = option.label,
-                color = if (isSelected) OnSage else OnDarkMedium,
+                color = if (isSelected) OnAmber else TextMid,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .clip(RoundedCornerShape(14.dp))
-                    .background(if (isSelected) Sage else Color.Transparent)
+                    .background(if (isSelected) Amber else Color.Transparent)
                     .clickable { onSelect(option) }
                     .padding(horizontal = 7.dp, vertical = 4.dp),
             )
@@ -925,13 +1141,13 @@ private fun CameraStyleStrip(
                                 .size(52.dp)
                                 .then(
                                     if (isSelected) {
-                                        Modifier.border(2.dp, Sage, CircleShape).padding(2.dp)
+                                        Modifier.border(2.dp, Amber, CircleShape).padding(2.dp)
                                     } else {
                                         Modifier.padding(4.dp)
                                     },
                                 )
                                 .clip(CircleShape)
-                                .background(Charcoal600),
+                                .background(Ink700),
                         ) {
                             AsyncImage(
                                 model = "file:///android_asset/" + (preset.thumbnail ?: "presets/${preset.id}.jpg"),
@@ -942,7 +1158,7 @@ private fun CameraStyleStrip(
                         }
                         Text(
                             text = preset.displayName,
-                            color = if (isSelected) Sage else OnDarkMedium,
+                            color = if (isSelected) Amber else TextMid,
                             fontSize = 10.sp,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                             maxLines = 1,
@@ -968,7 +1184,7 @@ private fun BarChip(onClick: () -> Unit, content: @Composable RowScope.() -> Uni
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(16.dp))
-            .background(Charcoal600.copy(alpha = 0.9f))
+            .background(Ink700.copy(alpha = 0.9f))
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1003,7 +1219,13 @@ private fun BarChip(onClick: () -> Unit, content: @Composable RowScope.() -> Uni
 private fun CameraPreviewPane(
     modifier: Modifier,
     controller: CameraController,
-    lifecycleOwner: LifecycleOwner,
+    /**
+     * What CameraX is bound to. Must come from [rememberCameraBindingOwner] — the
+     * Activity — and never from `LocalLifecycleOwner`, which inside a
+     * Navigation-Compose destination is that destination's back-stack entry and
+     * detaches the camera the moment the user leaves the screen.
+     */
+    cameraLifecycleOwner: LifecycleOwner,
     aspect: CaptureAspect,
     overlay: OverlayData?,
     rollDeg: Float,
@@ -1069,6 +1291,18 @@ private fun CameraPreviewPane(
             // treating the symptom.
             modifier = Modifier.fillMaxSize().clipToBounds(),
             factory = { ctx ->
+                // Before anything of ours is bound, and never after.
+                //
+                // A release deferred by the *previous* camera screen is
+                // `ProcessCameraProvider.unbindAll()` — it does not know which
+                // controller asked for it. Landing after the bind below, it would
+                // tear down this preview instead of the old one, leaving a black
+                // screen with no error anywhere. Spending it here means the two can
+                // never overlap: the old camera is always released while the new one
+                // does not yet exist. The capture it was waiting for is lost, which
+                // is the right trade — a photo is worth less than a working camera,
+                // and two cameras cannot have the hardware at once.
+                releaseCamera("rebind", cameraTeardownGate.releaseBeforeBind())
                 PreviewView(ctx).apply {
                     // Implementation mode is left at CameraX's PERFORMANCE default,
                     // i.e. a SurfaceView.
@@ -1089,7 +1323,7 @@ private fun CameraPreviewPane(
                     }
                     scaleType = PreviewView.ScaleType.FILL_CENTER
                     this.controller = controller.camera
-                    controller.bind(lifecycleOwner)
+                    controller.bind(cameraLifecycleOwner)
                     previewView = this
                     // §7-1: the preview rate, measured rather than inferred from the
                     // analysis rate. Reports why it could not attach when it cannot.
@@ -1207,7 +1441,7 @@ private fun CameraPreviewPane(
         }
 
         Column(modifier = Modifier.fillMaxSize()) {
-            Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
+            Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Ink950))
             Box(modifier = Modifier.fillMaxWidth().height(windowHeight)) {
                 RuleOfThirds()
                 ZoomStops(
@@ -1223,7 +1457,7 @@ private fun CameraPreviewPane(
                     onClick = onRescan,
                 )
             }
-            Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
+            Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Ink950))
         }
 
         hud()
@@ -1267,7 +1501,7 @@ private fun CameraBottomBar(
                     )
                 }
             }
-            Text("앨범", color = OnDarkMedium, fontSize = 10.sp)
+            Text("앨범", color = TextMid, fontSize = 10.sp)
         }
 
         // D2: the shutter is manual only — capture is reachable from this
@@ -1284,7 +1518,7 @@ private fun CameraBottomBar(
                 modifier = Modifier
                     .size(60.dp)
                     .clip(CircleShape)
-                    .background(if (capturing) OnDarkMuted else OnDarkHigh),
+                    .background(if (capturing) TextLow else TextHi),
             )
         }
 
@@ -1292,11 +1526,11 @@ private fun CameraBottomBar(
             modifier = Modifier
                 .size(44.dp)
                 .clip(CircleShape)
-                .background(Charcoal600)
+                .background(Ink700)
                 .clickable(onClick = onFlipLens),
             contentAlignment = Alignment.Center,
         ) {
-            Text("⟲", color = if (isFront) Sage else OnDarkMedium, fontSize = 18.sp)
+            Text("⟲", color = if (isFront) Amber else TextMid, fontSize = 18.sp)
         }
     }
 }
@@ -1412,7 +1646,7 @@ private fun DebugHud(stats: AnalysisStats, modifier: Modifier = Modifier) {
                 stats.fps,
                 stats.dropRatePercent,
             ),
-            color = Sage,
+            color = Amber,
             fontSize = 10.sp,
             fontWeight = FontWeight.Medium,
         )
@@ -1453,7 +1687,7 @@ private fun PreviewFpsHud(
     ) {
         Text(
             text = text,
-            color = if (measured) Sage else OnDarkMedium,
+            color = if (measured) Amber else TextMid,
             fontSize = 10.sp,
             fontWeight = FontWeight.Medium,
         )
@@ -1471,7 +1705,7 @@ private fun TiltBadge(rollDeg: Float, pitchDeg: Float, shake: Float) {
     ) {
         Text(
             text = "수평 %.1f° · 기울기 %.1f° · 흔들림 %.3f".format(rollDeg, pitchDeg, shake),
-            color = if (level) Sage else OnDarkMedium,
+            color = if (level) Amber else TextMid,
             fontSize = 10.sp,
             fontWeight = FontWeight.Medium,
         )
@@ -1498,7 +1732,7 @@ private fun GuideDebugBadge(debug: GuideDebug) {
                     debug.aligned, debug.visible, debug.iou, debug.matchScore,
                     debug.fixedLayoutId ?: "none",
                 ),
-                color = if (debug.aligned) Sage else OnDarkHigh,
+                color = if (debug.aligned) Amber else TextHi,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Medium,
             )
@@ -1506,14 +1740,14 @@ private fun GuideDebugBadge(debug: GuideDebug) {
                 text = "area %.2f · headroom %.2f · margins %.2f/%.2f".format(
                     f.personAreaRatio, f.headroom, f.sideMargins.left, f.sideMargins.right,
                 ),
-                color = OnDarkMedium,
+                color = TextMid,
                 fontSize = 10.sp,
             )
             Text(
                 text = "luma %.2f · poseConf %.2f · backlight=%s lowLight=%s".format(
                     f.brightnessMean, f.poseConfidence, f.backlightFlag, f.lowLightFlag,
                 ),
-                color = OnDarkMedium,
+                color = TextMid,
                 fontSize = 10.sp,
             )
         }
@@ -1553,13 +1787,13 @@ private fun ZoomStops(
                     .size(if (isActive) 34.dp else 30.dp)
                     .clip(CircleShape)
                     .background(Color(0x99141614))
-                    .then(if (isActive) Modifier.border(1.8.dp, Sage, CircleShape) else Modifier)
+                    .then(if (isActive) Modifier.border(1.8.dp, Amber, CircleShape) else Modifier)
                     .clickable { onSelect(stop) },
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = formatZoomStop(stop),
-                    color = if (isActive) Sage else OnDarkMedium,
+                    color = if (isActive) Amber else TextMid,
                     fontSize = if (isActive) 11.sp else 10.5.sp,
                     fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
                 )
@@ -1610,8 +1844,8 @@ private fun RescanButton(modifier: Modifier, onClick: () -> Unit) {
                     val y = if (bottom) size.height else 0f
                     val dx = if (right) -arm else arm
                     val dy = if (bottom) -arm else arm
-                    drawLine(OnDarkMedium, Offset(x, y), Offset(x + dx, y), stroke, StrokeCap.Round)
-                    drawLine(OnDarkMedium, Offset(x, y), Offset(x, y + dy), stroke, StrokeCap.Round)
+                    drawLine(TextMid, Offset(x, y), Offset(x + dx, y), stroke, StrokeCap.Round)
+                    drawLine(TextMid, Offset(x, y), Offset(x, y + dy), stroke, StrokeCap.Round)
                 }
             }
         }
@@ -1626,7 +1860,7 @@ private fun DetectionBadge(text: String) {
             .background(Color(0x99000000))
             .padding(horizontal = 8.dp, vertical = 4.dp),
     ) {
-        Text(text = text, color = Sage, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+        Text(text = text, color = Amber, fontSize = 10.sp, fontWeight = FontWeight.Medium)
     }
 }
 

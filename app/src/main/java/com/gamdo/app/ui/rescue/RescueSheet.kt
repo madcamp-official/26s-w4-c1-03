@@ -32,12 +32,12 @@ import com.gamdo.app.data.network.RescueRecommendation
 import com.gamdo.app.data.rescue.RescueState
 import com.gamdo.app.ui.components.PrimaryPillButton
 import com.gamdo.app.ui.components.SecondaryPillButton
-import com.gamdo.app.ui.theme.Charcoal800
-import com.gamdo.app.ui.theme.Charcoal900
-import com.gamdo.app.ui.theme.OnDarkHigh
-import com.gamdo.app.ui.theme.OnDarkMedium
-import com.gamdo.app.ui.theme.OnSage
-import com.gamdo.app.ui.theme.Sage
+import com.gamdo.app.ui.theme.Ink800
+import com.gamdo.app.ui.theme.Ink900
+import com.gamdo.app.ui.theme.TextHi
+import com.gamdo.app.ui.theme.TextMid
+import com.gamdo.app.ui.theme.OnAmber
+import com.gamdo.app.ui.theme.Amber
 import com.gamdo.app.ui.theme.Scrim
 import kotlinx.serialization.json.JsonObject
 import java.io.File
@@ -122,7 +122,7 @@ fun RescueSheet(
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-                .background(Charcoal900)
+                .background(Ink900)
                 // Claims every gesture that starts on the sheet body, so the scrim
                 // beneath never sees it. Placed after `background` and before
                 // `padding` so the claimed area is exactly the painted area,
@@ -182,10 +182,10 @@ fun RescueSheet(
  */
 @Composable
 private fun IntroSection(onAnalyze: () -> Unit, onCancel: () -> Unit) {
-    Text("AI로 보정", color = OnDarkHigh, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+    Text("AI로 보정", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Bold)
     Text(
         text = "이 사진을 보내서 지울 수 있는 것들을 찾아볼게요. 위치 정보는 자동으로 제거돼요.",
-        color = OnDarkMedium,
+        color = TextMid,
         fontSize = 12.5.sp,
         modifier = Modifier.padding(top = 12.dp),
     )
@@ -207,8 +207,8 @@ private fun ProgressSection(message: String, onCancel: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            CircularProgressIndicator(color = Sage, strokeWidth = 2.5.dp, modifier = Modifier.size(28.dp))
-            Text(message, color = OnDarkMedium, fontSize = 12.5.sp)
+            CircularProgressIndicator(color = Amber, strokeWidth = 2.5.dp, modifier = Modifier.size(28.dp))
+            Text(message, color = TextMid, fontSize = 12.5.sp)
         }
     }
     SecondaryPillButton(text = "취소", onClick = onCancel)
@@ -239,7 +239,7 @@ private fun PickSection(
 ) {
     val offered = response?.let { offerableRecommendations(it) }.orEmpty()
 
-    Text("이렇게 살려볼 수 있어요", color = OnDarkHigh, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+    Text("이렇게 살려볼 수 있어요", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Bold)
 
     if (offered.isEmpty()) {
         // Not an error: every capability can legitimately be off (CAMP-2 without the
@@ -247,7 +247,7 @@ private fun PickSection(
         // empty list, and beats offering something that cannot run.
         Text(
             text = "이 사진에서는 지울 만한 게 보이지 않아요.",
-            color = OnDarkMedium,
+            color = TextMid,
             fontSize = 12.5.sp,
             modifier = Modifier.padding(top = 12.dp),
         )
@@ -271,7 +271,7 @@ private fun PickSection(
     if (chosen != null) {
         Text(
             text = confirmMessageFor(chosen),
-            color = OnDarkMedium,
+            color = TextMid,
             fontSize = 12.5.sp,
             modifier = Modifier.padding(top = 16.dp),
         )
@@ -299,20 +299,20 @@ private fun RecommendationCard(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(Charcoal800)
-            .then(if (selected) Modifier.border(1.5.dp, Sage, RoundedCornerShape(14.dp)) else Modifier)
+            .background(Ink800)
+            .then(if (selected) Modifier.border(1.5.dp, Amber, RoundedCornerShape(14.dp)) else Modifier)
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
         Text(
             text = recommendation.title,
-            color = if (selected) Sage else OnDarkHigh,
+            color = if (selected) Amber else TextHi,
             fontSize = 13.5.sp,
             fontWeight = FontWeight.Bold,
         )
         Text(
             text = recommendation.reason,
-            color = OnDarkMedium,
+            color = TextMid,
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp),
         )
@@ -344,7 +344,7 @@ private fun CandidatesSection(
         return
     }
 
-    Text("마음에 드는 걸 골라주세요", color = OnDarkHigh, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+    Text("마음에 드는 걸 골라주세요", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Bold)
     Row(
         modifier = Modifier.padding(top = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -376,8 +376,8 @@ private fun CandidateTile(
         modifier = modifier
             .height(170.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(Charcoal800)
-            .then(if (selected) Modifier.border(2.dp, Sage, RoundedCornerShape(14.dp)) else Modifier)
+            .background(Ink800)
+            .then(if (selected) Modifier.border(2.dp, Amber, RoundedCornerShape(14.dp)) else Modifier)
             .clickable(onClick = onClick),
     ) {
         AsyncImage(
@@ -396,12 +396,12 @@ fun GenerativeBadge(modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(5.dp))
-            .background(Sage)
+            .background(Amber)
             .padding(horizontal = 8.dp, vertical = 3.dp),
     ) {
         Text(
             text = GENERATIVE_BADGE_LABEL,
-            color = OnSage,
+            color = OnAmber,
             fontSize = 10.sp,
             fontWeight = FontWeight.SemiBold,
         )
@@ -419,10 +419,10 @@ fun GenerativeBadge(modifier: Modifier = Modifier) {
  */
 @Composable
 private fun FallbackSection(message: String, onClose: () -> Unit) {
-    Text(message, color = OnDarkHigh, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+    Text(message, color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Bold)
     Text(
         text = "지금은 AI 보정을 쓸 수 없어서 원래 보정 결과를 그대로 두었어요.",
-        color = OnDarkMedium,
+        color = TextMid,
         fontSize = 12.5.sp,
         modifier = Modifier.padding(top = 8.dp),
     )

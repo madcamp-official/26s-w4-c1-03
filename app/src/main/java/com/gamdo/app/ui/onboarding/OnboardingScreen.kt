@@ -39,12 +39,12 @@ import com.gamdo.app.data.ProfileEngine
 import com.gamdo.app.data.StyleProfileResult
 import com.gamdo.app.data.toPresetProfile
 import com.gamdo.app.ui.components.PrimaryPillButton
-import com.gamdo.app.ui.theme.Charcoal900
-import com.gamdo.app.ui.theme.OnDarkHigh
-import com.gamdo.app.ui.theme.OnDarkMedium
-import com.gamdo.app.ui.theme.OnDarkMuted
-import com.gamdo.app.ui.theme.OnSage
-import com.gamdo.app.ui.theme.Sage
+import com.gamdo.app.ui.theme.Ink900
+import com.gamdo.app.ui.theme.TextHi
+import com.gamdo.app.ui.theme.TextMid
+import com.gamdo.app.ui.theme.TextLow
+import com.gamdo.app.ui.theme.OnAmber
+import com.gamdo.app.ui.theme.Amber
 import kotlinx.coroutines.launch
 
 // 5, not 3: P1_Plan_1.md §6-2 says "5장 이상", and ProfileEngine derives per-dimension
@@ -101,6 +101,27 @@ fun OnboardingScreen(container: AppContainer, onFinished: () -> Unit) {
         }
     }
 
+    // The swatches come from the measured colour of the photographs themselves, not
+    // from the profile: `colorTemperature` is a point on the orange-to-blue Planckian
+    // locus, so a selection of green photographs could only ever average to grey.
+    // Reported by the owner on 2026-07-30 and reproduced; see [ProfilePalette].
+    //
+    // Derived from the saved ids for the same reason `profile` is — a configuration
+    // change must not empty the palette on a screen headed "당신의 감도를 저장했어요".
+    val palette = remember(selectedIds, cards) {
+        cards.asSequence()
+            .filter { it.feature.id in selectedIds }
+            .mapNotNull { entry ->
+                val a = entry.colorA ?: return@mapNotNull null
+                val b = entry.colorB ?: return@mapNotNull null
+                CardTone(brightness = entry.feature.brightness, colorA = a, colorB = b)
+            }
+            .toList()
+            .takeIf { it.isNotEmpty() }
+            ?.let { tones -> ProfilePalette.swatches(tones).map { Color(it) } }
+            .orEmpty()
+    }
+
     when {
         // A parse failure used to leave an empty grid whose button never enables —
         // and onboarding gates the whole app, so that is a permanent dead end on a
@@ -124,15 +145,9 @@ fun OnboardingScreen(container: AppContainer, onFinished: () -> Unit) {
 
         else -> SavedStep(
             summary = profile?.summary,
-            // §6-2: the palette has to come from the profile the picks produced.
+            // §6-2: the palette has to come from what the picks actually contained.
             // Three constants under "당신의 감도" is a claim the screen cannot back.
-            palette = profile?.color?.let { c ->
-                ProfilePalette.swatches(
-                    brightness = c["brightness"]?.mean ?: 0.5f,
-                    colorTemperatureK = c["colorTemperature"]?.mean ?: 5500f,
-                    saturation = c["saturation"]?.mean ?: 0.4f,
-                ).map { Color(it) }
-            }.orEmpty(),
+            palette = palette,
             recommendations = profile?.recommendedPresetIds.orEmpty().map { presetNames[it] ?: it },
             onStart = {
                 scope.launch {
@@ -160,20 +175,20 @@ fun OnboardingScreen(container: AppContainer, onFinished: () -> Unit) {
 @Composable
 private fun CatalogUnavailableStep(onSkip: () -> Unit) {
     Column(
-        modifier = Modifier.fillMaxSize().background(Charcoal900),
+        modifier = Modifier.fillMaxSize().background(Ink900),
         verticalArrangement = Arrangement.Center,
     ) {
         Column(modifier = Modifier.padding(horizontal = 26.dp)) {
             Text(
                 text = "취향 카드를\n불러오지 못했어요",
-                color = OnDarkHigh,
+                color = TextHi,
                 fontSize = 23.sp,
                 fontWeight = FontWeight.Bold,
                 lineHeight = 31.sp,
             )
             Text(
                 text = "기본 스타일로 시작할 수 있어요. 나중에 다시 설정할 수 있습니다.",
-                color = OnDarkMuted,
+                color = TextLow,
                 fontSize = 13.sp,
                 lineHeight = 21.sp,
                 modifier = Modifier.padding(top = 14.dp),
@@ -196,19 +211,19 @@ private fun PickStep(cards: List<CardEntry>, onNext: (Set<String>) -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Charcoal900),
+            .background(Ink900),
     ) {
         Column(modifier = Modifier.padding(start = 22.dp, end = 22.dp, top = 26.dp)) {
             Text(
                 text = "마음이 가는 사진을\n골라 주세요",
-                color = OnDarkHigh,
+                color = TextHi,
                 fontSize = 23.sp,
                 fontWeight = FontWeight.Bold,
                 lineHeight = 31.sp,
             )
             Text(
                 text = "${MIN_PICKS}장이면 충분해요.",
-                color = OnDarkMedium,
+                color = TextMid,
                 fontSize = 14.sp,
                 modifier = Modifier.padding(top = 8.dp),
             )
@@ -252,8 +267,8 @@ private fun PickCard(card: CardEntry, selected: Boolean, onToggle: () -> Unit) {
         modifier = Modifier
             .aspectRatio(3f / 4f)
             .clip(RoundedCornerShape(14.dp))
-            .background(Charcoal900)
-            .then(if (selected) Modifier.border(2.5.dp, Sage, RoundedCornerShape(14.dp)) else Modifier)
+            .background(Ink900)
+            .then(if (selected) Modifier.border(2.5.dp, Amber, RoundedCornerShape(14.dp)) else Modifier)
             .clickable(onClick = onToggle),
     ) {
         AsyncImage(
@@ -269,10 +284,10 @@ private fun PickCard(card: CardEntry, selected: Boolean, onToggle: () -> Unit) {
                     .padding(8.dp)
                     .size(24.dp)
                     .clip(CircleShape)
-                    .background(Sage),
+                    .background(Amber),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(text = "✓", color = OnSage, fontSize = 13.sp, fontWeight = FontWeight.Black)
+                Text(text = "✓", color = OnAmber, fontSize = 13.sp, fontWeight = FontWeight.Black)
             }
         }
     }
@@ -288,7 +303,7 @@ private fun SavedStep(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Charcoal900),
+            .background(Ink900),
     ) {
         Column(
             modifier = Modifier
@@ -304,7 +319,7 @@ private fun SavedStep(
             }
             Text(
                 text = "당신의 감도를\n저장했어요",
-                color = OnDarkHigh,
+                color = TextHi,
                 fontSize = 25.sp,
                 fontWeight = FontWeight.Bold,
                 lineHeight = 35.sp,
@@ -323,7 +338,7 @@ private fun SavedStep(
             }
             Text(
                 text = "앞으로 촬영 가이드와 보정에 이 느낌을 자동으로 반영해요.",
-                color = OnDarkMuted,
+                color = TextLow,
                 fontSize = 13.sp,
                 lineHeight = 21.sp,
                 modifier = Modifier.padding(top = 22.dp),
@@ -352,7 +367,7 @@ private fun SavedBullet(text: String) {
             modifier = Modifier
                 .size(6.dp)
                 .clip(CircleShape)
-                .background(Sage),
+                .background(Amber),
         )
         Text(text = text, color = Color(0xFFC8CCC1), fontSize = 14.5.sp)
     }

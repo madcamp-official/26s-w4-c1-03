@@ -33,6 +33,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -49,6 +50,8 @@ import coil.compose.AsyncImage
 import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.local.entity.Captures
 import com.gamdo.app.data.ReferenceRepository
+import com.gamdo.app.data.ResultFilterKind
+import com.gamdo.app.data.ResultFilterStateHolder
 import com.gamdo.app.core.ExifSanitizer
 import com.gamdo.app.data.network.RescueAnalysisResponse
 import com.gamdo.app.data.preset.ResolvedStyle
@@ -84,14 +87,14 @@ import com.gamdo.app.ui.rescue.retainedCandidateId
 import com.gamdo.app.ui.rescue.retainedRecommendations
 import com.gamdo.app.ui.rescue.retainedRunningOperation
 import com.gamdo.app.ui.rescue.styleParamsJson
-import com.gamdo.app.ui.theme.Charcoal700
-import com.gamdo.app.ui.theme.Charcoal900
-import com.gamdo.app.ui.theme.Charcoal950
-import com.gamdo.app.ui.theme.OnDarkHigh
-import com.gamdo.app.ui.theme.OnDarkMedium
-import com.gamdo.app.ui.theme.OnDarkMuted
-import com.gamdo.app.ui.theme.OnSage
-import com.gamdo.app.ui.theme.Sage
+import com.gamdo.app.ui.theme.Ink800
+import com.gamdo.app.ui.theme.Ink900
+import com.gamdo.app.ui.theme.Ink950
+import com.gamdo.app.ui.theme.TextHi
+import com.gamdo.app.ui.theme.TextMid
+import com.gamdo.app.ui.theme.TextLow
+import com.gamdo.app.ui.theme.OnAmber
+import com.gamdo.app.ui.theme.Amber
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -149,45 +152,35 @@ private data class PreviewRequest(
 )
 
 /**
- * Which item in the O-10-wrapped filter strip is driving the render — either one
- * of the six [LocalFilter] presets (+ 원본), or the `내 레퍼런스` slot.
- *
- * A reference cannot be a [LocalFilter]: that enum is a closed, hand-authored set
- * of [com.gamdo.app.edit.PhotoFilter] recipes, and a reference's colour target is
- * arbitrary analysis output, not a recipe. So its render path is different too —
- * see [ResultScreen]'s `corrected` computation — while everything downstream
- * (the interactive sliders, the save path) treats [Reference] as riding on
- * `LocalFilter.ORIGINAL` for its *own* recipe (identity) plus whatever the
- * sliders add, exactly like every other selection.
- */
-private sealed interface SelectedStripFilter {
-    data class Preset(val filter: LocalFilter) : SelectedStripFilter
-    data object Reference : SelectedStripFilter
-}
-
-/**
  * Where a strip selection puts every slider, for this photograph.
  *
- * `내 레퍼런스` seeds to NEUTRAL rather than to a recipe: its colour is already
- * rendered into the base bitmap (see [ResultScreen]'s `corrected`), so the sliders
- * start at zero and only add a further adjustment on top — exactly as 원본 does.
+ * The `내 감도` slot seeds to NEUTRAL rather than to a recipe: a reference is not a
+ * [LocalFilter] — that enum is a closed, hand-authored set of
+ * [com.gamdo.app.edit.PhotoFilter] recipes, while a reference's colour target is
+ * arbitrary analysis output — and its colour is already rendered into the base
+ * bitmap (see [ResultScreen]'s `corrected`). So the sliders start at zero and only
+ * add a further adjustment on top, exactly as 원본 does.
  */
 private fun seedFor(
-    selection: SelectedStripFilter,
+    filterId: String,
     measure: FilterEngine.Measure,
-): FilterEngine.Adjustments = when (selection) {
-    is SelectedStripFilter.Preset -> FilterEngine.seedFrom(selection.filter.filter, measure)
-    SelectedStripFilter.Reference -> FilterEngine.Adjustments.NEUTRAL
+): FilterEngine.Adjustments = when (filterId) {
+    ResultFilterStateHolder.REFERENCE_FILTER_ID -> FilterEngine.Adjustments.NEUTRAL
+    else -> FilterEngine.seedFrom(localFilterFor(filterId).filter, measure)
 }
 
 /**
- * @param activeReferenceStyle the active AI 2 reference's resolved
- *   composition+color, or null. Only [ResolvedStyle.color] is consumed here —
- *   composition is a camera-screen concern. See the integration contract's
- *   "결과 화면의 `내 레퍼런스` 색감 항목".
- * @param activeReferenceImageUri the picked photo behind [activeReferenceStyle],
- *   for the strip thumbnail (see `CameraScreen`'s param of the same name for why
- *   this can be null even when a reference is active).
+ * @param activeReferenceStyle **no longer read by this screen** (P1-B2). It is the
+ *   nav host's `remember`ed copy of the active AI 2 reference, and a copy is the
+ *   problem: it dies with its composition, so an Activity recreation took the
+ *   `내 감도` slot off the strip. The screen reads
+ *   [com.gamdo.app.data.ResultFilterStateHolder] instead — the same value, published
+ *   by the same `ReferenceRepository` event, but stored on `AppContainer` where it
+ *   outlives the composition. The parameter stays only because the nav host is not
+ *   this change's to edit; removing it there and here is a follow-up.
+ * @param activeReferenceImageUri the picked photo behind the active reference, for
+ *   the strip thumbnail (see `CameraScreen`'s param of the same name for why this
+ *   can be null even when a reference is active).
  * @param onCreateReference O-10's leading `+` — opens the same picker/flow as
  *   the camera screen's.
  * @param onDeleteReference the reference slot's `×` badge (삭제).
@@ -303,43 +296,85 @@ fun ResultScreen(
     }
     val pickedCandidate = candidates.firstOrNull { it.resultId == pickedCandidateId }
 
-    // §5-2 결과 화면의 `내 레퍼런스` 색감 항목. A reference is not a `LocalFilter`
-    // (see [SelectedStripFilter]'s KDoc), so which strip item is active has to be
-    // known *before* `corrected` below — selecting it changes which pass produces
-    // the base bitmap, not just what runs on top of it.
-    var selectedStrip by remember { mutableStateOf<SelectedStripFilter>(SelectedStripFilter.Preset(LocalFilter.ORIGINAL)) }
-    // O-12: whether the *user* put the strip where it is. Not derivable from
-    // `selectedStrip` — on an app capture the screen seeds it below, and a seeded
-    // selection is not a choice. Every strip tap sets this.
-    var styleChosenByUser by remember { mutableStateOf(false) }
-    // Every style in presets.json now has a filter of its own, so this is a lookup
-    // rather than a when-chain with a fallback. The chain listed four of the six
-    // and sent `clean_social` and `casual_portrait` to a different style's look.
+    // ---- P1-B2: the filter strip, from the one place that owns it ------------
+    //
+    // `ResultFilterStateHolder` hangs off `AppContainer`, so it outlives this
+    // composition, the nav host's, and an Activity recreation. It is fed by
+    // `ReferenceRepository.publishActiveReference`, which is the same event that
+    // used to set the `activeReferenceStyle` parameter — so this is not a second
+    // reader of the same fact, it is the *first* reader of the durable copy, and
+    // the parameter's copy is the one being retired.
+    //
+    // Two things used to live in `remember`s here and were lost with them:
+    //
+    //  - the item list, via the `activeReferenceStyle` parameter, which the nav
+    //    host holds in a plain `remember`. An Activity recreation dropped the
+    //    `내 감도` slot until an async Room read put it back, and the user saw the
+    //    strip they had just added a 감도 to with nothing in it.
+    //  - the selection, in a `remember` in this function, which the nav host
+    //    destroys on `popBackStack()`. 앨범 → 결과 → 뒤로 → 결과 forgot the pick
+    //    every time.
+    //
+    // Neither is a fallback for the other now; there is one store.
+    val filterHolder = container.resultFilterStateHolder
+    val filterState by filterHolder.state.collectAsState()
+    val selectedFilterId = filterState.selectedId
+    // The active reference, from the durable copy rather than from the parameter.
+    val activeReference = filterState.activeReference
+    val hasReferenceColor = hasReferenceSlot(filterState)
+    // O-12: whether the *user* put the strip where it is. Not derivable from the
+    // selection — on an app capture the screen seeds one below, and a seeded
+    // selection is not a choice. Every strip tap sets this; every new photo
+    // clears it, because a choice is made about a photograph, not about the app.
+    //
+    // `rememberSaveable`, so it survives an Activity recreation the way the holder's
+    // `selectedId` does. With a plain `remember` a rotation reported "the user has
+    // not chosen" and the screen re-seeded the opening look over the filter they had
+    // just picked — the same class of overwrite the effect below exists to prevent,
+    // arriving by a different route.
+    var styleChosenByUser by rememberSaveable { mutableStateOf(false) }
     // O-15 (1): the preset that was on screen when the shutter was pressed, not the
     // one chosen during onboarding. `CameraScreen` already records it on the
     // session; this reads that row and falls back to the profile when there is no
     // session (a gallery import) or the session recorded none. Keyed on `capture`
-    // so it re-resolves once the row arrives — the first pass sees null.
-    val preferredFilter by produceState(LocalFilter.ORIGINAL, container, capture) {
+    // so it re-resolves once the row arrives — the first pass sees null, which is
+    // exactly why the selection below cannot be re-seeded unconditionally.
+    val presetIds by produceState<Pair<String?, String?>?>(null, container, capture) {
         val sessionPresetId = capture?.sessionId?.let { sessionId ->
             runCatching { container.database.sessionsDao().get(sessionId)?.stylePresetId }.getOrNull()
         }
-        value = LocalFilter.forPresetId(
-            openingPresetId(sessionPresetId, container.settingsRepository.getStylePresetId()),
-        )
+        value = sessionPresetId to container.settingsRepository.getStylePresetId()
     }
-    // O-12's quieter half: seeding the saved style would put a look nobody picked
-    // onto a photo from the user's own library. An app capture keeps the seed.
-    LaunchedEffect(preferredFilter, sourceKind) {
-        if (opensOnPreferredStyle(sourceKind)) selectedStrip = SelectedStripFilter.Preset(preferredFilter)
+    // A pick belongs to the photo it was made about. Declared before the effect
+    // that reads it so it lands first when both restart on a new `target`.
+    LaunchedEffect(target) { styleChosenByUser = false }
+    // What this photo opens on, pushed into the shared store.
+    //
+    // Re-running is safe *because* of `selectionOnOpen`: once the user has tapped,
+    // it answers with what the holder already has, so the late arrival of
+    // `presetIds` — one Room read for `captures`, another for `sessions` — cannot
+    // reach in and undo a filter chosen inside that window. The old code re-seeded
+    // on every change and did exactly that.
+    LaunchedEffect(target, presetIds, filterState.items, hasReferenceColor) {
+        val ids = presetIds ?: return@LaunchedEffect
+        val next = selectionOnOpen(
+            source = sourceKind,
+            userHasChosen = styleChosenByUser,
+            currentSelectedId = selectedFilterId,
+            hasActiveReferenceColor = hasReferenceColor,
+            sessionPresetId = ids.first,
+            profilePresetId = ids.second,
+        )
+        filterHolder.setRecommendedDefault(next)
+        // `select` refuses an id the catalogue does not carry. That is a real case
+        // — a `sessions` row naming a preset this build no longer ships — and 원본
+        // is the honest answer to it rather than leaving the strip on whatever the
+        // previous photo was.
+        if (!filterHolder.select(next)) filterHolder.select(LocalFilter.ORIGINAL.filter.id)
     }
     val stylePick = stylePickFor(
         source = sourceKind,
-        selection = when (val sel = selectedStrip) {
-            is SelectedStripFilter.Preset ->
-                if (sel.filter == LocalFilter.ORIGINAL) StripSelection.ORIGINAL else StripSelection.PRESET
-            SelectedStripFilter.Reference -> StripSelection.REFERENCE
-        },
+        selection = stripSelectionFor(selectedFilterId),
         chosenByUser = styleChosenByUser,
     )
     // The whole O-12 decision, in one value the render below can key on.
@@ -393,8 +428,8 @@ fun ResultScreen(
     // crop; `EditPlan.withProcessingMaxSide` exists for exactly this and
     // `EditPlanTest` pins the property.
     //
-    // Keyed on [passes] rather than on `selectedStrip`: that value *is* what the
-    // strip contributes to this pass — `applyStyle` for the `내 레퍼런스` slot, which
+    // Keyed on [passes] rather than on the selection: that value *is* what the
+    // strip contributes to this pass — `applyStyle` for the `내 감도` slot, which
     // folds the reference's colour into the *plan* itself (`EditPlanner.plan`'s
     // `resolvedStyle`, the "ColorTarget → ColorParams → LocalEditor" seam the
     // integration contract names) rather than going through `QuickFilterEditor` like
@@ -413,7 +448,7 @@ fun ResultScreen(
         editSource,
         passes,
         conditions,
-        activeReferenceStyle,
+        activeReference,
     ) {
         val image = editSource ?: return@produceState
         // Decode off the composition thread so entering the editor never blocks
@@ -454,7 +489,7 @@ fun ResultScreen(
                     sample = sample,
                     preset = null,
                     applyStyle = passes.style,
-                    resolvedStyle = activeReferenceStyle.takeIf { passes.style },
+                    resolvedStyle = activeReference.takeIf { passes.style },
                     subject = conditions.subject,
                     requestedMaxSide = EDITOR_DECODE_MAX_SIDE,
                 )
@@ -467,22 +502,16 @@ fun ResultScreen(
     }
     val source: Bitmap? = (corrected as? OpenedPhoto.Ready)?.bitmap
     // The strip's own recipe, on top of whichever bitmap `corrected` produced:
-    // ORIGINAL is an identity `PhotoFilter`, so selecting `내 레퍼런스` above means
+    // ORIGINAL is an identity `PhotoFilter`, so selecting `내 감도` above means
     // "no second colour pass here, only what the sliders add" — the reference's
     // colour already rendered into `source`. Every preset keeps working exactly
     // as before, unaffected by any of this.
-    val effectiveLocalFilter = when (val sel = selectedStrip) {
-        is SelectedStripFilter.Preset -> sel.filter
-        SelectedStripFilter.Reference -> LocalFilter.ORIGINAL
-    }
+    val effectiveLocalFilter = localFilterFor(selectedFilterId)
     // What actually gets written to `capture_edit_stack.paramsJson` (a free-form
     // string column, no schema change needed). Distinct from `effectiveLocalFilter`
     // — that one exists to reuse `QuickFilterEditor`'s ORIGINAL identity recipe,
     // but recording "ORIGINAL" here would silently lose that a reference was used.
-    val filterRecordName = when (selectedStrip) {
-        is SelectedStripFilter.Preset -> effectiveLocalFilter.name
-        SelectedStripFilter.Reference -> "REFERENCE"
-    }
+    val filterRecordName = editRecordFilterName(selectedFilterId)
     // One luminance pass per photo, kept so seeding a filter does not re-measure.
     // It is only needed to cap a preset's exposure against this frame's headroom.
     val measure by produceState<FilterEngine.Measure?>(null, source) {
@@ -500,18 +529,18 @@ fun ResultScreen(
     // hidden contribution. Keyed on the measurement too because exposure is seeded
     // from it, and it arrives one frame after the bitmap.
     //
-    // `내 레퍼런스` has no `PhotoFilter` recipe to seed from — its colour is
+    // `내 감도` has no `PhotoFilter` recipe to seed from — its colour is
     // already in `source` (see `corrected` above) — so it seeds to NEUTRAL: the
     // sliders start at zero and only add a *further* adjustment on top, same as
     // 원본 always has.
     //
     // This effect covers the two seedings a tap cannot: the selection the screen
-    // makes for itself when it opens (`opensOnPreferredStyle`), and `measure`
-    // arriving a frame after the bitmap. A **tap** seeds through [selectStrip]
-    // instead — see there for why the difference is worth a whole preview pass.
-    LaunchedEffect(selectedStrip, measure) {
+    // makes for itself when a photo opens, and `measure` arriving a frame after the
+    // bitmap. A **tap** seeds through [selectStrip] instead — see there for why the
+    // difference is worth a whole preview pass.
+    LaunchedEffect(selectedFilterId, measure) {
         val m = measure ?: return@LaunchedEffect
-        val seeded = seedFor(selectedStrip, m)
+        val seeded = seedFor(selectedFilterId, m)
         baseline = seeded
         adjustments = seeded
     }
@@ -529,13 +558,19 @@ fun ResultScreen(
     // recomposition, so all three land together and the intermediate never exists.
     // The effect above still runs afterwards and writes the identical value, which
     // `mutableStateOf`'s structural equality turns into a no-op.
-    val selectStrip: (SelectedStripFilter) -> Unit = { pick ->
-        styleChosenByUser = true
-        selectedStrip = pick
-        measure?.let { m ->
-            val seeded = seedFor(pick, m)
-            baseline = seeded
-            adjustments = seeded
+    //
+    // The selection itself goes into the shared holder rather than into a local
+    // `remember`, which is what makes it survive leaving this screen — and
+    // `select` changes `selectedId` and nothing else, so the catalogue cannot be
+    // rebuilt or hidden by the act of choosing from it (P1-B2).
+    val selectStrip: (String) -> Unit = { id ->
+        if (filterHolder.select(id)) {
+            styleChosenByUser = true
+            measure?.let { m ->
+                val seeded = seedFor(id, m)
+                baseline = seeded
+                adjustments = seeded
+            }
         }
     }
     // Null until a save lands; then whether the gallery accepted it. Reduced from the
@@ -571,28 +606,57 @@ fun ResultScreen(
         renderLatest(
             requests = snapshotFlow { request.value },
             render = { pending ->
-                pending.source?.let { bitmap ->
-                    withContext(Dispatchers.Default) {
-                        val buffer = pixelBuffer(scratch, bitmap.width, bitmap.height)
-                        scratch = buffer
-                        QuickFilterEditor.apply(bitmap, pending.filter, pending.adjustments, buffer)
-                    }
+                // P2 asked for the render outcome to be reported, and the reason is
+                // the defect it guards: `FilterRenderState` is a *separate* field
+                // from `items`, so a preview that cannot be produced is recorded
+                // without the catalogue moving. Reporting it here is what makes that
+                // separation observable rather than merely available — and it is why
+                // the strip below draws from `filterState.items` and never from
+                // whether `edited` is null.
+                filterHolder.renderStarted()
+                val bitmap = pending.source
+                if (bitmap == null) {
+                    // No pixels yet is not a failed render — the decode is still in
+                    // flight, and calling it a failure would log one on every open.
+                    null
+                } else {
+                    runCatching {
+                        withContext(Dispatchers.Default) {
+                            val buffer = pixelBuffer(scratch, bitmap.width, bitmap.height)
+                            scratch = buffer
+                            QuickFilterEditor.apply(bitmap, pending.filter, pending.adjustments, buffer)
+                        }
+                    }.onFailure {
+                        // Leaving the screen cancels this loop, and a cancellation is
+                        // not a failed render — swallowing it here would also break
+                        // out of structured concurrency.
+                        if (it is kotlinx.coroutines.CancellationException) throw it
+                        // R7-1: nothing about this reaches the user. The photo stays
+                        // on `source` (the untouched decode) and every control stays
+                        // where it was; a filter that will not render is not a reason
+                        // to take the other six away.
+                        Log.w(TAG, "preview render failed for ${pending.filter.name}", it)
+                        filterHolder.renderFailed()
+                    }.getOrNull()
                 }
             },
-            publish = { _, rendered -> edited = rendered },
+            publish = { _, rendered ->
+                edited = rendered
+                if (rendered != null) filterHolder.renderSucceeded()
+            },
         )
     }
 
     // The AI 3 sheet overlays the whole screen, so the editor becomes one child of a
     // Box rather than the root. Nothing about the editor's own layout changes.
     Box(modifier = Modifier.fillMaxSize()) {
-    Column(modifier = Modifier.fillMaxSize().background(Charcoal900)) {
-        // 2f header: `‹` (18sp, OnDarkMedium) · `보정` (15sp bold) · `완료`
-        // (13.5sp bold, Sage), space-between at 20dp / 14dp top.
+    Column(modifier = Modifier.fillMaxSize().background(Ink900)) {
+        // 2f header: `‹` (18sp, TextMid) · `보정` (15sp bold) · `완료`
+        // (13.5sp bold, Amber), space-between at 20dp / 14dp top.
         //
         // The one thing added to the drawing is that both ends are real 44dp touch
         // targets, reached with padding so the glyphs still land where the design
-        // puts them. `완료` in particular was Sage + Bold with no click at all — the
+        // puts them. `완료` in particular was Amber + Bold with no click at all — the
         // design draws it as the way out of the screen, so it has to be one.
         Row(
             modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 2.dp),
@@ -606,9 +670,9 @@ fun ResultScreen(
                     .clickable(onClick = onBack),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("‹", color = OnDarkMedium, fontSize = 18.sp)
+                Text("‹", color = TextMid, fontSize = 18.sp)
             }
-            Text("보정", color = OnDarkHigh, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("보정", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             Box(
                 modifier = Modifier
                     .heightIn(min = 44.dp)
@@ -617,13 +681,13 @@ fun ResultScreen(
                     .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("완료", color = Sage, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                Text("완료", color = Amber, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
             }
         }
 
         Box(
             modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth().weight(1f)
-                .clip(RoundedCornerShape(16.dp)).background(Charcoal950),
+                .clip(RoundedCornerShape(16.dp)).background(Ink950),
         ) {
             val displayBitmap = edited ?: source
             // Show the untouched source immediately while the full-resolution
@@ -649,7 +713,7 @@ fun ResultScreen(
                     } else {
                         "사진을 불러오는 중이에요"
                     },
-                    color = OnDarkMuted,
+                    color = TextLow,
                     fontSize = 12.sp,
                     modifier = Modifier.align(Alignment.Center),
                 )
@@ -659,16 +723,32 @@ fun ResultScreen(
                 modifier = Modifier.padding(12.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Box(
+                // P1-B3 "활성 감도의 이름을 표시해 무엇이 적용됐는지 알게 하기".
+                //
+                // Only over a photo. The badge is a caption on the picture, and the
+                // Box it sits in also renders 사진을 불러오는 중이에요 / 사진을 열지
+                // 못했어요 — a Amber 밤거리 chip floating over either of those names a
+                // look on something that is not there.
+                if (displayBitmap != null) Box(
                     modifier = Modifier.clip(RoundedCornerShape(5.dp))
-                        .background(Sage).padding(horizontal = 8.dp, vertical = 3.dp),
+                        .background(Amber).padding(horizontal = 8.dp, vertical = 3.dp),
                 ) {
+                    // [appliedStyleLabel], not [stripLabelFor]: the badge describes the
+                    // pixels, and a style pass that threw leaves the strip pointing at
+                    // 밤거리 while the photo underneath is the untouched decode. The
+                    // rule, including why the reference slot is exempt from it, is
+                    // documented on `appliedStyleLabel`.
                     Text(
-                        text = when (val sel = selectedStrip) {
-                            is SelectedStripFilter.Preset -> sel.filter.label
-                            SelectedStripFilter.Reference -> "내 레퍼런스"
-                        },
-                        color = OnSage,
+                        text = appliedStyleLabel(
+                            state = filterState,
+                            // The reference's colour is part of the plan, so a plan is
+                            // the evidence it landed. `passes.style` is what asked for
+                            // one; null after that means `corrected` fell back to the
+                            // untouched decode.
+                            referenceColorLanded = !passes.style ||
+                                (corrected as? OpenedPhoto.Ready)?.plan != null,
+                        ),
+                        color = OnAmber,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -684,20 +764,25 @@ fun ResultScreen(
             modifier = Modifier.padding(start = 20.dp, top = 14.dp).horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // O-10: `[+] [AI로 보정] [원본 + 6종…] [내 레퍼런스]?`. The trailing slot
-            // only appears when the reference has a colour half to offer — a
-            // 구도만 reference has nothing this screen can apply (composition is a
-            // camera-screen concern), and offering it here would silently do
-            // nothing when tapped.
-            val hasReferenceColor = activeReferenceStyle != null &&
-                activeReferenceStyle.referenceScope != ResolvedStyle.ReferenceScope.COMPOSITION
-            // AI 3 is keyed on a `captures` row at every step (`analyze(captureRef=)`,
-            // `submit(captureId=)`, `selected_result_id`), which a device photo does
-            // not have — so the slot is not drawn rather than drawn dead.
+            // O-10: `[+] [AI로 보정] [원본 + 6종…] [내 감도]?`.
+            //
+            // **P1-B2.** Every item drawn below comes from `filterState.items` — the
+            // catalogue P2 maintains — and not one of them is conditional on a
+            // bitmap. The six presets and 원본 are therefore on screen while the
+            // photo is still decoding, after a render fails, and after an Activity
+            // recreation, because none of those touch the list.
+            //
+            // The trailing slot is P2's answer to whether the active reference has a
+            // colour half to offer: a 구도만 reference has nothing this screen can
+            // apply (composition is a camera-screen concern), so P2 leaves it out of
+            // the catalogue and the screen simply draws what it is given.
+            val presetItems = filterState.items.filter { it.kind != ResultFilterKind.REFERENCE }
+            // AI 3 accepts device photos too (it copies them to a cache file and
+            // addresses them by content hash), so this is true for both sources.
             val offersAiRestore = offersGenerativeRestore(sourceKind)
-            val strip = remember(hasReferenceColor, offersAiRestore) {
+            val strip = remember(presetItems, offersAiRestore, hasReferenceColor) {
                 buildFilterStrip(
-                    presets = LocalFilter.entries.toList(),
+                    presets = presetItems,
                     includeAiRestore = offersAiRestore,
                     hasActiveReference = hasReferenceColor,
                 )
@@ -718,28 +803,27 @@ fun ResultScreen(
                         onClick = { rescueOpened = true },
                     )
                     is StripEntry.Preset -> {
-                        val filter = entry.value
+                        val item = entry.value
                         FilterThumb(
-                            label = filter.label,
-                            asset = filterAsset(filter),
-                            selected = selectedStrip == SelectedStripFilter.Preset(filter),
+                            label = stripLabelFor(item),
+                            asset = filterAsset(item.id),
+                            selected = selectedFilterId == item.id,
                             // O-12: this tap, and the one below, are the only things
                             // that let a correction touch a device photo.
-                            onClick = { selectStrip(SelectedStripFilter.Preset(filter)) },
+                            onClick = { selectStrip(item.id) },
                         )
                     }
                     is StripEntry.MyReference -> MyReferenceThumb(
                         shape = RoundedCornerShape(11.dp),
                         size = 58.dp,
                         imageUri = activeReferenceImageUri,
-                        selected = selectedStrip == SelectedStripFilter.Reference,
-                        onSelect = { selectStrip(SelectedStripFilter.Reference) },
-                        onDelete = {
-                            if (selectedStrip == SelectedStripFilter.Reference) {
-                                selectedStrip = SelectedStripFilter.Preset(preferredFilter)
-                            }
-                            onDeleteReference()
-                        },
+                        selected = selectedFilterId == ResultFilterStateHolder.REFERENCE_FILTER_ID,
+                        onSelect = { selectStrip(ResultFilterStateHolder.REFERENCE_FILTER_ID) },
+                        // No local fix-up of the selection any more: removing the
+                        // reference removes the catalogue item, and the holder moves
+                        // `selectedId` off an id it no longer carries. One rule, in
+                        // the place that owns the list.
+                        onDelete = onDeleteReference,
                     )
                 }
             }
@@ -759,7 +843,7 @@ fun ResultScreen(
             saveError?.let { status ->
                 Text(
                     text = status,
-                    color = OnDarkMedium,
+                    color = TextMid,
                     fontSize = 12.5.sp,
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
@@ -943,8 +1027,8 @@ fun ResultScreen(
                         rescueController.analyze(
                             image = input.file,
                             captureRef = input.captureRef,
-                            style = styleParamsJson(activeReferenceStyle),
-                            reference = referenceCompositionJson(activeReferenceStyle),
+                            style = styleParamsJson(activeReference),
+                            reference = referenceCompositionJson(activeReference),
                         )
                     }
                 }
@@ -963,7 +1047,7 @@ fun ResultScreen(
                             captureId = captureId,
                             captureRef = input.captureRef,
                             operation = current.operation,
-                            style = styleParamsJson(activeReferenceStyle),
+                            style = styleParamsJson(activeReference),
                         )
                     }
                 }
@@ -984,18 +1068,28 @@ fun ResultScreen(
     }
 }
 
-/** Thumbnail asset, which is the style's own preset image — the ids match. */
-private fun filterAsset(filter: LocalFilter): String = when (filter) {
-    LocalFilter.ORIGINAL -> "presets/clean_social.jpg"
-    else -> "presets/${filter.filter.id}.jpg"
+/**
+ * Thumbnail asset, which is the style's own preset image — the ids match.
+ *
+ * Takes the catalogue's id rather than a [LocalFilter] because the strip is built
+ * from P2's items now. An id with no matching recipe falls back to 원본's tile
+ * instead of asking Coil for an asset that is not in the APK.
+ */
+private fun filterAsset(filterId: String): String {
+    val filter = presetFilterFor(filterId) ?: LocalFilter.ORIGINAL
+    return if (filter == LocalFilter.ORIGINAL) {
+        "presets/clean_social.jpg"
+    } else {
+        "presets/${filter.filter.id}.jpg"
+    }
 }
 
 @Composable
 private fun FilterThumb(label: String, asset: String, selected: Boolean, onClick: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable(onClick = onClick)) {
         Box(
-            modifier = Modifier.size(58.dp).clip(RoundedCornerShape(11.dp)).background(Charcoal700)
-                .then(if (selected) Modifier.border(2.dp, Sage, RoundedCornerShape(11.dp)) else Modifier),
+            modifier = Modifier.size(58.dp).clip(RoundedCornerShape(11.dp)).background(Ink800)
+                .then(if (selected) Modifier.border(2.dp, Amber, RoundedCornerShape(11.dp)) else Modifier),
         ) {
             AsyncImage(
                 model = "file:///android_asset/$asset",
@@ -1004,7 +1098,7 @@ private fun FilterThumb(label: String, asset: String, selected: Boolean, onClick
                 modifier = Modifier.fillMaxSize(),
             )
         }
-        Text(label, color = if (selected) Sage else OnDarkMedium, fontSize = 10.5.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.padding(top = 4.dp))
+        Text(label, color = if (selected) Amber else TextMid, fontSize = 10.5.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.padding(top = 4.dp))
     }
 }
 

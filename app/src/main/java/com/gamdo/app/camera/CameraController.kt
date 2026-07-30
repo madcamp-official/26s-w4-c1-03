@@ -60,6 +60,15 @@ class CameraController(context: Context) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val attachZoomRunnable = Runnable { attachZoomObserver() }
 
+    private val appContext = context.applicationContext
+
+    /**
+     * W3-1 thermal observation, scoped to the camera session because that is the
+     * only interval §7-1 asks about. Debug-only and null in release; see
+     * [ThermalStatusProbe].
+     */
+    private var thermalProbe: ThermalStatusProbe? = null
+
     private val zoomObserver = Observer<ZoomState> { state ->
         _zoomRatio.value = state.zoomRatio
         _zoomBounds.value = ZoomBounds(state.minZoomRatio, state.maxZoomRatio)
@@ -156,6 +165,11 @@ class CameraController(context: Context) {
         isBound = true
         attachZoomObserver()
         mainHandler.postDelayed(attachZoomRunnable, 300L)
+        // Started here rather than in the camera screen because the screen belongs to
+        // another vertical. This is also the tighter window: it opens when the camera
+        // actually starts, so the observed duration in the `detach` line is time the
+        // preview was running and not time the app was merely alive.
+        thermalProbe = ThermalStatusProbe.start(appContext)
     }
 
     fun unbind() {
@@ -164,6 +178,8 @@ class CameraController(context: Context) {
         observedZoomState?.removeObserver(zoomObserver)
         observedZoomState = null
         camera.unbind()
+        ThermalStatusProbe.stop(thermalProbe)
+        thermalProbe = null
     }
 
     private fun attachZoomObserver() {
