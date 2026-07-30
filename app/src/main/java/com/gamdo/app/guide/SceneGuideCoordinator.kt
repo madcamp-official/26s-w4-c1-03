@@ -101,10 +101,6 @@ class SceneGuideCoordinator(
                 styleTarget = styleTarget,
                 signals = signals,
                 referenceTemplate = referenceTemplate,
-                // V3 no longer runs live pose inference. Person framing is
-                // selected from face/person boxes and rendered as a fixed
-                // bracket.
-                poseGuide = null,
             )
         }
         val template = baseTemplate?.let { GenericLayoutSynthesizer.transform(it, styleTarget, templateSafetyMargin) }
@@ -168,7 +164,6 @@ class SceneGuideCoordinator(
         styleTarget: StyleTarget,
         signals: SceneFrameSignals,
         referenceTemplate: LayoutTemplate?,
-        poseGuide: PoseGuideTemplate?,
     ): LayoutTemplate? {
         val personDetection = observation.slotDetections.firstOrNull { it.role == SlotRole.PERSON }
         val portraitEvidence = personDetection?.let {

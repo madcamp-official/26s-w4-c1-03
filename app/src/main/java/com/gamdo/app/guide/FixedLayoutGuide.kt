@@ -53,7 +53,6 @@ data class LayoutTemplate(
     val horizonY: Float? = null,
     val opacity: Float = 0.30f,
     val viewportAspect: GuideViewportAspect = GuideViewportAspect.FOUR_TO_FIVE,
-    val poseGuide: PoseGuideTemplate? = null,
 ) {
     init {
         require(id.isNotBlank())
