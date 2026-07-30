@@ -18,6 +18,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -77,6 +82,11 @@ import java.io.File
  * @param onDismiss the way out of a section that has not succeeded. The host cancels
  *   anything in flight and resets the controller; from [RescueSection.CANDIDATES] it
  *   simply closes, because there the pick is the success.
+ * @param onHide put the sheet away **without** touching the flow behind it, for the
+ *   states [dismissActionFor] says have something to come back to. Defaults to
+ *   [onDismiss], which is what the host did for every state before P2's §4 asked for a
+ *   running job to survive being dismissed — so a host that does not pass it keeps
+ *   exactly today's behaviour rather than quietly acquiring new behaviour.
  * @param onKeepLocal 기본 보정 유지 — the contract's "후보 다운로드 **또는** 로컬 보정
  *   유지" branch. Clears any pick and closes.
  */
@@ -94,8 +104,45 @@ fun RescueSheet(
     onRun: () -> Unit,
     onKeepLocal: () -> Unit,
     onSelectCandidate: (RescueCandidate) -> Unit,
+    onHide: () -> Unit = onDismiss,
     modifier: Modifier = Modifier,
 ) {
+    // ---- 직접 수정 (P2 §4) ---------------------------------------------------
+    //
+    // The pane is an alternative rendering of the picking pair, not a controller
+    // state, so both of its values are re-derived from every controller emission by
+    // the same total rules the retained analysis follows. Declared above the early
+    // return so closing the sheet does not dispose them mid-flow.
+    var directPane by remember { mutableStateOf(false) }
+    var draft by remember { mutableStateOf(DirectEditDraft()) }
+    LaunchedEffect(state) {
+        directPane = retainedDirectPane(state, directPane)
+        draft = retainedDirectDraft(state, draft)
+    }
+    // §4: 한 번의 실행 동작에서 job을 정확히 한 번 생성한다. Keyed on the controller
+    // state, so it is false again the instant the flow moves and true for every press
+    // after the first within one state — see [allowsRun] for why `canSubmit` alone
+    // cannot carry this.
+    var runLaunched by remember(state) { mutableStateOf(false) }
+    val runOnce: () -> Unit = {
+        if (allowsRun(state, runLaunched)) {
+            runLaunched = true
+            onRun()
+        }
+    }
+
+    // Every "put this away" in the sheet, routed through the one rule that knows
+    // whether there is anything to come back to. The **only** exit that bypasses it is
+    // the progress section's 취소, which is a different intent and stays a real cancel.
+    //
+    // This lives here rather than in the host so the host's two callbacks can each mean
+    // exactly one thing. Before §4 the host carried the split itself
+    // (`if (state is Candidates) close else cancel`); leaving it there and adding the
+    // running states would have put the same `when` in two files.
+    val dismiss: () -> Unit = {
+        if (dismissActionFor(state) == RescueDismiss.CLOSE_ONLY) onHide() else onDismiss()
+    }
+
     val section = rescueSectionFor(state, opened)
     if (section == RescueSection.HIDDEN) return
 
@@ -114,7 +161,10 @@ fun RescueSheet(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Scrim)
-                .clickable(onClick = onDismiss),
+                // §4: 화면 이탈·재진입 뒤 진행 중 job의 폴링 상태를 복원한다. A tap out
+                // here keeps a running job running, and re-opening lands on the same
+                // section — which is the restoration.
+                .clickable(onClick = dismiss),
         )
 
         Column(
@@ -134,37 +184,50 @@ fun RescueSheet(
                 .padding(20.dp),
         ) {
             when (section) {
-                RescueSection.INTRO -> IntroSection(onAnalyze = onAnalyze, onCancel = onDismiss)
+                RescueSection.INTRO -> IntroSection(onAnalyze = onAnalyze, onCancel = dismiss)
                 RescueSection.PROGRESS -> ProgressSection(
                     message = progressMessageFor(runningOperation),
                     onCancel = onDismiss,
                 )
-                RescueSection.RECOMMENDATIONS -> PickSection(
-                    response = recommendations,
-                    chosen = null,
-                    onChoose = onChoose,
-                    onRun = onRun,
-                    onKeepLocal = onKeepLocal,
-                    onCancel = onDismiss,
-                )
-                RescueSection.CONFIRM -> PickSection(
-                    response = recommendations,
-                    chosen = (state as RescueState.Editing).operation,
-                    onChoose = onChoose,
-                    onRun = onRun,
-                    onKeepLocal = onKeepLocal,
-                    onCancel = onDismiss,
-                )
+                // One step to the user, two controller states: the card list stays put
+                // and the tapped card becomes selected. `Recommendations` simply has
+                // nothing chosen yet.
+                RescueSection.RECOMMENDATIONS, RescueSection.CONFIRM -> {
+                    val chosen = (state as? RescueState.Editing)?.operation
+                    if (directPane && recommendations != null) {
+                        DirectEditPane(
+                            response = recommendations,
+                            draft = draft,
+                            confirmed = chosen,
+                            canRun = allowsRun(state, runLaunched),
+                            onDraftChange = { draft = it },
+                            onConfirm = onChoose,
+                            onRun = runOnce,
+                            onBack = { directPane = false },
+                            onCancel = dismiss,
+                        )
+                    } else {
+                        PickSection(
+                            response = recommendations,
+                            chosen = chosen,
+                            onChoose = onChoose,
+                            onRun = runOnce,
+                            onKeepLocal = onKeepLocal,
+                            onCancel = dismiss,
+                            onDirectEdit = { directPane = true },
+                        )
+                    }
+                }
                 RescueSection.CANDIDATES -> CandidatesSection(
                     candidates = candidates,
                     selectedCandidateId = selectedCandidateId,
                     onSelect = onSelectCandidate,
                     onKeepLocal = onKeepLocal,
-                    onClose = onDismiss,
+                    onClose = dismiss,
                 )
                 RescueSection.FALLBACK -> FallbackSection(
                     message = fallbackMessage((state as RescueState.LocalFallback).reason),
-                    onClose = onDismiss,
+                    onClose = dismiss,
                 )
                 RescueSection.HIDDEN -> Unit
             }
@@ -198,7 +261,10 @@ private fun IntroSection(onAnalyze: () -> Unit, onCancel: () -> Unit) {
  * D17 and AI 2's `AnalyzingSection` — no percentage, no stage name, no elapsed time.
  *
  * 취소 is §5-3's required cancel: the host cancels the coroutine driving the
- * controller and resets it, so this is a real cancel, not a hide.
+ * controller and resets it, so this is a real cancel, not a hide. It is the one exit in
+ * the sheet that does **not** go through [dismissActionFor] — tapping out of a running
+ * job leaves it running (P2 §4), and this button is how the user stops it. The two
+ * would be indistinguishable if both were wired the same way.
  */
 @Composable
 private fun ProgressSection(message: String, onCancel: () -> Unit) {
@@ -227,6 +293,11 @@ private fun ProgressSection(message: String, onCancel: () -> Unit) {
  * `local_style` never posts anything (it is not in the server's allowed operations,
  * and there is nothing to send: the local correction is already what the screen is
  * showing), so its action closes the sheet instead of running a job.
+ *
+ * @param onDirectEdit opens [DirectEditPane]. Offered in **both** branches below,
+ *   including the one where nothing was recommended — a server with capabilities on
+ *   and no suggestion for this photo is exactly the case P2's §4 exists for, and it is
+ *   the branch where a user would otherwise have nowhere to go.
  */
 @Composable
 private fun PickSection(
@@ -236,8 +307,11 @@ private fun PickSection(
     onRun: () -> Unit,
     onKeepLocal: () -> Unit,
     onCancel: () -> Unit,
+    onDirectEdit: () -> Unit,
 ) {
     val offered = response?.let { offerableRecommendations(it) }.orEmpty()
+    // Drawn only when something behind it can run — see [offersDirectEdit].
+    val offersDirect = response != null && offersDirectEdit(response)
 
     Text("이렇게 살려볼 수 있어요", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Bold)
 
@@ -251,7 +325,16 @@ private fun PickSection(
             fontSize = 12.5.sp,
             modifier = Modifier.padding(top = 12.dp),
         )
-        SecondaryPillButton(text = "닫기", onClick = onCancel, modifier = Modifier.padding(top = 16.dp))
+        if (offersDirect) {
+            SecondaryPillButton(
+                text = DIRECT_EDIT_TITLE,
+                onClick = onDirectEdit,
+                modifier = Modifier.padding(top = 16.dp),
+            )
+            SecondaryPillButton(text = "닫기", onClick = onCancel, modifier = Modifier.padding(top = 10.dp))
+        } else {
+            SecondaryPillButton(text = "닫기", onClick = onCancel, modifier = Modifier.padding(top = 16.dp))
+        }
         return
     }
 
@@ -268,7 +351,8 @@ private fun PickSection(
         }
     }
 
-    if (chosen != null) {
+    // Only for an operation this section itself offered — see [offersConfirmFor].
+    if (chosen != null && offersConfirmFor(response, chosen)) {
         Text(
             text = confirmMessageFor(chosen),
             color = TextMid,
@@ -280,6 +364,9 @@ private fun PickSection(
         } else {
             PrimaryPillButton(text = "이대로 두기", onClick = onKeepLocal, modifier = Modifier.padding(top = 10.dp))
         }
+    }
+    if (offersDirect) {
+        SecondaryPillButton(text = DIRECT_EDIT_TITLE, onClick = onDirectEdit, modifier = Modifier.padding(top = 10.dp))
     }
     SecondaryPillButton(text = "취소", onClick = onCancel, modifier = Modifier.padding(top = 10.dp))
 }
