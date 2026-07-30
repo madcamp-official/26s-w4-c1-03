@@ -80,7 +80,6 @@ data class ObjectGuideConfigJson(
     val sceneModelCenterCropEveryFrames: Int = 4,
     val sceneModelCenterCropScale: Float = 1.60f,
     val objectRefreshEveryFrames: Int = 1,
-    val segmentationRefreshEveryFrames: Int = 12,
     /**
      * How often the face model runs, as a divisor of analysed frames.
      *
@@ -165,7 +164,6 @@ data class ObjectGuideConfigJson(
         require(sceneModelCenterCropEveryFrames >= 1)
         require(sceneModelCenterCropScale in 1.10f..2.0f)
         require(objectRefreshEveryFrames >= 1)
-        require(segmentationRefreshEveryFrames >= 1)
         require(faceRefreshEveryFrames >= 1) {
             "faceRefreshEveryFrames must be >= 1, was $faceRefreshEveryFrames"
         }

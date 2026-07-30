@@ -5,11 +5,9 @@ import android.util.Log
 import com.gamdo.app.BuildConfig
 import com.gamdo.app.detect.EfficientDetSceneDetector
 import com.gamdo.app.detect.MlKitFaceDetector
-import com.gamdo.app.detect.MlKitSubjectSegmenter
 import com.gamdo.app.detect.SceneDetector
 import com.gamdo.app.detect.ThrottledFaceDetector
 import com.gamdo.app.detect.ThrottledObjectSceneDetector
-import com.gamdo.app.detect.ThrottledSubjectSceneSegmenter
 import com.gamdo.app.guide.GuideConfigBundle
 import com.gamdo.app.guide.parseGuideConfigBundle
 import java.util.concurrent.Executor
@@ -307,10 +305,6 @@ private fun buildSceneDetector(context: Context, guideConfig: GuideConfigBundle)
         refreshEveryFrames = guideConfig.objectGuide.objectRefreshEveryFrames,
     )
     val t3 = System.nanoTime()
-    val subjectSegmenter = ThrottledSubjectSceneSegmenter(
-        MlKitSubjectSegmenter(),
-        refreshEveryFrames = guideConfig.objectGuide.segmentationRefreshEveryFrames,
-    )
     val t4 = System.nanoTime()
 
     if (BuildConfig.DEBUG) {
@@ -327,7 +321,7 @@ private fun buildSceneDetector(context: Context, guideConfig: GuideConfigBundle)
     return SceneDetector(
         faceDetector = faceDetector,
         objectDetector = objectDetector,
-        subjectSegmenter = subjectSegmenter,
+        // Subject segmentation is intentionally not wired into the live path.
         // Per-stage cost, debug builds only. Every ML Kit model here blocks the
         // single analysis thread in turn and none gets cheaper on an empty
         // frame, so "which one" is not answerable from the HUD's whole-lambda
