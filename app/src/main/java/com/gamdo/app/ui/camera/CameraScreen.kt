@@ -106,6 +106,7 @@ import com.gamdo.app.data.preset.StylePreset
 import com.gamdo.app.detect.DetectionResult
 import com.gamdo.app.guide.toSceneObservation
 import com.gamdo.app.detect.toAnalysisFrame
+import com.gamdo.app.guide.SceneSearchScope
 import com.gamdo.app.guide.StyleTarget
 import com.gamdo.app.guide.toStyleTarget
 import com.gamdo.app.ui.components.moodBrush
@@ -438,6 +439,34 @@ fun CameraScreen(
     var storedMode by rememberSaveable { mutableStateOf(CameraOverlayMode.NONE) }
     val overlayMode = CameraPanels.resolve(storedMode, BuildConfig.DEBUG)
 
+    // ---- 연필 (영역 선택) ------------------------------------------------------
+    //
+    // Pane-pixel points, deliberately **not** `rememberSaveable`: a half-drawn lasso is
+    // not worth restoring across process death, and the pane it was measured against
+    // may come back a different size.
+    var lassoPath by remember { mutableStateOf<List<Pair<Float, Float>>>(emptyList()) }
+    // True from the finger lifting until the path has faded away. Both outcomes fade:
+    // an accepted region hands over to the scene-search spinner, a rejected one leaves
+    // the pencil armed with nothing started — §4 P2-1 forbids saying more than that
+    // ("행동 지시 문구는 띄우지 않고").
+    var lassoSettling by remember { mutableStateOf(false) }
+    val lassoAlpha by animateFloatAsState(
+        targetValue = if (lassoSettling) 0f else 1f,
+        animationSpec = tween(AREA_SELECT_SETTLE_MS),
+        // The path is cleared by the animation *finishing*, not by a timer. A `delay()`
+        // here would be the only wait on this screen, and `CameraRedesignGuardTest` bans
+        // one outright so that a capture countdown (D2-1) cannot arrive disguised as
+        // something else.
+        finishedListener = { value ->
+            if (value == 0f) {
+                lassoPath = emptyList()
+                lassoSettling = false
+            }
+        },
+        label = "lassoSettle",
+    )
+    val searchScope by viewModel.searchScope.collectAsState()
+
     // O-13 (1): **a preset is colour. It does not reach the guide.**
     //
     // This effect used to read `activePreset` and publish
@@ -660,6 +689,25 @@ fun CameraScreen(
             onToggleSettings = {
                 storedMode = CameraPanels.toggled(overlayMode, CameraOverlayMode.SETTINGS_SHEET)
             },
+            areaSelectArmed = CameraPanels.areaSelectArmed(overlayMode),
+            onToggleAreaSelect = {
+                val next = CameraPanels.toggled(overlayMode, CameraOverlayMode.AREA_SELECT)
+                // Leaving the mode by re-tapping the button is the screen's one cancel
+                // gesture (see CameraPanels). What it owes the guide depends on whether a
+                // lasso search was ever accepted: `cancelPolygonLayoutSearch` resets the
+                // alignment engine and the stabilizer, so calling it unconditionally
+                // would destroy the layout of a user who armed the pencil, drew nothing
+                // and changed their mind.
+                if (next != CameraOverlayMode.AREA_SELECT) {
+                    val exit = AreaSelectExit.forExit(searchScope is SceneSearchScope.Polygon)
+                    if (exit == AreaSelectExit.CANCEL_POLYGON_SEARCH) {
+                        viewModel.cancelPolygonLayoutSearch()
+                    }
+                    lassoPath = emptyList()
+                    lassoSettling = false
+                }
+                storedMode = next
+            },
             referenceEntry = referenceEntry,
             demoControls = demoControls,
         )
@@ -698,6 +746,39 @@ fun CameraScreen(
             // that condition is load-bearing rather than tidiness.
             dismissSheetOnTap = CameraPanels.sheetVisible(overlayMode),
             onDismissSheet = { storedMode = CameraPanels.scrimTapped(overlayMode) },
+            areaSelectArmed = CameraPanels.areaSelectArmed(overlayMode),
+            lassoPath = lassoPath,
+            lassoAlpha = lassoAlpha,
+            onLassoStart = {
+                // A new stroke replaces the previous one outright — "다시 그리기는 …
+                // 새 경로를 그리는 방식"이고, 두 경로를 동시에 들고 있을 이유가 없다.
+                lassoSettling = false
+                lassoPath = emptyList()
+            },
+            onLassoPoint = { x, y, minStepPx ->
+                lassoPath = AreaSelectPath.appended(lassoPath, x, y, minStepPx)
+            },
+            onLassoFinish = { paneWidthPx, paneHeightPx ->
+                // The analysis frame's dimensions come from the overlay state, which is
+                // the only place they are published. Zero until the first frame lands,
+                // and `submitLassoRegion` treats that as "nothing to search" rather than
+                // building a PreviewGeometry whose `require` would throw.
+                val accepted = submitLassoRegion(
+                    points = lassoPath,
+                    paneWidthPx = paneWidthPx,
+                    paneHeightPx = paneHeightPx,
+                    analysisWidth = overlay?.frameWidth ?: 0,
+                    analysisHeight = overlay?.frameHeight ?: 0,
+                    mirror = isFront,
+                    submit = viewModel::rescanLayoutInPolygon,
+                )
+                // Both outcomes fade the path. Accepted also leaves the mode, because
+                // §4 P2-1 puts redrawing behind re-arming the button ("다시 그리기는
+                // 영역 선택 버튼을 다시 활성화한 뒤"); rejected keeps the pencil armed
+                // so the next attempt costs no extra tap.
+                lassoSettling = true
+                if (accepted) storedMode = CameraOverlayMode.NONE
+            },
             hud = {
                 if (DebugHudGate.visible(BuildConfig.DEBUG, showHud)) {
                     CameraHud(
@@ -1098,6 +1179,8 @@ private fun CameraTopBar(
     onToggleAspect: () -> Unit,
     settingsAvailable: Boolean,
     onToggleSettings: () -> Unit,
+    areaSelectArmed: Boolean,
+    onToggleAreaSelect: () -> Unit,
     referenceEntry: @Composable () -> Unit,
     demoControls: @Composable () -> Unit,
 ) {
@@ -1145,6 +1228,19 @@ private fun CameraTopBar(
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 0.03.em,
+                )
+            }
+
+            // 직접 지정 — arms the lasso. Amber stroke while armed and **no
+            // background**: the top bar has no element with one, and adding a fill for
+            // this one control would be the second filled amber surface on the screen.
+            BarIconButton(onClick = onToggleAreaSelect, contentDescription = "직접 지정") {
+                StrokeIcon(
+                    pathData = CameraIconPaths.PENCIL,
+                    viewBox = 24f,
+                    size = 19.dp,
+                    strokeWidth = 1.7f,
+                    color = if (areaSelectArmed) Amber else IconInactive,
                 )
             }
 
@@ -1512,6 +1608,16 @@ private fun CameraPreviewPane(
      */
     dismissSheetOnTap: Boolean,
     onDismissSheet: () -> Unit,
+    /** 연필 armed. While true the preview collects a path instead of framing gestures. */
+    areaSelectArmed: Boolean,
+    /** The path so far, in pane pixels, already clamped and thinned. */
+    lassoPath: List<Pair<Float, Float>>,
+    /** 0..1 settle-out for [lassoPath]; 1 while drawing. */
+    lassoAlpha: Float,
+    onLassoStart: () -> Unit,
+    onLassoPoint: (Float, Float, Float) -> Unit,
+    /** Finger lifted. Receives the pane's pixel size, which only this scope knows. */
+    onLassoFinish: (Float, Float) -> Unit,
     hud: @Composable BoxScope.() -> Unit,
 ) {
     BoxWithConstraints(modifier = modifier) {
@@ -1541,6 +1647,9 @@ private fun CameraPreviewPane(
         // switch was dropped, 3/3 in both directions, while the steady state was
         // 3/3 fine. This keeps the value fresh without restarting anything.
         val currentAspect by rememberUpdatedState(aspect)
+        // Same reason as `currentAspect`: toggling the pencil must not restart the
+        // gesture handler, because a restart drops the gesture that follows it.
+        val currentAreaSelectArmed by rememberUpdatedState(areaSelectArmed)
 
         AndroidView(
             // clipToBounds, and it is load-bearing.
@@ -1683,6 +1792,31 @@ private fun CameraPreviewPane(
                                 }
                             }
                         },
+                        // 연필. Reads `armed` through the updated state rather than being
+                        // keyed on it — a key change restarts this whole handler and the
+                        // restart eats one gesture, which here would be the first stroke
+                        // of every lasso.
+                        lasso = {
+                            val minStepPx = AreaSelectPath.MIN_STEP_DP.dp.toPx()
+                            detectLassoDrags(
+                                armed = { currentAreaSelectArmed },
+                                onStart = onLassoStart,
+                                onPoint = { x, y ->
+                                    // Clamped, not rejected: a stroke that strays into the
+                                    // letterbox must ride the boundary, because dropping
+                                    // its middle would splice the path across the subject.
+                                    clampedLassoPoint(
+                                        position = Offset(x, y),
+                                        paneWidth = size.width.toFloat(),
+                                        paneHeight = size.height.toFloat(),
+                                        ratioWtoH = currentAspect.ratioWtoH,
+                                    )?.let { (cx, cy) -> onLassoPoint(cx, cy, minStepPx) }
+                                },
+                                onFinish = {
+                                    onLassoFinish(size.width.toFloat(), size.height.toFloat())
+                                },
+                            )
+                        },
                     )
                 },
         )
@@ -1709,6 +1843,15 @@ private fun CameraPreviewPane(
                 showDetections = showDetections,
             )
         }
+
+        // Above the guide, below the aspect mask — the path is the user's own mark and
+        // must not be hidden by the bracket, but it must still be clipped off the
+        // letterbox like everything else in this pane.
+        AreaSelectPathOverlay(
+            points = lassoPath,
+            alpha = lassoAlpha,
+            modifier = Modifier.fillMaxSize(),
+        )
 
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Ink950))

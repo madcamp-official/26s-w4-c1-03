@@ -90,6 +90,51 @@ class CameraRedesignGuardTest {
         )
     }
 
+    /**
+     * The pencil's contract is 담당 B's, already written and until now with **zero
+     * callers** — the same shape as `selectManualLayout`/`availableManualLayouts`, which
+     * are complete, tested and unreachable. A finished contract nobody calls is the
+     * failure mode this file exists to catch.
+     */
+    @Test
+    fun `the pencil is wired to P2's polygon contract`() {
+        val source = code()
+        assertTrue(
+            "the lasso must submit through CameraViewModel.rescanLayoutInPolygon",
+            source.contains("rescanLayoutInPolygon"),
+        )
+        assertTrue(
+            "cancelling must go through cancelPolygonLayoutSearch",
+            source.contains("cancelPolygonLayoutSearch()"),
+        )
+        assertTrue(
+            "whether to cancel is AreaSelectExit's decision, not an inline if",
+            source.contains("AreaSelectExit.forExit("),
+        )
+    }
+
+    /**
+     * P1 must not hold a second copy of P2's area band (2%..80%). The thresholds live in
+     * `ScenePolygonRegion.fromNormalized`, and a duplicate here would be the two copies
+     * that drift — `rescanLayoutInPolygon` returning false is the whole interface.
+     */
+    @Test
+    fun `the camera screen holds no copy of the polygon area thresholds`() {
+        val offenders = cameraPackage.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .flatMap { file ->
+                KotlinSourceProbe.codeLines(file).withIndex()
+                    .filter { (_, line) -> line.contains("0.80f") || line.contains("0.02f") }
+                    .map { (i, line) -> "${file.name}:${i + 1} ${line.trim()}" }
+            }
+            .toList()
+        assertEquals(
+            "the 2%..80% band is P2's (ScenePolygonRegion). P1 asks and reads the answer.",
+            emptyList<String>(),
+            offenders,
+        )
+    }
+
     // ---- what the redesign removed stays removed --------------------------------
 
     @Test
