@@ -413,27 +413,26 @@ object GenericLayoutSynthesizer {
         id: String = "generic_${count}_$arrangement",
         viewportAspect: GuideViewportAspect = GuideViewportAspect.FOUR_TO_FIVE,
     ): LayoutTemplate {
-        val positions = when {
-            arrangement != Arrangement.COLUMN && arrangement != Arrangement.GRID ->
-                CompositionTechniqueCatalog.forObjects(count, arrangement).slots.map { it.bounds }
-            else -> when (arrangement) {
-            // Generic objects are guides to place the subject, not large
-            // portrait frames. Keep them compact so the camera scene remains
-            // visible around the layout.
-            Arrangement.SINGLE -> listOf(RectN(0.39f, 0.43f, 0.61f, 0.65f))
-            Arrangement.ROW -> (0 until count).map { index -> slotRect(index, count, horizontal = true, viewportAspect = viewportAspect) }
-            Arrangement.COLUMN -> (0 until count).map { index -> slotRect(index, count, horizontal = false, viewportAspect = viewportAspect) }
-            Arrangement.DIAGONAL -> listOf(RectN(0.26f, 0.38f, 0.46f, 0.62f), RectN(0.54f, 0.44f, 0.74f, 0.68f))
-            Arrangement.TRIANGLE -> listOf(RectN(0.25f, 0.50f, 0.45f, 0.74f), RectN(0.55f, 0.50f, 0.75f, 0.74f), RectN(0.40f, 0.25f, 0.60f, 0.49f))
-            Arrangement.DIAMOND -> listOf(
-                RectN(0.40f, 0.18f, 0.60f, 0.38f),
-                RectN(0.18f, 0.42f, 0.38f, 0.62f),
-                RectN(0.62f, 0.42f, 0.82f, 0.62f),
-                RectN(0.40f, 0.66f, 0.60f, 0.86f),
-            )
-            Arrangement.GRID -> listOf(RectN(0.24f, 0.26f, 0.44f, 0.48f), RectN(0.56f, 0.26f, 0.76f, 0.48f), RectN(0.24f, 0.56f, 0.44f, 0.78f), RectN(0.56f, 0.56f, 0.76f, 0.78f)).take(count)
+        // COLUMN and GRID remain in the enum only for persisted/legacy input.
+        // They are not V3.1 composition contracts: normalize them before
+        // resolving slots so stale callers cannot resurrect a vertical strip
+        // or a generic 2x2 grid.
+        val safeArrangement = when (arrangement) {
+            Arrangement.COLUMN -> when {
+                count <= 1 -> Arrangement.SINGLE
+                count == 2 -> Arrangement.DIAGONAL
+                count == 3 -> Arrangement.TRIANGLE
+                else -> Arrangement.DIAMOND
             }
+            Arrangement.GRID -> when {
+                count <= 1 -> Arrangement.SINGLE
+                count == 2 -> Arrangement.ROW
+                count == 3 -> Arrangement.TRIANGLE
+                else -> Arrangement.DIAMOND
+            }
+            else -> arrangement
         }
+        val positions = CompositionTechniqueCatalog.forObjects(count, safeArrangement).slots.map { it.bounds }
         return LayoutTemplate(
             id = id,
             slots = positions.take(4).mapIndexed { index, bounds ->
@@ -518,15 +517,6 @@ object GenericLayoutSynthesizer {
             val h = b.height * baseScale
             RectN(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f).withinSafetyMargin(safetyMargin).let { next -> slot.copy(bounds = next) }
         })
-    }
-
-    private fun slotRect(index: Int, count: Int, horizontal: Boolean, viewportAspect: GuideViewportAspect): RectN {
-        val size = if (count <= 2) 0.22f else 0.19f
-        val gap = if (count <= 2) 0.30f else 0.23f
-        val center = if (horizontal) 0.5f + (index - (count - 1) / 2f) * gap else 0.5f
-        val baseY = if (viewportAspect == GuideViewportAspect.FOUR_TO_FIVE) 0.58f else 0.54f
-        val vertical = if (horizontal) baseY else 0.5f + (index - (count - 1) / 2f) * gap
-        return RectN(center - size / 2f, vertical - size / 2f, center + size / 2f, vertical + size / 2f)
     }
 
     /** Uses the same exact assignment as the public KPI mapping for shape snapshots. */

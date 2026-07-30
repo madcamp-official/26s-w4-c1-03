@@ -31,6 +31,23 @@ class CompositionTechniqueV3Test {
     }
 
     @Test
+    fun `legacy column and grid requests are normalized to photographic layouts`() {
+        val column = GenericLayoutSynthesizer.generic(4, Arrangement.COLUMN)
+        val grid = GenericLayoutSynthesizer.generic(4, Arrangement.GRID)
+
+        assertEquals(4, column.slots.size)
+        assertEquals(4, grid.slots.size)
+        assertEquals(
+            CompositionTechniqueCatalog.forObjects(4, Arrangement.DIAMOND).slots.map { it.bounds },
+            column.slots.map { it.bounds },
+        )
+        assertEquals(
+            CompositionTechniqueCatalog.forObjects(4, Arrangement.DIAMOND).slots.map { it.bounds },
+            grid.slots.map { it.bounds },
+        )
+    }
+
+    @Test
     fun `composition catalog gives one shape-preserving slot per object`() {
         val template = CompositionTechniqueCatalog.forObjects(3, Arrangement.TRIANGLE)
         assertEquals(3, template.slots.size)
