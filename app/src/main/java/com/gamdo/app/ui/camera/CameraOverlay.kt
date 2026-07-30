@@ -29,6 +29,9 @@ import com.gamdo.app.guide.RectN
 import com.gamdo.app.guide.LayoutGuideLevel
 import com.gamdo.app.guide.SceneLayoutGuide
 import com.gamdo.app.guide.GuideLayoutState
+import com.gamdo.app.guide.GuideMark
+import com.gamdo.app.guide.SceneGuideMarks
+import com.gamdo.app.guide.SubjectWeight
 import com.gamdo.app.ui.theme.Amber
 import kotlin.math.abs
 import kotlin.math.max
@@ -79,6 +82,13 @@ data class OverlayData(
  *
  * @param showDetections draws raw face boxes and the person centre dot. Debug
  *   affordance for §2-5 coordinate verification — never on in the product path.
+ * @param guideMarks 상황 우선 가이드 V2's fixed marks (요구사항 §10). When present they
+ *   are drawn **instead of** the template's own slots, never alongside: P2 populates
+ *   `guideMarks` only while `layoutState is Fixed`, which is the same condition the
+ *   slot block below draws under, so rendering both would put two vocabularies —
+ *   rounded slot rectangles and dots/rings — on the same scene at the same time.
+ *   Null falls back to the slot path, which is the device-verified rendering and stays
+ *   the answer whenever V2 produced nothing for this frame.
  */
 @Composable
 fun CameraOverlay(
@@ -87,6 +97,7 @@ fun CameraOverlay(
     pitchDeg: Float,
     modifier: Modifier = Modifier,
     showDetections: Boolean = false,
+    guideMarks: SceneGuideMarks? = null,
 ) {
     // Hysteresis (55° show / 65° hide) so the line doesn't flicker right at the
     // posture boundary.
@@ -137,25 +148,36 @@ fun CameraOverlay(
 
         val data = overlay ?: return@Canvas
 
-        // Fixed-layout mode is intentionally independent from detections: the
-        // slots stay on screen while the user moves the camera or the objects.
-        data.layoutGuide?.fixedLayout?.let { fixed ->
-            // **Every** slot the template carries, each in its own kind's style.
-            //
-            // Both halves are requirements (§3.3): "인물 1명과 물체가 함께 선택되면
-            // 전달된 모든 슬롯을 렌더" — the `forEach` — and the per-slot style, which
-            // this used to drop on the floor by drawing one shape for all five kinds.
-            fixed.template.slots.forEach { slot ->
-                // Template slots are authored as screen positions, not detections.
-                val slotRect = mapRect(slot.bounds, data, vw, vh, OverlayMapping.Space.COMPOSITION)
-                val style = SlotRenderStyle.of(slot.visualKind)
-                drawRoundRect(
-                    color = Color.White.copy(alpha = fixed.template.opacity * 0.32f),
-                    topLeft = Offset(slotRect.left, slotRect.top),
-                    size = Size(slotRect.width, slotRect.height),
-                    cornerRadius = CornerRadius(18.dp.toPx(), 18.dp.toPx()),
-                )
-                drawSlotForStyle(slotRect, style, Color.White.copy(alpha = 0.86f))
+        // 상황 우선 가이드 V2 (요구사항 §10) takes precedence — see the parameter's KDoc
+        // for why this is an either/or and not both.
+        //
+        // Marks are already fixed targets: P2 computes them once when the scene latches
+        // and holds them, which is what "P1은 매 프레임 검출 위치를 그리지 않는다" asks
+        // for. Nothing here re-derives a position from a detection.
+        val marks = guideMarks?.marks
+        if (marks != null) {
+            marks.forEach { mark -> drawGuideMark(mark, data, vw, vh, Color.White.copy(alpha = 0.86f)) }
+        } else {
+            // Fixed-layout mode is intentionally independent from detections: the
+            // slots stay on screen while the user moves the camera or the objects.
+            data.layoutGuide?.fixedLayout?.let { fixed ->
+                // **Every** slot the template carries, each in its own kind's style.
+                //
+                // Both halves are requirements (§3.3): "인물 1명과 물체가 함께 선택되면
+                // 전달된 모든 슬롯을 렌더" — the `forEach` — and the per-slot style, which
+                // this used to drop on the floor by drawing one shape for all five kinds.
+                fixed.template.slots.forEach { slot ->
+                    // Template slots are authored as screen positions, not detections.
+                    val slotRect = mapRect(slot.bounds, data, vw, vh, OverlayMapping.Space.COMPOSITION)
+                    val style = SlotRenderStyle.of(slot.visualKind)
+                    drawRoundRect(
+                        color = Color.White.copy(alpha = fixed.template.opacity * 0.32f),
+                        topLeft = Offset(slotRect.left, slotRect.top),
+                        size = Size(slotRect.width, slotRect.height),
+                        cornerRadius = CornerRadius(18.dp.toPx(), 18.dp.toPx()),
+                    )
+                    drawSlotForStyle(slotRect, style, Color.White.copy(alpha = 0.86f))
+                }
             }
         }
 
@@ -275,6 +297,78 @@ fun CameraOverlay(
  * colour anywhere in here — a slot's appearance depends on its *kind*, never on
  * whether it has been filled (D2-1, and `CameraOverlayD2Test`'s `SlotMatchStatus` ban).
  */
+/**
+ * One [GuideMark] of 상황 우선 가이드 V2 (요구사항 §10), in this overlay's own stroke
+ * vocabulary.
+ *
+ * §10 assigns each kind its shape — `SubjectDot` 점/링, `PersonSilhouette` 고정 인물
+ * 실루엣, `HorizonLine` 수평선 — and forbids everything a mark could otherwise carry:
+ * raw boxes, labels, confidence, track ids, alignment scores, slot fill state. None of
+ * those reach this function, because [GuideMark] does not carry them; the seam is the
+ * guarantee rather than a rule anyone has to remember here.
+ *
+ * [GuideMark.SubjectDot.weight] is deliberately **not** drawn as a different colour or
+ * a number. HERO/EQUAL/SUPPORTING is authored emphasis, so it changes the ring's size
+ * only — a colour would be read as occupancy feedback, which D2-1 bans outright.
+ */
+private fun DrawScope.drawGuideMark(
+    mark: GuideMark,
+    data: OverlayData,
+    vw: Float,
+    vh: Float,
+    color: Color,
+) {
+    when (mark) {
+        is GuideMark.SubjectDot -> {
+            // Mapped as a square around the centre so the one existing coordinate
+            // transform does the work; a separate point mapping could drift from the
+            // slot path's by a rounding rule and put the dots somewhere the brackets
+            // would not have gone.
+            val box = RectN(
+                left = mark.center.x - mark.radius,
+                top = mark.center.y - mark.radius,
+                right = mark.center.x + mark.radius,
+                bottom = mark.center.y + mark.radius,
+            )
+            val mapped = mapRect(box, data, vw, vh, OverlayMapping.Space.COMPOSITION)
+            val centre = Offset(mapped.left + mapped.width / 2f, mapped.top + mapped.height / 2f)
+            // The ring is the target; the pip at its centre is what makes it read as a
+            // point to put something on rather than a hole to look through.
+            val ring = (mapped.width / 2f) * when (mark.weight) {
+                SubjectWeight.HERO -> 1f
+                SubjectWeight.EQUAL -> 0.85f
+                SubjectWeight.SUPPORTING -> 0.7f
+            }
+            drawCircle(color = color, radius = ring, center = centre, style = Stroke(width = 1.8.dp.toPx()))
+            drawCircle(color = color, radius = 2.dp.toPx(), center = centre)
+        }
+
+        is GuideMark.PersonSilhouette -> {
+            // The same silhouette the slot path draws, so a person guided by V2 and a
+            // person guided by a template look identical. §10 asks for 고정 인물 실루엣
+            // and this overlay already has exactly one.
+            val frame = mapRect(mark.bounds, data, vw, vh, OverlayMapping.Space.COMPOSITION)
+            drawSlotForStyle(frame, SlotRenderStyle.PERSON_SILHOUETTE, color)
+        }
+
+        is GuideMark.HorizonLine -> {
+            // A *composition* horizon — where the horizon should sit in the photograph —
+            // which is a different statement from the tilt line above, and that one is
+            // gated on pitch so the two are not normally on screen together. Inset to
+            // the same 14%/86% the tilt line uses so they read as one vocabulary.
+            val band = RectN(left = 0.14f, top = mark.y, right = 0.86f, bottom = mark.y)
+            val mapped = mapRect(band, data, vw, vh, OverlayMapping.Space.COMPOSITION)
+            drawLine(
+                color = color,
+                start = Offset(mapped.left, mapped.top),
+                end = Offset(mapped.right, mapped.top),
+                strokeWidth = 1.8.dp.toPx(),
+                cap = StrokeCap.Round,
+            )
+        }
+    }
+}
+
 private fun DrawScope.drawSlotForStyle(frame: RectN, style: SlotRenderStyle, color: Color) {
     when (style) {
         SlotRenderStyle.PERSON_SILHOUETTE -> {

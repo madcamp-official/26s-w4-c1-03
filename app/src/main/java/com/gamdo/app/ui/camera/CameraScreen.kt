@@ -113,6 +113,7 @@ import com.gamdo.app.guide.toSceneObservation
 import com.gamdo.app.detect.toAnalysisFrame
 import com.gamdo.app.guide.CaptureSceneMode
 import com.gamdo.app.guide.GuideLayoutState
+import com.gamdo.app.guide.SceneGuideMarks
 import com.gamdo.app.guide.SceneModeDecision
 import com.gamdo.app.guide.LayoutPreviewSlot
 import com.gamdo.app.guide.LayoutTemplateSummary
@@ -543,6 +544,7 @@ fun CameraScreen(
     // disagree with it. Null is a real state — the classifier declines an ambiguous
     // frame rather than guessing — and reads as 자동.
     val sceneModeDecision by viewModel.sceneModeDecision.collectAsState()
+    val guideMarks by viewModel.guideMarks.collectAsState()
 
     // O-13 (1): **a preset is colour. It does not reach the guide.**
     //
@@ -846,6 +848,10 @@ fun CameraScreen(
             // §3-2: the product overlay is bracket + silhouette + horizon only.
             // Raw face boxes / centre dot ride the same toggle as the HUD.
             showDetections = DebugHudGate.visible(BuildConfig.DEBUG, showHud),
+            // 상황 우선 가이드 V2 (요구사항 §10). Null until P2 latches a scene for the
+            // current situation, and null is what keeps the existing slot rendering in
+            // charge — see [CameraOverlay]'s parameter.
+            guideMarks = guideMarks,
             // Pinch-to-zoom lives inside the pane and drives CameraX directly;
             // this is the read-back of CameraX's actual ZoomState, not a request.
             zoomRatio = actualZoom,
@@ -2010,6 +2016,8 @@ private fun CameraPreviewPane(
     pitchDeg: Float,
     showGuide: Boolean,
     showDetections: Boolean,
+    /** 상황 우선 가이드 V2의 고정 마크 (요구사항 §10). See [CameraOverlay]. */
+    guideMarks: SceneGuideMarks?,
     zoomRatio: Float,
     zoomBounds: ZoomBounds,
     onSelectZoom: (Float) -> Unit,
@@ -2285,6 +2293,7 @@ private fun CameraPreviewPane(
                 pitchDeg = pitchDeg,
                 modifier = Modifier.fillMaxSize(),
                 showDetections = showDetections,
+                guideMarks = guideMarks,
             )
         }
 
