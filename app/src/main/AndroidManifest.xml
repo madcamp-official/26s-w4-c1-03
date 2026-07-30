@@ -42,11 +42,12 @@
         android:theme="@style/Theme.Gamdo"
         tools:targetApi="31">
 
-        <!-- ML Kit object detection and subject segmentation models. Both are
-             downloaded and managed by Google Play services. -->
+        <!-- ML Kit object detection model is downloaded and managed by Google
+             Play services. Subject segmentation is intentionally not requested:
+             its beta native module is not used in the live camera path. -->
         <meta-data
             android:name="com.google.mlkit.vision.DEPENDENCIES"
-            android:value="object_detection,subject_segment" />
+            android:value="object_detection" />
 
         <!-- Portrait-locked (t2 design is portrait-only): the aspect-mask layout
              assumes portrait, and rotation would recreate the activity mid-capture. -->

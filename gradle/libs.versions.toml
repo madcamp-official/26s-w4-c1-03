@@ -19,7 +19,6 @@ camerax = "1.4.1"
 # ML Kit
 mlkitFace = "16.1.7"
 mlkitObject = "17.0.2"
-mlkitSubjectSegmentation = "16.0.0-beta1"
 mediapipeTasksVision = "0.10.26"
 
 # Room
@@ -75,7 +74,6 @@ androidx-camera-view = { group = "androidx.camera", name = "camera-view", versio
 # ML Kit
 mlkit-face-detection = { group = "com.google.mlkit", name = "face-detection", version.ref = "mlkitFace" }
 mlkit-object-detection = { group = "com.google.mlkit", name = "object-detection", version.ref = "mlkitObject" }
-mlkit-subject-segmentation = { group = "com.google.android.gms", name = "play-services-mlkit-subject-segmentation", version.ref = "mlkitSubjectSegmentation" }
 mediapipe-tasks-vision = { group = "com.google.mediapipe", name = "tasks-vision", version.ref = "mediapipeTasksVision" }
 
 # Room
@@ -109,7 +107,7 @@ androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-co
 camerax = ["androidx-camera-core", "androidx-camera-camera2", "androidx-camera-lifecycle", "androidx-camera-view"]
 compose = ["androidx-ui", "androidx-ui-graphics", "androidx-ui-tooling-preview", "androidx-material3", "androidx-material-icons-extended"]
 lifecycle = ["androidx-lifecycle-runtime-ktx", "androidx-lifecycle-runtime-compose", "androidx-lifecycle-viewmodel-compose"]
-mlkit = ["mlkit-face-detection", "mlkit-object-detection", "mlkit-subject-segmentation"]
+mlkit = ["mlkit-face-detection", "mlkit-object-detection"]
 retrofit = ["retrofit", "okhttp", "okhttp-logging", "kotlinx-serialization-json", "retrofit-kotlinx-serialization"]
 
 [plugins]

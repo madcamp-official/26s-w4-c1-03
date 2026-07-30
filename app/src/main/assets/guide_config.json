@@ -40,7 +40,6 @@
     "sceneModelCenterCropEveryFrames": 4,
     "sceneModelCenterCropScale": 1.60,
     "objectRefreshEveryFrames": 1,
-    "segmentationRefreshEveryFrames": 12,
     "faceRefreshEveryFrames": 2,
     "confirmationWindow": 5,
     "confirmationsRequired": 3,
