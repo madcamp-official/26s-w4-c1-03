@@ -170,11 +170,23 @@ class SceneGuideCoordinator(
         referenceTemplate: LayoutTemplate?,
         poseGuide: PoseGuideTemplate?,
     ): LayoutTemplate? {
+        val personDetection = observation.slotDetections.firstOrNull { it.role == SlotRole.PERSON }
+        val portraitEvidence = personDetection?.let {
+            PortraitSceneClassifier.classify(
+                face = observation.faceBox?.let { face -> RectN(face.left, face.top, face.right, face.bottom) }
+                    ?: RectN(it.bounds.left, it.bounds.top, it.bounds.right, (it.bounds.top + it.bounds.height * 0.25f).coerceIn(0f, 1f)),
+                person = RectN(it.bounds.left, it.bounds.top, it.bounds.right, it.bounds.bottom),
+                objectCount = observation.slotDetections.count { detection -> detection.role == SlotRole.OBJECT },
+                backgroundRatio = styleTarget.backgroundRatioRange?.let { range -> (range.start + range.endInclusive) / 2f } ?: 0.4f,
+                symmetry = 0f,
+            )
+        }
         val sceneTemplate = autoLayoutResolver.resolve(
             detections = observation.slotDetections,
             objectsFresh = observation.objectsFresh,
             styleTarget = styleTarget,
             viewportAspect = signals.viewportAspect,
+            portraitEvidence = portraitEvidence,
         )
         val reliable = observation.slotDetections.filter { it.isReliable }
         val choice = GuideCompositionChoice.choose(

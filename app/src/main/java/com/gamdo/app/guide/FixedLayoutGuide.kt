@@ -609,6 +609,7 @@ class AutoLayoutTemplateResolver {
         explicitId: String? = null,
         styleTarget: StyleTarget = StyleTarget(),
         viewportAspect: GuideViewportAspect = GuideViewportAspect.FOUR_TO_FIVE,
+        portraitEvidence: PortraitSceneEvidence? = null,
     ): LayoutTemplate? {
         explicitId?.let {
             selectedId = it
@@ -619,7 +620,7 @@ class AutoLayoutTemplateResolver {
             return template
         }
         if (!objectsFresh) return null
-        val candidate = choose(detections, viewportAspect)
+        val candidate = choose(detections, viewportAspect, portraitEvidence)
         if (candidate == null) {
             return null
         }
@@ -637,7 +638,11 @@ class AutoLayoutTemplateResolver {
 
     private data class Candidate(val id: String, val template: LayoutTemplate)
 
-    private fun choose(detections: List<SlotDetection>, viewportAspect: GuideViewportAspect): Candidate? {
+    private fun choose(
+        detections: List<SlotDetection>,
+        viewportAspect: GuideViewportAspect,
+        portraitEvidence: PortraitSceneEvidence?,
+    ): Candidate? {
         val valid = detections.filter { it.isReliable }.take(4)
         if (valid.isEmpty()) return null
         val person = valid.firstOrNull { it.role == SlotRole.PERSON }
@@ -645,11 +650,12 @@ class AutoLayoutTemplateResolver {
         val drinks = objects.count { it.category == GuideObjectCategory.DRINKWARE && it.semanticConfirmed && (it.semanticConfidence ?: 0f) >= 0.80f }
         val food = objects.count { it.category == GuideObjectCategory.FOOD_TABLEWARE && it.semanticConfirmed && (it.semanticConfidence ?: 0f) >= 0.80f }
         if (person != null && objects.isEmpty()) {
-            return Candidate(LayoutTemplateCatalog.PORTRAIT_PERSON, LayoutTemplateCatalog.resolve(LayoutTemplateCatalog.PORTRAIT_PERSON, viewportAspect)!!)
+            val framing = portraitEvidence?.let { PortraitFramingCatalog.select(it) } ?: PortraitFramingCatalog.upper
+            return Candidate(framing.id, LayoutTemplate(framing.id, listOf(framing.toLayoutSlot()), viewportAspect = viewportAspect))
         }
-        if (drinks >= 3) return specialisedCandidate(LayoutTemplateCatalog.DRINK_TRIO, person, viewportAspect)
-        if (drinks >= 2 && food >= 1) return specialisedCandidate(LayoutTemplateCatalog.CAFE_TABLE, person, viewportAspect)
-        if (drinks >= 2) return specialisedCandidate(LayoutTemplateCatalog.DRINK_PAIR, person, viewportAspect)
+        if (drinks >= 3) return specialisedCandidate(LayoutTemplateCatalog.DRINK_TRIO, person, viewportAspect, portraitEvidence)
+        if (drinks >= 2 && food >= 1) return specialisedCandidate(LayoutTemplateCatalog.CAFE_TABLE, person, viewportAspect, portraitEvidence)
+        if (drinks >= 2) return specialisedCandidate(LayoutTemplateCatalog.DRINK_PAIR, person, viewportAspect, portraitEvidence)
 
         val objectCount = objects.size.coerceAtMost(if (person == null) 4 else 3)
         if (objectCount == 0) return null
@@ -659,27 +665,29 @@ class AutoLayoutTemplateResolver {
             id = "auto_${objectCount}_${GenericLayoutSynthesizer.chooseArrangement(objects).name.lowercase()}",
             viewportAspect = viewportAspect,
         )
-        return Candidate(base.id, if (person == null) base else withPerson(base, person))
+        return Candidate(base.id, if (person == null) base else withPerson(base, person, portraitEvidence))
     }
 
     private fun specialisedCandidate(
         id: String,
         person: SlotDetection?,
         viewportAspect: GuideViewportAspect,
+        portraitEvidence: PortraitSceneEvidence? = null,
     ): Candidate {
         val base = LayoutTemplateCatalog.resolve(id, viewportAspect)!!
-        return Candidate(id, if (person == null) base else withPerson(base, person))
+        return Candidate(id, if (person == null) base else withPerson(base, person, portraitEvidence))
     }
 
-    private fun withPerson(base: LayoutTemplate, person: SlotDetection): LayoutTemplate {
+    private fun withPerson(base: LayoutTemplate, person: SlotDetection, portraitEvidence: PortraitSceneEvidence? = null): LayoutTemplate {
         val personOnLeft = person.bounds.centerX < base.slots.map { (it.bounds.left + it.bounds.right) / 2f }.average().toFloat()
-        val personSlot = LayoutSlot(
-            id = "person",
-            expectedCategory = GuideObjectCategory.PERSON,
-            bounds = if (personOnLeft) RectN(0.06f, 0.18f, 0.38f, 0.82f) else RectN(0.62f, 0.18f, 0.94f, 0.82f),
-            role = SlotRole.PERSON,
-            visualKind = SlotVisualKind.PERSON_SILHOUETTE,
-        )
+        val personSlot = portraitEvidence?.let { PortraitFramingCatalog.select(it).toLayoutSlot() }
+            ?: LayoutSlot(
+                id = "person",
+                expectedCategory = GuideObjectCategory.PERSON,
+                bounds = if (personOnLeft) RectN(0.06f, 0.18f, 0.38f, 0.82f) else RectN(0.62f, 0.18f, 0.94f, 0.82f),
+                role = SlotRole.PERSON,
+                visualKind = SlotVisualKind.PERSON_BRACKET,
+            )
         return LayoutTemplate(
             id = "auto_person_${base.slots.size}",
             slots = (listOf(personSlot) + base.slots).take(4),

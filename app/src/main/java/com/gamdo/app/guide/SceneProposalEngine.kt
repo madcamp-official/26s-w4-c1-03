@@ -18,6 +18,7 @@ enum class LeadingDirection { NONE, LEFT, RIGHT }
  */
 data class SceneObservation(
     val subjectBox: NormalizedBox? = null,
+    val faceBox: NormalizedBox? = null,
     val subjectKind: SubjectKind = SubjectKind.UNKNOWN,
     val subjectConfidence: Float = 0f,
     val horizonPosition: Float? = null,
@@ -35,6 +36,7 @@ data class SceneObservation(
 ) {
     fun normalized(): SceneObservation = copy(
         subjectBox = subjectBox?.clamped(),
+        faceBox = faceBox?.clamped(),
         subjectConfidence = subjectConfidence.coerceIn(0f, 1f),
         horizonPosition = horizonPosition?.coerceIn(0f, 1f),
         openSpaceLeft = openSpaceLeft.coerceIn(0f, 1f),
@@ -138,6 +140,7 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
     val confidence = maxOf(detectorConfidence, segmented?.confidence ?: 0f)
     return SceneObservation(
         subjectBox = subjectBox,
+        faceBox = faces.maxByOrNull { it.box.width * it.box.height }?.box,
         subjectKind = kind,
         subjectConfidence = confidence,
         subjectOutline = segmented?.outline
