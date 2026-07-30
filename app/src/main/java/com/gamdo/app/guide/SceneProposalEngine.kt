@@ -191,6 +191,7 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
                         outline = detectedObject.mask?.outline
                             ?.map { LayoutGuidePoint(it.x, it.y) }
                             .orEmpty(),
+                        stableObjectKey = detectedObject.stableObjectKey,
                     ),
                 )
             }

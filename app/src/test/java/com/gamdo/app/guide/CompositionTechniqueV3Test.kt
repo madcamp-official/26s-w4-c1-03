@@ -30,6 +30,14 @@ class CompositionTechniqueV3Test {
             .zipWithNext().all { (a, b) -> kotlin.math.abs(a.bounds.centerY() - b.bounds.centerY()) < 0.05f })
     }
 
+    @Test
+    fun `composition catalog gives one shape-preserving slot per object`() {
+        val template = CompositionTechniqueCatalog.forObjects(3, Arrangement.TRIANGLE)
+        assertEquals(3, template.slots.size)
+        assertTrue(template.slots.all { it.preferredAspectRatio > 0f })
+        assertTrue(template.slots.map { it.bounds }.distinct().size == 3)
+    }
+
     private fun RectN.centerY() = (top + bottom) / 2f
 
     @Test

@@ -20,6 +20,31 @@ data class CompositionTemplateV3(
     val slots: List<LayoutSlot>,
 )
 
+/** Fixed, bounded composition library used by automatic object layouts. */
+object CompositionTechniqueCatalog {
+    fun forObjects(count: Int, arrangement: Arrangement): CompositionTemplateV3 {
+        val (technique, centers) = when {
+            count <= 1 -> CompositionTechnique.CENTERED to listOf(0.50f to 0.55f)
+            count == 2 && arrangement == Arrangement.ROW -> CompositionTechnique.BALANCE to listOf(0.33f to 0.56f, 0.67f to 0.56f)
+            count == 2 -> CompositionTechnique.DIAGONAL to listOf(0.32f to 0.67f, 0.68f to 0.38f)
+            count == 3 -> CompositionTechnique.TRIANGLE to listOf(0.50f to 0.35f, 0.31f to 0.67f, 0.69f to 0.67f)
+            else -> CompositionTechnique.HIERARCHY to listOf(0.50f to 0.28f, 0.28f to 0.52f, 0.72f to 0.52f, 0.50f to 0.76f)
+        }
+        val areas = when {
+            count <= 1 -> listOf(0.10f)
+            count == 2 -> List(2) { 0.085f }
+            count == 3 -> listOf(0.10f, 0.075f, 0.075f)
+            else -> listOf(0.10f, 0.065f, 0.065f, 0.065f)
+        }
+        val slots = centers.take(count.coerceIn(1, 4)).mapIndexed { index, (x, y) ->
+            val area = areas[index]
+            val size = kotlin.math.sqrt(area)
+            LayoutSlot("object_$index", bounds = RectN(x - size / 2f, y - size / 2f, x + size / 2f, y + size / 2f))
+        }
+        return CompositionTemplateV3("objects_${count}_${technique.name.lowercase()}", technique, slots)
+    }
+}
+
 enum class PortraitCoverage { FACE_ONLY, UPPER_BODY, FULL_BODY }
 
 enum class PortraitSilhouetteKind {

@@ -112,6 +112,7 @@ data class SlotDetection(
     val semanticConfidence: Float? = null,
     val semanticConfirmed: Boolean = false,
     val outline: List<LayoutGuidePoint> = emptyList(),
+    val stableObjectKey: String = id,
 ) {
     fun normalized() = copy(
         bounds = NormalizedBox(
@@ -149,26 +150,51 @@ data class LayoutSlotAssignment(
     val centerDistance: Float,
 )
 
-/** Greedy one-to-one correspondence; it never changes the fixed template. */
+/** Exact one-to-one correspondence for the small (maximum four-slot) scene. */
 object LayoutSlotAssigner {
     fun assign(template: LayoutTemplate, detections: List<SlotDetection>): List<LayoutSlotAssignment> {
-        val available = detections.filter { it.isReliable }.toMutableList()
-        return template.slots.map { slot ->
-            val candidate = available
-                .filter { detection ->
-                    slot.expectedCategory == null ||
-                        detection.category == slot.expectedCategory ||
-                        detection.category == GuideObjectCategory.UNKNOWN
-                }
-                .maxByOrNull { score(slot.bounds, it.bounds) }
-            candidate?.let { available.remove(it) }
-            LayoutSlotAssignment(
-                slotId = slot.id,
-                detectionId = candidate?.id,
-                overlap = candidate?.let { overlap(slot.bounds, it.bounds) } ?: 0f,
-                centerDistance = candidate?.let { centerDistance(slot.bounds, it.bounds) } ?: 1f,
-            )
+        val candidates = detections.filter { it.isReliable }.take(4)
+        val pairs = bestAssignment(template.slots, candidates)
+        return template.slots.mapIndexed { index, slot ->
+            val candidate = pairs.getOrNull(index)
+            LayoutSlotAssignment(slot.id, candidate?.id, candidate?.let { overlap(slot.bounds, it.bounds) } ?: 0f, candidate?.let { centerDistance(slot.bounds, it.bounds) } ?: 1f)
         }
+    }
+
+    private fun bestAssignment(slots: List<LayoutSlot>, detections: List<SlotDetection>): List<SlotDetection?> {
+        if (slots.isEmpty() || detections.isEmpty()) return List(slots.size) { null }
+        var bestCost = Float.POSITIVE_INFINITY
+        var best = List<SlotDetection?>(slots.size) { null }
+        fun visit(slotIndex: Int, used: Set<Int>, current: List<SlotDetection?>, cost: Float) {
+            if (slotIndex == slots.size) {
+                if (cost < bestCost) { bestCost = cost; best = current }
+                return
+            }
+            visit(slotIndex + 1, used, current + null, cost + 0.75f)
+            detections.indices.filterNot { it in used }.filter { detectionIndex ->
+                val detection = detections[detectionIndex]
+                slots[slotIndex].expectedCategory == null ||
+                    detection.category == slots[slotIndex].expectedCategory ||
+                    detection.category == GuideObjectCategory.UNKNOWN
+            }.forEach { detectionIndex ->
+                val detection = detections[detectionIndex]
+                visit(slotIndex + 1, used + detectionIndex, current + detection, cost + cost(slots[slotIndex], detection))
+            }
+        }
+        visit(0, emptySet(), emptyList(), 0f)
+        return best
+    }
+
+    private fun cost(slot: LayoutSlot, detection: SlotDetection): Float {
+        val center = centerDistance(slot.bounds, detection.bounds).coerceIn(0f, 1f)
+        val targetAspect = slot.preferredAspectRatio.coerceAtLeast(0.01f)
+        val sourceAspect = (detection.bounds.width / detection.bounds.height.coerceAtLeast(0.01f)).coerceIn(0.4f, 2.5f)
+        val aspect = (kotlin.math.abs(kotlin.math.ln(targetAspect / sourceAspect)) / 2.0f).coerceIn(0f, 1f)
+        val slotArea = (slot.bounds.width * slot.bounds.height).coerceAtLeast(0.001f)
+        val detectionArea = (detection.bounds.width * detection.bounds.height).coerceAtLeast(0.001f)
+        val areaRank = (kotlin.math.abs(kotlin.math.ln(slotArea / detectionArea)) / 3.0f).coerceIn(0f, 1f)
+        val semantic = if (slot.expectedCategory == null || detection.category == slot.expectedCategory || detection.category == GuideObjectCategory.UNKNOWN) 0f else 1f
+        return center * 0.55f + aspect * 0.20f + areaRank * 0.15f + semantic * 0.10f
     }
 
     private fun score(slot: RectN, detection: NormalizedBox): Float =
@@ -388,7 +414,10 @@ object GenericLayoutSynthesizer {
         id: String = "generic_${count}_$arrangement",
         viewportAspect: GuideViewportAspect = GuideViewportAspect.FOUR_TO_FIVE,
     ): LayoutTemplate {
-        val positions = when (arrangement) {
+        val positions = when {
+            arrangement != Arrangement.COLUMN && arrangement != Arrangement.GRID ->
+                CompositionTechniqueCatalog.forObjects(count, arrangement).slots.map { it.bounds }
+            else -> when (arrangement) {
             // Generic objects are guides to place the subject, not large
             // portrait frames. Keep them compact so the camera scene remains
             // visible around the layout.
@@ -404,6 +433,7 @@ object GenericLayoutSynthesizer {
                 RectN(0.40f, 0.66f, 0.60f, 0.86f),
             )
             Arrangement.GRID -> listOf(RectN(0.24f, 0.26f, 0.44f, 0.48f), RectN(0.56f, 0.26f, 0.76f, 0.48f), RectN(0.24f, 0.56f, 0.44f, 0.78f), RectN(0.56f, 0.56f, 0.76f, 0.78f)).take(count)
+            }
         }
         return LayoutTemplate(
             id = id,
@@ -432,7 +462,7 @@ object GenericLayoutSynthesizer {
         val objects = detections.filter { it.isReliable && it.role == SlotRole.OBJECT }
         if (objectSlots.isEmpty() || objects.isEmpty()) return template
 
-        val matches = matchObjectSlots(objectSlots, objects)
+        val matches = matchObjectSlotsExact(objectSlots, objects)
         if (matches.isEmpty()) return template
         val medianArea = matches.map { (_, detection) -> detection.bounds.width * detection.bounds.height }
             .sorted()
@@ -500,7 +530,21 @@ object GenericLayoutSynthesizer {
         return RectN(center - size / 2f, vertical - size / 2f, center + size / 2f, vertical + size / 2f)
     }
 
-    /** Matches source objects to fixed template positions without retaining coordinates. */
+    /** Uses the same exact assignment as the public KPI mapping for shape snapshots. */
+    private fun matchObjectSlotsExact(
+        slots: List<IndexedValue<LayoutSlot>>,
+        detections: List<SlotDetection>,
+    ): List<Pair<Int, SlotDetection>> {
+        val matchingTemplate = LayoutTemplate("shape_matching", slots.map { it.value })
+        val byId = detections.associateBy { it.id }
+        return LayoutSlotAssigner.assign(matchingTemplate, detections).mapNotNull { assignment ->
+            val detection = assignment.detectionId?.let(byId::get) ?: return@mapNotNull null
+            val slotIndex = slots.firstOrNull { it.value.id == assignment.slotId }?.index ?: return@mapNotNull null
+            slotIndex to detection
+        }
+    }
+
+    /** Legacy normalized-center matcher retained only for old serialized fixtures. */
     private fun matchObjectSlots(
         slots: List<IndexedValue<LayoutSlot>>,
         detections: List<SlotDetection>,
