@@ -78,6 +78,17 @@ android {
             isMinifyEnabled = false
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += listOf("debug")
+            ndk {
+                // 258MB of payload, of which 84MB was x86 and x86_64 — TFLite,
+                // MediaPipe and ML Kit each ship every ABI. No phone runs those;
+                // they exist for emulators, and the emulator runs `debug`.
+                //
+                // `armeabi-v7a` is kept even though the demo device is arm64: the
+                // spare handset (W4-4) is not chosen yet, and a backup APK that
+                // will not install on it is not a backup. That one costs 28MB and
+                // buys the guarantee.
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            }
         }
         release {
             isMinifyEnabled = false
