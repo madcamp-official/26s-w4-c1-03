@@ -251,4 +251,29 @@ class StableSceneTrackerTest {
         }
         assertEquals(listOf(1), stable.mapNotNull { it.trackingId })
     }
+
+    @Test
+    fun `polygon search keeps separated in-scope objects instead of anchor cluster`() {
+        val tracker = StableSceneTracker(
+            ObjectTrackerConfig(subjectClusterRadius = 0.20f),
+        )
+        val left = ObjectObservation(NormalizedBox(0.12f, 0.35f, 0.24f, 0.55f), trackingId = 1)
+        val middle = ObjectObservation(NormalizedBox(0.44f, 0.35f, 0.56f, 0.55f), trackingId = 2)
+        val right = ObjectObservation(NormalizedBox(0.76f, 0.35f, 0.88f, 0.55f), trackingId = 3)
+        val outside = ObjectObservation(NormalizedBox(0.90f, 0.05f, 0.99f, 0.18f), trackingId = 4)
+        val polygon = ScenePolygonRegion.fromNormalized(listOf(
+            PointN(0.05f, 0.25f), PointN(0.90f, 0.25f),
+            PointN(0.90f, 0.70f), PointN(0.05f, 0.70f),
+        ))!!
+
+        tracker.rescanInPolygon(polygon)
+        repeat(5) { sequence ->
+            tracker.accept(
+                ObjectDetectionBatch(listOf(left, middle, right, outside), true, sequence.toLong()),
+            )
+        }
+
+        val stable = tracker.accept(ObjectDetectionBatch(emptyList(), false, 5))
+        assertEquals(setOf(1, 2, 3), stable.mapNotNull { it.trackingId }.toSet())
+    }
 }

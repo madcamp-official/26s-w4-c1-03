@@ -46,10 +46,9 @@ object Routes {
      * [result] — there is no separate route for a received photo, because after the import
      * there is nothing separate about it.
      *
-     * **Currently reachable from nowhere.** The entry point is an owner decision that
-     * has not been taken, and the delegated web page it hands off to is not deployed
-     * (`gamdo-web/dist` is absent, so the server answers `/shoot/{token}` with 503), so
-     * a visible button would be a dead control. See `DelegatedShootScreen`.
+     * The CAMP-2 web bundle is deployed. P1 owns the visible camera affordance and
+     * invokes CameraScreen's `onOpenDelegatedShoot(layoutState.value)` callback; P2
+     * owns this route, policy creation, polling and receive/claim.
      */
     const val SHOOT = "shoot"
 

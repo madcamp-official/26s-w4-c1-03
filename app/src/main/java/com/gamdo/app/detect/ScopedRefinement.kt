@@ -116,6 +116,7 @@ class ScopedRefinementWorker(
     private var lastRevision: Long? = null
     private var fixedRevision: Long? = null
     private var fixedResult: List<TrackedSceneObject> = emptyList()
+    private var analysisCount = 0
 
     fun refine(frame: AnalysisFrame): List<TrackedSceneObject> {
         val scope = scopeStore.current() as? DetectionSearchScope.Polygon ?: return emptyList()
@@ -124,10 +125,12 @@ class ScopedRefinementWorker(
             lastRevision = scope.revision
             fixedRevision = null
             fixedResult = emptyList()
+            analysisCount = 0
         }
         if (fixedRevision == scope.revision) return fixedResult
         val result = detector.detectPolygon(frame, scope.region, scope.revision)
         if (!result.ran || result.scopeRevision != scope.revision) return emptyList()
+        analysisCount++
         val candidates = result.objects.map { observation ->
             SceneObjectCandidate(
                 box = observation.box,
@@ -139,16 +142,26 @@ class ScopedRefinementWorker(
         }
         val selected = tracks.update(result.scopeRevision, candidates)
             .filter { scope.region.accepts(it.box, minimumBoxOverlap = .50f) }
-            .take(4)
+            .sortedByDescending { it.confidence }
         // A polygon search is a finite refinement session. Once every selected
         // object has three fresh hits, stop invoking the ROI detector; the guide
         // controller owns the subsequent fixed layout. This prevents the old
         // full-frame + ROI + segmentation loop from continuing behind a fixed
         // lasso result.
-        if (selected.isNotEmpty() && selected.all { it.hitCount >= 3 }) {
+        // Do not freeze when the first object reaches three hits. The ROI
+        // refinement observes three analyses so objects appearing in the
+        // second or third result can join the same lasso selection.
+        if (analysisCount >= 3) {
             fixedRevision = scope.revision
+            // The lasso itself is the user's explicit evidence. Require two
+            // observations when a track has history, but also keep a track
+            // that is present in the third (final) ROI result. The old
+            // hitCount >= 3 gate discarded objects that joined on result 2 or
+            // 3, leaving only the first object in a multi-object lasso.
             fixedResult = selected
+                .filter { it.hitCount >= 2 || it.missedFrames == 0 }
+                .take(4)
         }
-        return selected
+        return selected.take(4)
     }
 }
