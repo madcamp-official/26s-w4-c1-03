@@ -62,12 +62,17 @@ class SceneGuideSessionController(
                     ),
                 )
             }
-            addAll(detection.objects)
+            // Object observations may be a cached result while the face
+            // detector has produced a new frame. Do not count cached objects
+            // again as fresh evidence; the current face can still participate
+            // in portrait confirmation independently.
+            if (detection.objectsFresh) addAll(detection.objects)
         }
+        val trackerFresh = detection.objectsFresh || largestFace != null
         val stable = tracker.accept(
             ObjectDetectionBatch(
                 objects = trackedCandidates,
-                isFresh = detection.objectsFresh,
+                isFresh = trackerFresh,
                 sequenceId = detection.objectSequenceId,
             ),
         )
@@ -81,6 +86,10 @@ class SceneGuideSessionController(
                 faces = listOfNotNull(stableFace),
                 pose = detection.pose?.takeIf { stableFace != null },
                 objects = stable.filter { it.category != GuideObjectCategory.PERSON },
+                // The resolver only needs to know whether this *stable scene*
+                // update is new. A fresh face is valid portrait evidence even
+                // when the object detector is returning a cached batch.
+                objectsFresh = trackerFresh,
             ),
             styleTarget = styleTarget,
             signals = signals,

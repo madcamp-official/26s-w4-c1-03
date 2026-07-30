@@ -67,6 +67,7 @@ class SceneGuideCoordinator(
             subjectBox = detected.subjectBox,
             subjectKind = detected.subjectKind,
             subjectConfidence = detected.subjectConfidence,
+            faceBox = detected.faceBox,
             subjectOutline = detected.subjectOutline,
             subjectLabels = detected.subjectLabels,
             slotDetections = detected.slotDetections,
@@ -167,10 +168,20 @@ class SceneGuideCoordinator(
     ): LayoutTemplate? {
         val personDetection = observation.slotDetections.firstOrNull { it.role == SlotRole.PERSON }
         val portraitEvidence = personDetection?.let {
+            val personRect = RectN(it.bounds.left, it.bounds.top, it.bounds.right, it.bounds.bottom)
+            val faceRect = observation.faceBox?.let { face ->
+                RectN(face.left, face.top, face.right, face.bottom)
+            }
+            // A face-only fallback is represented internally as a PERSON slot whose
+            // bounds equal the face box. Do not let the style's background preference
+            // reinterpret that synthetic evidence as an environmental portrait.
+            val faceOnly = faceRect != null &&
+                personRect.height <= faceRect.height * 1.5f &&
+                personRect.width <= faceRect.width * 1.5f
             PortraitSceneClassifier.classify(
-                face = observation.faceBox?.let { face -> RectN(face.left, face.top, face.right, face.bottom) }
+                face = faceRect
                     ?: RectN(it.bounds.left, it.bounds.top, it.bounds.right, (it.bounds.top + it.bounds.height * 0.25f).coerceIn(0f, 1f)),
-                person = RectN(it.bounds.left, it.bounds.top, it.bounds.right, it.bounds.bottom),
+                person = personRect.takeUnless { faceOnly },
                 objectCount = observation.slotDetections.count { detection -> detection.role == SlotRole.OBJECT },
                 backgroundRatio = styleTarget.backgroundRatioRange?.let { range -> (range.start + range.endInclusive) / 2f } ?: 0.4f,
                 symmetry = 0f,

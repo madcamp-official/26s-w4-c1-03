@@ -203,4 +203,26 @@ class SceneGuideQualityTest {
         assertEquals(GuideLayoutState.Searching, controller.layoutState.value)
         assertFalse(controller.selectManualLayout("not-a-layout"))
     }
+
+    @Test
+    fun `fresh face frames confirm a portrait even when object detector is cached`() {
+        val controller = SceneGuideSessionController()
+        val face = FaceObservation(NormalizedBox(0.36f, 0.12f, 0.64f, 0.42f), null, null, 0f)
+        val cachedObjectResult = DetectionResult(
+            faces = listOf(face),
+            pose = null,
+            objects = emptyList(),
+            objectsFresh = false,
+            objectSequenceId = 7L,
+        )
+
+        repeat(4) { controller.updateScene(cachedObjectResult, StyleTarget()) }
+        val fixed = controller.updateScene(cachedObjectResult, StyleTarget())
+
+        assertTrue(fixed.layoutState is GuideLayoutState.Fixed)
+        assertEquals(
+            "portrait_upper_45_v3",
+            (fixed.layoutState as GuideLayoutState.Fixed).template.id,
+        )
+    }
 }
