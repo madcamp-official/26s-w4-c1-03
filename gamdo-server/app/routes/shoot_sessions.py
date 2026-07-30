@@ -9,11 +9,12 @@ import os
 import secrets
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
+from pydantic import BaseModel, Field, model_validator
 
 from ..db import Database, SERVER_ROOT, now_ms
 from ..storage import save_shoot_photo, strip_gps_exif
@@ -26,6 +27,44 @@ MAX_PHOTOS = 5
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 TOKEN_SECRET = os.getenv("GAMDO_SHOOT_TOKEN_SECRET", "gamdo-demo-shoot-token").encode()
+
+
+class RectN(BaseModel):
+    left: float = Field(ge=0.0, le=1.0)
+    top: float = Field(ge=0.0, le=1.0)
+    right: float = Field(ge=0.0, le=1.0)
+    bottom: float = Field(ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def validate_bounds(self):
+        if self.right <= self.left or self.bottom <= self.top:
+            raise ValueError("invalid bounds")
+        area = (self.right - self.left) * (self.bottom - self.top)
+        if area < 0.02 or area > 0.80:
+            raise ValueError("invalid slot area")
+        return self
+
+
+class ShootSlotV2(BaseModel):
+    id: str = Field(min_length=1, max_length=40)
+    role: Literal["PERSON", "OBJECT"]
+    visualKind: Literal["PERSON_SILHOUETTE", "PERSON_BRACKET", "GENERIC_OBJECT", "CUP", "PLATE"]
+    bounds: RectN
+    preferredAspectRatio: float = Field(ge=0.40, le=2.50)
+
+
+class ShootPolicyV2(BaseModel):
+    version: Literal[2]
+    layoutId: str = Field(min_length=1, max_length=80)
+    slots: list[ShootSlotV2] = Field(min_length=1, max_length=4)
+    preferredZoom: float | None = Field(default=None, ge=0.5, le=10.0)
+    recommendedPhotos: int = Field(default=3, ge=1, le=3)
+
+    @model_validator(mode="after")
+    def validate_unique_slot_ids(self):
+        if len({slot.id for slot in self.slots}) != len(self.slots):
+            raise ValueError("duplicate slot id")
+        return self
 
 
 def _b64(value: bytes) -> str:
@@ -68,7 +107,15 @@ def _owner_token(x_owner_token: str | None = Header(default=None, alias="X-Owner
 
 
 def _public_policy(policy: dict[str, Any]) -> dict[str, Any]:
-    """Only send the delegated shooting rules, never the complete local profile."""
+    """Validate V2 guide snapshots while retaining the existing V1 contract."""
+    if policy.get("version") == 2:
+        try:
+            return ShootPolicyV2.model_validate(policy).model_dump(by_alias=True, exclude_none=True)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail={
+                "code": "invalid_shoot_policy", "message": str(exc), "retryable": False,
+            }) from exc
+    # V1 callers are still supported; only the old public allow-list is sent.
     allowed = {"zoom", "flash", "subjectAnchor", "subjectScale", "layout", "title"}
     return {key: value for key, value in policy.items() if key in allowed}
 

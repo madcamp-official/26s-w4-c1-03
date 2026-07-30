@@ -50,3 +50,46 @@ def test_shoot_token_rejects_tampering() -> None:
     with TestClient(app) as client:
         response = client.get("/api/v1/shoot-upload/not.a-token/config")
     assert response.status_code == 404
+
+
+def test_v2_policy_keeps_only_fixed_slots_and_zoom() -> None:
+    policy = {
+        "version": 2,
+        "layoutId": "portrait_environmental_v3",
+        "slots": [{
+            "id": "person",
+            "role": "PERSON",
+            "visualKind": "PERSON_BRACKET",
+            "bounds": {"left": 0.14, "top": 0.10, "right": 0.52, "bottom": 0.93},
+            "preferredAspectRatio": 0.46,
+        }],
+        "preferredZoom": 2.0,
+        "recommendedPhotos": 3,
+        "fullProfile": {"secret": "must-not-leak"},
+    }
+    with TestClient(app) as client:
+        created = client.post("/api/v1/shoot-sessions", headers={"X-Device-Id": "owner-device"}, json=policy)
+        assert created.status_code == 201, created.text
+        token = created.json()["shareUrl"].rsplit("/", 1)[-1]
+        public = client.get(f"/api/v1/shoot-upload/{token}/config").json()["policy"]
+    assert public["version"] == 2
+    assert public["layoutId"] == "portrait_environmental_v3"
+    assert public["preferredZoom"] == 2.0
+    assert "fullProfile" not in public
+
+
+def test_v2_policy_rejects_more_than_four_slots() -> None:
+    slots = [{
+        "id": str(index),
+        "role": "OBJECT",
+        "visualKind": "GENERIC_OBJECT",
+        "bounds": {"left": 0.05 + index * 0.18, "top": 0.20, "right": 0.16 + index * 0.18, "bottom": 0.40},
+        "preferredAspectRatio": 1.0,
+    } for index in range(5)]
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/shoot-sessions",
+            headers={"X-Device-Id": "owner-device"},
+            json={"version": 2, "layoutId": "too-many", "slots": slots},
+        )
+    assert response.status_code == 422
