@@ -195,6 +195,12 @@ class ReferenceFlowDecisionsTest {
     // deliberately part of the signature: these tests assert the answer is the
     // *same* across every flow state for a given `hasActiveReference`, i.e. the
     // sheet state cannot influence the outcome at all.
+    //
+    // `referenceSelected` is the second half, added 2026-07-31 for the owner's
+    // "필터를 내 감도가 아닌 다른 것으로 바꾸면 반투명 슬라이드바와 레퍼런스
+    // 가이드도 당연히 없어져야 해". The tests that predate it now pass `true`
+    // there, so they keep asserting exactly what they always did — what an
+    // *existing* reference does — and the new ones below own the other axis.
 
     private fun previewResolution(compositionAvailable: Boolean = true) = com.gamdo.app.data.ReferenceResolution(
         contentHash = "hash",
@@ -223,7 +229,7 @@ class ReferenceFlowDecisionsTest {
             assertEquals(
                 "state=$state must not show the overlay without an active reference",
                 false,
-                shouldShowReferenceOverlay(state, hasActiveReference = false),
+                shouldShowReferenceOverlay(state, hasActiveReference = false, referenceSelected = true),
             )
         }
     }
@@ -233,7 +239,14 @@ class ReferenceFlowDecisionsTest {
         // The bug: closing an errored/cancelled flow left the sheet back at
         // Idle while the picked photo kept overlaying the preview forever, with
         // no control anywhere to remove it. This is that exact case.
-        assertEquals(false, shouldShowReferenceOverlay(ReferenceCreateState.Idle, hasActiveReference = false))
+        assertEquals(
+            false,
+            shouldShowReferenceOverlay(
+                ReferenceCreateState.Idle,
+                hasActiveReference = false,
+                referenceSelected = true,
+            ),
+        )
     }
 
     @Test
@@ -245,7 +258,7 @@ class ReferenceFlowDecisionsTest {
             assertEquals(
                 "state=$state must show the overlay while a reference is active",
                 true,
-                shouldShowReferenceOverlay(state, hasActiveReference = true),
+                shouldShowReferenceOverlay(state, hasActiveReference = true, referenceSelected = true),
             )
         }
     }
@@ -254,7 +267,118 @@ class ReferenceFlowDecisionsTest {
     fun `applied always has an active reference and always shows the overlay`() {
         assertEquals(
             true,
-            shouldShowReferenceOverlay(ReferenceCreateState.Applied(sampleStyle()), hasActiveReference = true),
+            shouldShowReferenceOverlay(
+                ReferenceCreateState.Applied(sampleStyle()),
+                hasActiveReference = true,
+                referenceSelected = true,
+            ),
+        )
+    }
+
+    // ---- the 2026-07-31 owner fix: the overlay follows the *selected* style ----
+
+    @Test
+    fun `switching the strip to a preset hides the overlay even though the 감도 still exists`() {
+        // The report, exactly: make a 내 감도, then tap 깔끔한 소셜 or 원본. The
+        // reference is still stored and its slot is still on the strip
+        // (hasActiveReference stays true) — it is simply not the style being
+        // shot with any more, so the translucent photo and its 투명도 slider
+        // have nothing to be about.
+        assertEquals(
+            false,
+            shouldShowReferenceOverlay(
+                ReferenceCreateState.Idle,
+                hasActiveReference = true,
+                referenceSelected = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `an unselected 감도 stays hidden in every flow state`() {
+        // Same property as the `state`-invariance above, on the new axis: no
+        // sheet state may sneak the overlay back on for a 감도 the strip is not
+        // using. In particular a replace-in-progress (Analyzing/Preview over an
+        // existing reference) must not re-show it.
+        for (state in statesWithoutActiveReference + ReferenceCreateState.Applied(sampleStyle())) {
+            assertEquals(
+                "state=$state must not show the overlay for an unselected 감도",
+                false,
+                shouldShowReferenceOverlay(state, hasActiveReference = true, referenceSelected = false),
+            )
+        }
+    }
+
+    @Test
+    fun `selecting 내 감도 again brings the overlay back`() {
+        // The other direction of the same switch, which is what makes the
+        // 투명도 값 requirement meaningful: coming back has to show the overlay,
+        // so there is something for the preserved alpha to apply to. That the
+        // *value* survives the round trip is `ReferenceOverlayAlphaTest`'s —
+        // this function cannot reach the alpha at all, which is the point.
+        assertEquals(
+            true,
+            shouldShowReferenceOverlay(
+                ReferenceCreateState.Idle,
+                hasActiveReference = true,
+                referenceSelected = true,
+            ),
+        )
+    }
+
+    // ---- shouldAutoSelectReference ----
+    //
+    // The companion to the gate above. Making the overlay follow the selection
+    // opens a hole at the moment 내 감도 만들기 finishes — the new strip slot is
+    // not selected yet — and this closes it. Its whole difficulty is doing so
+    // *once*: an effect that re-selected on every recomposition would undo the
+    // user's next filter tap and the owner's fix would never hold at all.
+
+    @Test
+    fun `applying a 감도 in this session selects it`() {
+        assertEquals(true, shouldAutoSelectReference(appliedKey = "content://pick/1", lastAutoSelectedKey = null))
+    }
+
+    @Test
+    fun `having already selected it, a recomposition does not select it again`() {
+        // The regression that would break defect 2's fix: the user taps 깔끔한
+        // 소셜, `referenceSelected` goes false, and the very next frame this
+        // effect would put it back.
+        assertEquals(
+            false,
+            shouldAutoSelectReference(appliedKey = "content://pick/1", lastAutoSelectedKey = "content://pick/1"),
+        )
+    }
+
+    @Test
+    fun `a reference restored from Room on launch is not selected`() {
+        // Null key = a 감도 that is active but was not applied in this session.
+        // Selecting it would override the onboarding style (§6-2) with a 감도 the
+        // user made days ago and did not ask for today.
+        assertEquals(false, shouldAutoSelectReference(appliedKey = null, lastAutoSelectedKey = null))
+        assertEquals(false, shouldAutoSelectReference(appliedKey = null, lastAutoSelectedKey = "content://pick/1"))
+    }
+
+    @Test
+    fun `replacing the 감도 with a different photo selects the new one`() {
+        assertEquals(
+            true,
+            shouldAutoSelectReference(appliedKey = "content://pick/2", lastAutoSelectedKey = "content://pick/1"),
+        )
+    }
+
+    @Test
+    fun `selection alone is not enough — a deleted 감도 stays hidden`() {
+        // `referenceSelected` is camera-local `rememberSaveable` state and
+        // `hasActiveReference` is the host's. They can disagree for a frame
+        // after a delete, and the answer must be "no overlay" both times.
+        assertEquals(
+            false,
+            shouldShowReferenceOverlay(
+                ReferenceCreateState.Idle,
+                hasActiveReference = false,
+                referenceSelected = true,
+            ),
         )
     }
 }
