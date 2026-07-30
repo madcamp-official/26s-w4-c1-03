@@ -329,7 +329,7 @@ class ProfilePaletteTest {
     fun `stays inside a band that is visible on charcoal`() {
         for (brightness in listOf(0f, 0.25f, 0.5f, 0.75f, 1f)) {
             ProfilePalette.swatches(tone(brightness, -12f, 6f)).forEach {
-                assertTrue("too dark to see on Charcoal900", luma(it) > 25.0)
+                assertTrue("too dark to see on Ink900", luma(it) > 25.0)
                 assertTrue("channel out of range", r(it) in 0..255 && g(it) in 0..255 && b(it) in 0..255)
             }
         }

@@ -102,13 +102,13 @@ import com.gamdo.app.ui.reference.CreateReferenceThumb
 import com.gamdo.app.ui.reference.MyReferenceThumb
 import com.gamdo.app.ui.reference.StripEntry
 import com.gamdo.app.ui.reference.buildFilterStrip
-import com.gamdo.app.ui.theme.Charcoal600
-import com.gamdo.app.ui.theme.Charcoal950
-import com.gamdo.app.ui.theme.OnDarkHigh
-import com.gamdo.app.ui.theme.OnDarkMedium
-import com.gamdo.app.ui.theme.OnDarkMuted
-import com.gamdo.app.ui.theme.OnSage
-import com.gamdo.app.ui.theme.Sage
+import com.gamdo.app.ui.theme.Ink700
+import com.gamdo.app.ui.theme.Ink950
+import com.gamdo.app.ui.theme.TextHi
+import com.gamdo.app.ui.theme.TextMid
+import com.gamdo.app.ui.theme.TextLow
+import com.gamdo.app.ui.theme.OnAmber
+import com.gamdo.app.ui.theme.Amber
 import kotlin.math.abs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -119,7 +119,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-// Sage is the single accent (D11-5); no opaque chromatic constant is defined here.
+// Amber is the single accent (D11-5); no opaque chromatic constant is defined here.
 // GridLine is white at 28% alpha — a translucent neutral, not a hue.
 private val GridLine = Color(0x47FFFFFF)
 private const val TAG = "CameraScreen"
@@ -553,7 +553,7 @@ fun CameraScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(Charcoal950),
+            .background(Ink950),
     ) {
         CameraTopBar(
             guideVisible = guideVisible,
@@ -964,11 +964,11 @@ private fun CameraTopBar(
                     modifier = Modifier
                         .size(7.dp)
                         .clip(CircleShape)
-                        .background(if (guideVisible) Sage else OnDarkMuted),
+                        .background(if (guideVisible) Amber else TextLow),
                 )
                 Text(
                     text = "가이드",
-                    color = if (guideVisible) OnDarkHigh else OnDarkMuted,
+                    color = if (guideVisible) TextHi else TextLow,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -978,7 +978,7 @@ private fun CameraTopBar(
             // what the caller passes.
             if (BuildConfig.DEBUG && hudToggleEnabled) {
                 BarChip(onClick = onToggleHud) {
-                    Text("HUD", color = OnDarkMedium, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Text("HUD", color = TextMid, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -990,15 +990,15 @@ private fun CameraTopBar(
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(16.dp))
-                    .background(Charcoal600.copy(alpha = 0.9f))
+                    .background(Ink700.copy(alpha = 0.9f))
                     .padding(horizontal = 11.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Sage))
+                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Amber))
                 Text(
                     text = "내 감도 적용 중",
-                    color = OnDarkHigh,
+                    color = TextHi,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
@@ -1031,7 +1031,7 @@ private fun AspectChip(selected: CaptureAspect, onSelect: (CaptureAspect) -> Uni
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(16.dp))
-            .background(Charcoal600.copy(alpha = 0.9f))
+            .background(Ink700.copy(alpha = 0.9f))
             .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
@@ -1039,12 +1039,12 @@ private fun AspectChip(selected: CaptureAspect, onSelect: (CaptureAspect) -> Uni
             val isSelected = option == selected
             Text(
                 text = option.label,
-                color = if (isSelected) OnSage else OnDarkMedium,
+                color = if (isSelected) OnAmber else TextMid,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .clip(RoundedCornerShape(14.dp))
-                    .background(if (isSelected) Sage else Color.Transparent)
+                    .background(if (isSelected) Amber else Color.Transparent)
                     .clickable { onSelect(option) }
                     .padding(horizontal = 7.dp, vertical = 4.dp),
             )
@@ -1141,13 +1141,13 @@ private fun CameraStyleStrip(
                                 .size(52.dp)
                                 .then(
                                     if (isSelected) {
-                                        Modifier.border(2.dp, Sage, CircleShape).padding(2.dp)
+                                        Modifier.border(2.dp, Amber, CircleShape).padding(2.dp)
                                     } else {
                                         Modifier.padding(4.dp)
                                     },
                                 )
                                 .clip(CircleShape)
-                                .background(Charcoal600),
+                                .background(Ink700),
                         ) {
                             AsyncImage(
                                 model = "file:///android_asset/" + (preset.thumbnail ?: "presets/${preset.id}.jpg"),
@@ -1158,7 +1158,7 @@ private fun CameraStyleStrip(
                         }
                         Text(
                             text = preset.displayName,
-                            color = if (isSelected) Sage else OnDarkMedium,
+                            color = if (isSelected) Amber else TextMid,
                             fontSize = 10.sp,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                             maxLines = 1,
@@ -1184,7 +1184,7 @@ private fun BarChip(onClick: () -> Unit, content: @Composable RowScope.() -> Uni
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(16.dp))
-            .background(Charcoal600.copy(alpha = 0.9f))
+            .background(Ink700.copy(alpha = 0.9f))
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1441,7 +1441,7 @@ private fun CameraPreviewPane(
         }
 
         Column(modifier = Modifier.fillMaxSize()) {
-            Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
+            Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Ink950))
             Box(modifier = Modifier.fillMaxWidth().height(windowHeight)) {
                 RuleOfThirds()
                 ZoomStops(
@@ -1457,7 +1457,7 @@ private fun CameraPreviewPane(
                     onClick = onRescan,
                 )
             }
-            Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Charcoal950))
+            Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Ink950))
         }
 
         hud()
@@ -1501,7 +1501,7 @@ private fun CameraBottomBar(
                     )
                 }
             }
-            Text("앨범", color = OnDarkMedium, fontSize = 10.sp)
+            Text("앨범", color = TextMid, fontSize = 10.sp)
         }
 
         // D2: the shutter is manual only — capture is reachable from this
@@ -1518,7 +1518,7 @@ private fun CameraBottomBar(
                 modifier = Modifier
                     .size(60.dp)
                     .clip(CircleShape)
-                    .background(if (capturing) OnDarkMuted else OnDarkHigh),
+                    .background(if (capturing) TextLow else TextHi),
             )
         }
 
@@ -1526,11 +1526,11 @@ private fun CameraBottomBar(
             modifier = Modifier
                 .size(44.dp)
                 .clip(CircleShape)
-                .background(Charcoal600)
+                .background(Ink700)
                 .clickable(onClick = onFlipLens),
             contentAlignment = Alignment.Center,
         ) {
-            Text("⟲", color = if (isFront) Sage else OnDarkMedium, fontSize = 18.sp)
+            Text("⟲", color = if (isFront) Amber else TextMid, fontSize = 18.sp)
         }
     }
 }
@@ -1648,7 +1648,7 @@ private fun DebugHud(stats: AnalysisStats, modifier: Modifier = Modifier) {
                 stats.fps,
                 stats.dropRatePercent,
             ),
-            color = Sage,
+            color = Amber,
             fontSize = 10.sp,
             fontWeight = FontWeight.Medium,
         )
@@ -1689,7 +1689,7 @@ private fun PreviewFpsHud(
     ) {
         Text(
             text = text,
-            color = if (measured) Sage else OnDarkMedium,
+            color = if (measured) Amber else TextMid,
             fontSize = 10.sp,
             fontWeight = FontWeight.Medium,
         )
@@ -1707,7 +1707,7 @@ private fun TiltBadge(rollDeg: Float, pitchDeg: Float, shake: Float) {
     ) {
         Text(
             text = "수평 %.1f° · 기울기 %.1f° · 흔들림 %.3f".format(rollDeg, pitchDeg, shake),
-            color = if (level) Sage else OnDarkMedium,
+            color = if (level) Amber else TextMid,
             fontSize = 10.sp,
             fontWeight = FontWeight.Medium,
         )
@@ -1734,7 +1734,7 @@ private fun GuideDebugBadge(debug: GuideDebug) {
                     debug.aligned, debug.visible, debug.iou, debug.matchScore,
                     debug.fixedLayoutId ?: "none",
                 ),
-                color = if (debug.aligned) Sage else OnDarkHigh,
+                color = if (debug.aligned) Amber else TextHi,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Medium,
             )
@@ -1742,14 +1742,14 @@ private fun GuideDebugBadge(debug: GuideDebug) {
                 text = "area %.2f · headroom %.2f · margins %.2f/%.2f".format(
                     f.personAreaRatio, f.headroom, f.sideMargins.left, f.sideMargins.right,
                 ),
-                color = OnDarkMedium,
+                color = TextMid,
                 fontSize = 10.sp,
             )
             Text(
                 text = "luma %.2f · poseConf %.2f · backlight=%s lowLight=%s".format(
                     f.brightnessMean, f.poseConfidence, f.backlightFlag, f.lowLightFlag,
                 ),
-                color = OnDarkMedium,
+                color = TextMid,
                 fontSize = 10.sp,
             )
         }
@@ -1789,13 +1789,13 @@ private fun ZoomStops(
                     .size(if (isActive) 34.dp else 30.dp)
                     .clip(CircleShape)
                     .background(Color(0x99141614))
-                    .then(if (isActive) Modifier.border(1.8.dp, Sage, CircleShape) else Modifier)
+                    .then(if (isActive) Modifier.border(1.8.dp, Amber, CircleShape) else Modifier)
                     .clickable { onSelect(stop) },
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = formatZoomStop(stop),
-                    color = if (isActive) Sage else OnDarkMedium,
+                    color = if (isActive) Amber else TextMid,
                     fontSize = if (isActive) 11.sp else 10.5.sp,
                     fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
                 )
@@ -1846,8 +1846,8 @@ private fun RescanButton(modifier: Modifier, onClick: () -> Unit) {
                     val y = if (bottom) size.height else 0f
                     val dx = if (right) -arm else arm
                     val dy = if (bottom) -arm else arm
-                    drawLine(OnDarkMedium, Offset(x, y), Offset(x + dx, y), stroke, StrokeCap.Round)
-                    drawLine(OnDarkMedium, Offset(x, y), Offset(x, y + dy), stroke, StrokeCap.Round)
+                    drawLine(TextMid, Offset(x, y), Offset(x + dx, y), stroke, StrokeCap.Round)
+                    drawLine(TextMid, Offset(x, y), Offset(x, y + dy), stroke, StrokeCap.Round)
                 }
             }
         }
@@ -1862,7 +1862,7 @@ private fun DetectionBadge(text: String) {
             .background(Color(0x99000000))
             .padding(horizontal = 8.dp, vertical = 4.dp),
     ) {
-        Text(text = text, color = Sage, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+        Text(text = text, color = Amber, fontSize = 10.sp, fontWeight = FontWeight.Medium)
     }
 }
 

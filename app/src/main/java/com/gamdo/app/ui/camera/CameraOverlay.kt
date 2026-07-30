@@ -24,7 +24,7 @@ import com.gamdo.app.guide.RectN
 import com.gamdo.app.guide.LayoutGuideLevel
 import com.gamdo.app.guide.SceneLayoutGuide
 import com.gamdo.app.guide.GuideLayoutState
-import com.gamdo.app.ui.theme.Sage
+import com.gamdo.app.ui.theme.Amber
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -97,7 +97,7 @@ fun CameraOverlay(
         // a shooting posture; near-flat (|pitch| large) has no meaningful horizon,
         // and roll there is undefined (would spin).
         if (showHorizon) {
-            val horizonColor = if (isHorizonLevel(rollDeg)) Sage else HorizonRed
+            val horizonColor = if (isHorizonLevel(rollDeg)) Amber else HorizonRed
             // Angle decision lives in HorizonGeometry.kt so it is JVM-testable;
             // this Canvas only draws what it is handed.
             rotate(degrees = horizonIndicatorRotationDeg(rollDeg), pivot = Offset(vw / 2f, vh / 2f)) {
@@ -152,7 +152,7 @@ fun CameraOverlay(
             // The composition target: where the subject should end up in the photo.
             val frame = mapRect(guide.targetFrame, data, vw, vh, OverlayMapping.Space.COMPOSITION)
             // D2-3: the colour swap is the entire success feedback.
-            val guideColor = if (guide.aligned) Sage else Color.White.copy(alpha = 0.9f)
+            val guideColor = if (guide.aligned) Amber else Color.White.copy(alpha = 0.9f)
 
             guide.silhouetteBounds?.let { silhouette ->
                 val ghost = mapRect(silhouette, data, vw, vh, OverlayMapping.Space.COMPOSITION)
@@ -201,7 +201,7 @@ fun CameraOverlay(
             val a = mapNormalized(box.left, box.top, data, vw, vh, OverlayMapping.Space.ANALYSIS)
             val b = mapNormalized(box.right, box.bottom, data, vw, vh, OverlayMapping.Space.ANALYSIS)
             drawRoundRect(
-                color = Sage,
+                color = Amber,
                 topLeft = Offset(min(a.x, b.x), min(a.y, b.y)),
                 size = Size(abs(b.x - a.x), abs(b.y - a.y)),
                 cornerRadius = CornerRadius(16f, 16f),
@@ -211,7 +211,7 @@ fun CameraOverlay(
 
         data.personCenter?.let { (cx, cy) ->
             drawCircle(
-                color = Sage,
+                color = Amber,
                 radius = 5.dp.toPx(),
                 center = mapNormalized(cx, cy, data, vw, vh, OverlayMapping.Space.ANALYSIS),
             )

@@ -13,12 +13,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.gamdo.app.ui.theme.Charcoal600
-import com.gamdo.app.ui.theme.OnDarkHigh
-import com.gamdo.app.ui.theme.OnDarkMuted
-import com.gamdo.app.ui.theme.OnSage
-import com.gamdo.app.ui.theme.OutlineDim
-import com.gamdo.app.ui.theme.SageButton
+import com.gamdo.app.ui.theme.Ink700
+import com.gamdo.app.ui.theme.TextHi
+import com.gamdo.app.ui.theme.TextLow
+import com.gamdo.app.ui.theme.OnAmber
+import com.gamdo.app.ui.theme.Outline
+import com.gamdo.app.ui.theme.Amber
 
 /** Filled sage pill — the primary action shape across the app (design: h54, r27). */
 @Composable
@@ -33,10 +33,10 @@ fun PrimaryPillButton(
         enabled = enabled,
         shape = RoundedCornerShape(27.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = SageButton,
-            contentColor = OnSage,
-            disabledContainerColor = Charcoal600,
-            disabledContentColor = OnDarkMuted,
+            containerColor = Amber,
+            contentColor = OnAmber,
+            disabledContainerColor = Ink700,
+            disabledContentColor = TextLow,
         ),
         modifier = modifier
             .fillMaxWidth()
@@ -56,8 +56,8 @@ fun SecondaryPillButton(
     OutlinedButton(
         onClick = onClick,
         shape = RoundedCornerShape(27.dp),
-        border = BorderStroke(1.5.dp, OutlineDim),
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = OnDarkHigh),
+        border = BorderStroke(1.5.dp, Outline),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextHi),
         modifier = modifier
             .fillMaxWidth()
             .height(54.dp),

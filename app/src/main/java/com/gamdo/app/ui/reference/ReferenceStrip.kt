@@ -30,12 +30,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.gamdo.app.ui.theme.Charcoal600
-import com.gamdo.app.ui.theme.Charcoal950
-import com.gamdo.app.ui.theme.OnDarkHigh
-import com.gamdo.app.ui.theme.OnDarkMedium
-import com.gamdo.app.ui.theme.OutlineDim
-import com.gamdo.app.ui.theme.Sage
+import com.gamdo.app.ui.theme.Ink700
+import com.gamdo.app.ui.theme.Ink950
+import com.gamdo.app.ui.theme.TextHi
+import com.gamdo.app.ui.theme.TextMid
+import com.gamdo.app.ui.theme.Outline
+import com.gamdo.app.ui.theme.Amber
 
 /**
  * O-10 filter-strip entry points, shared between the camera and result screens so
@@ -65,18 +65,18 @@ private fun StripThumb(
                 .size(size)
                 .then(
                     if (selected) {
-                        Modifier.border(2.dp, Sage, shape).padding(2.dp)
+                        Modifier.border(2.dp, Amber, shape).padding(2.dp)
                     } else {
                         Modifier.padding(2.dp)
                     },
                 )
                 .clip(shape)
-                .background(Charcoal600),
+                .background(Ink700),
             content = content,
         )
         Text(
             text = label,
-            color = if (selected) Sage else OnDarkMedium,
+            color = if (selected) Amber else TextMid,
             fontSize = 10.sp,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
             maxLines = 1,
@@ -105,7 +105,7 @@ fun CreateReferenceThumb(
     StripThumb(label = ReferenceLabels.CREATE, shape = shape, size = size, selected = false, onClick = onClick, modifier = modifier) {
         Text(
             text = "+",
-            color = Sage,
+            color = Amber,
             fontSize = 22.sp,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.align(Alignment.Center),
@@ -128,7 +128,7 @@ fun AiRestoreThumb(
     StripThumb(label = "AI로 보정", shape = shape, size = size, selected = false, onClick = onClick, modifier = modifier) {
         Text(
             text = "AI",
-            color = OnDarkMedium,
+            color = TextMid,
             fontSize = 13.sp,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.align(Alignment.Center),
@@ -173,11 +173,11 @@ fun MyReferenceThumb(
                 .padding(2.dp)
                 .size(15.dp)
                 .clip(CircleShape)
-                .background(Charcoal950)
+                .background(Ink950)
                 .clickable(onClick = onDelete),
             contentAlignment = Alignment.Center,
         ) {
-            Text("×", color = OnDarkHigh, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text("×", color = TextHi, fontSize = 10.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -222,9 +222,9 @@ fun ReferenceOverlayLayer(
                 valueRange = 0f..MAX_REFERENCE_OVERLAY_ALPHA,
                 modifier = Modifier.width(110.dp),
                 colors = SliderDefaults.colors(
-                    thumbColor = Sage,
-                    activeTrackColor = Sage,
-                    inactiveTrackColor = OutlineDim,
+                    thumbColor = Amber,
+                    activeTrackColor = Amber,
+                    inactiveTrackColor = Outline,
                 ),
             )
         }
