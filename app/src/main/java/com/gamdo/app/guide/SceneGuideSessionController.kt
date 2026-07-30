@@ -142,11 +142,22 @@ class SceneGuideSessionController(
         return selected
     }
 
+    /**
+     * Drops the latched scene so the next frames search again.
+     *
+     * `_guideMarks` is cleared with it, and every sibling below does the same. Marks are
+     * the *fixed* answer for a scene that has just been discarded, and
+     * [updateSituationAndMarks] only recomputes them while the field is null — so leaving
+     * them behind did not merely show a stale silhouette during the search, it pinned that
+     * silhouette for the rest of the session however many times the user rescanned. On
+     * device that is the 재탐색 button appearing to do nothing.
+     */
     fun rescan() {
         tracker.reset()
         coordinator.rescan()
         _searchScope.value = SceneSearchScope.Default
         scopeStore?.setDefault()
+        _guideMarks.value = null
         _layoutState.value = GuideLayoutState.Searching
     }
 
@@ -156,6 +167,7 @@ class SceneGuideSessionController(
         coordinator.rescan()
         _searchScope.value = SceneSearchScope.Tap(PointN(anchorX, anchorY).clamped())
         scopeStore?.setTap(PointN(anchorX, anchorY).clamped())
+        _guideMarks.value = null
         _layoutState.value = GuideLayoutState.Searching
     }
 
@@ -166,6 +178,7 @@ class SceneGuideSessionController(
         coordinator.rescan()
         _searchScope.value = SceneSearchScope.Polygon(polygon.points)
         scopeStore?.setPolygon(polygon)
+        _guideMarks.value = null
         _layoutState.value = GuideLayoutState.Searching
         return true
     }
@@ -176,6 +189,7 @@ class SceneGuideSessionController(
         coordinator.rescan()
         _searchScope.value = SceneSearchScope.Polygon(polygon.points)
         scopeStore?.setPolygon(polygon)
+        _guideMarks.value = null
         _layoutState.value = GuideLayoutState.Searching
         return true
     }
@@ -185,6 +199,7 @@ class SceneGuideSessionController(
         coordinator.rescan()
         _searchScope.value = SceneSearchScope.Default
         scopeStore?.setDefault()
+        _guideMarks.value = null
         _layoutState.value = GuideLayoutState.Searching
     }
 

@@ -1690,7 +1690,7 @@ private fun CameraFilterSheet(
 }
 
 /**
- * The manual frame sheet (§3.1) — the 12 composition templates, plus `자동`.
+ * The manual frame sheet (§3.1) — the composition templates for the chosen 상황, plus `자동`.
  *
  * Same container vocabulary as [CameraFilterSheet] (Ink800, 20dp top corners, handle,
  * 260ms) because it is the same kind of thing: a picker raised from a button. Its
@@ -1702,6 +1702,11 @@ private fun CameraFilterSheet(
  * anywhere under `ui/camera/`. That is not bureaucracy: the catalogue keeps old ids as
  * compatibility aliases (`person_object` → `person_object_v2`), so a hardcoded list would
  * be a second, silently diverging copy of names 담당 B owns.
+ *
+ * What the sheet *shows* is that list narrowed by the situation chip above it — the
+ * owner's 2026-07-31 instruction, "목록별로 해당하는 알맞은 구도만 보이도록". The narrowing
+ * is [SceneModeSelection.framesFor], which reads slot shapes rather than ids so this file
+ * still writes none down.
  *
  * The leading cell is `자동` and calls `rescanLayout()` — §3.1's "자동으로 돌아가기" exit,
  * in the same position and with the same grammar as the filter sheet's leading `+`.
@@ -1730,17 +1735,26 @@ private fun CameraFrameSheet(
     ) {
         SheetHandle()
         // 상황 (요구사항 §10), above the frames because it is the coarser choice: a
-        // situation steers the *automatic* search, while a frame below overrides it
-        // with one fixed template. Two axes, so they are two rows rather than one
+        // situation steers the *automatic* search **and narrows the row below to the
+        // frames that can hold that subject**, while a frame in that row overrides the
+        // search with one fixed template. Two axes, so they are two rows rather than one
         // list — merging them would make 인물 and 전신 중앙 look like alternatives.
+        val sceneMode = SceneModeSelection.selectedChip(sceneModeDecision)
         SceneModeChips(
-            selected = SceneModeSelection.selectedChip(sceneModeDecision),
+            selected = sceneMode,
             onSelect = onSelectSceneMode,
         )
+        // The filtered list, not the catalogue's twelve — see [SceneModeSelection.framesFor]
+        // for the mapping and for the two things it guarantees (never empty, never hides
+        // the frame the overlay is drawing). Keyed on the *lit* chip, so the row and the
+        // amber pill above it can never describe different situations.
+        val visibleLayouts = remember(layouts, sceneMode, activeLayoutId) {
+            SceneModeSelection.framesFor(sceneMode, layouts, activeLayoutId)
+        }
         val listState = rememberLazyListState()
-        LaunchedEffect(activeLayoutId, layouts) {
+        LaunchedEffect(activeLayoutId, visibleLayouts) {
             // Offset by one for the leading `자동` cell.
-            val index = layouts.indexOfFirst { it.id == activeLayoutId }
+            val index = visibleLayouts.indexOfFirst { it.id == activeLayoutId }
             if (index >= 0) listState.animateScrollToItem(index + 1)
         }
         LazyRow(
@@ -1764,7 +1778,7 @@ private fun CameraFrameSheet(
                     drawFrameThumbBracket(color)
                 }
             }
-            items(layouts, key = { it.id }) { summary ->
+            items(visibleLayouts, key = { it.id }) { summary ->
                 FrameThumb(
                     label = ManualFrameSelection.label(summary),
                     selected = summary.id == activeLayoutId,
