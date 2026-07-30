@@ -525,11 +525,15 @@ private fun CandidatesSection(
         // two-up layout draws rather than stretching a single result across the sheet.
         if (candidates.size < MAX_RESCUE_CANDIDATES) Box(Modifier.weight(1f))
     }
-    // Saving needs something chosen. Without a pick the photo behind the sheet is
-    // still the local correction, and a 저장 that quietly wrote *that* under a heading
-    // asking the user to choose a candidate would be the flow lying about what it
-    // saved — 기본 보정 그대로 두기 below is the deliberate way to that outcome.
-    val picked = candidates.any { it.resultId == selectedCandidateId }
+    // Save whatever the comparison row says is on screen, candidate or not.
+    //
+    // This used to require a picked candidate, on the grounds that saving with no pick
+    // would quietly write the local correction under a heading asking the user to
+    // choose one. That reasoning came from a section where "no candidate picked" was
+    // an *absence* of a choice. With the row above it is a choice — 원본 and 현재 감도
+    // are two of the three things being compared — so the gate would now block the
+    // outcome the comparison exists to reach: 비교 → 저장 (브리프 §8), where what the
+    // user preferred turns out not to be the generated one.
     PrimaryPillButton(
         text = when {
             saving -> "저장 중이에요"
@@ -537,7 +541,7 @@ private fun CandidatesSection(
             else -> "이 사진으로 저장"
         },
         onClick = onSave,
-        enabled = picked && !saving && saved != true,
+        enabled = !saving && saved != true,
         modifier = Modifier.padding(top = 18.dp),
     )
     // The header's own save status is behind this sheet, so it has to be repeated
