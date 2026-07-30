@@ -318,13 +318,16 @@ fun CameraScreen(
     val guideDebug by viewModel.guideDebug.collectAsState()
     val tilt by tiltSensor.reading.collectAsState()
     val shake by shakeMeter.shake.collectAsState()
-    // The debug read-outs must stay unreachable in release. Gate the toggle *and*
-    // the render: `showHud` is rememberSaveable, so a value restored from a bundle
-    // written by a debug build must not be able to surface them either.
-    // BuildConfig.DEBUG is a compile-time constant, so the whole HUD branch is
-    // dead code in release. (§7-2's developer-gesture entry point is wave 3.)
-    val hudAvailable = BuildConfig.DEBUG
-    var showHud by rememberSaveable { mutableStateOf(BuildConfig.DEBUG) }
+    // The debug read-outs must stay unreachable in release, and must not be the
+    // state a debug build *starts* in either (P1-C1). Both answers come from
+    // [DebugHudGate] rather than from a boolean written here, because a decision
+    // inside a @Composable cannot be unit-tested on the JVM and this one has
+    // already regressed once: the initial value used to be `BuildConfig.DEBUG`, so
+    // clearing app data left the HUD on screen before anyone asked for it.
+    // (§7-2's developer-gesture entry point is wave 3; the top-bar chip is the
+    // explicit act for now.)
+    val hudAvailable = DebugHudGate.availableIn(BuildConfig.DEBUG)
+    var showHud by rememberSaveable { mutableStateOf(DebugHudGate.initialVisible(BuildConfig.DEBUG)) }
 
     // O-13 (1): **a preset is colour. It does not reach the guide.**
     //
@@ -545,7 +548,7 @@ fun CameraScreen(
             showGuide = guideVisible,
             // §3-2: the product overlay is bracket + silhouette + horizon only.
             // Raw face boxes / centre dot ride the same toggle as the HUD.
-            showDetections = hudAvailable && showHud,
+            showDetections = DebugHudGate.visible(BuildConfig.DEBUG, showHud),
             // Pinch-to-zoom lives inside the pane and drives CameraX directly;
             // this is the read-back of CameraX's actual ZoomState, not a request.
             zoomRatio = actualZoom,
@@ -558,7 +561,7 @@ fun CameraScreen(
             onPreviewFpsAvailability = viewModel::onPreviewFpsAvailability,
             referenceLayer = referenceLayer,
             hud = {
-                if (hudAvailable && showHud) {
+                if (DebugHudGate.visible(BuildConfig.DEBUG, showHud)) {
                     CameraHud(
                         modifier = Modifier.align(Alignment.TopStart),
                         stats = stats,
@@ -652,6 +655,37 @@ fun CameraScreen(
                             bitmap.scaledToMaxSide(256)
                         }
                         trace?.mark(CapturePhase.CROP)
+
+                        // P1-1 evidence line, DEBUG only. **Measurement, not
+                        // behaviour** — nothing reads this back.
+                        //
+                        // The full-bleed decision turns on one number nobody has:
+                        // whether CameraX's viewport crop is actually reaching the
+                        // capture. The two recorded device measurements imply
+                        // opposite answers — `SubjectProjection`'s KDoc has
+                        // SM-G970N at 2904×3630 (a viewport crop of 96% of the
+                        // sensor width, predicted exactly from a 1080×1500 pane),
+                        // while `remain_plan` and the 기능명세서 both record
+                        // 3024×3780 (no width crop at all). Both cannot describe the
+                        // same pipeline.
+                        //
+                        // The pane ratio and the saved size on the same line settle
+                        // it from a single photo: `saved.width == buffer.width`
+                        // means the viewport is not cropping and the preview shows
+                        // less than the file holds. Everything the full-bleed
+                        // geometry predicts hangs off which of those it is.
+                        if (BuildConfig.DEBUG) {
+                            Log.d(
+                                LATENCY_TAG,
+                                "geometry pane=%.4f target=%.4f saved=%dx%d (%.4f)".format(
+                                    paneRatioWtoH,
+                                    aspect.ratioWtoH,
+                                    bitmap.width,
+                                    bitmap.height,
+                                    bitmap.width.toFloat() / bitmap.height.toFloat(),
+                                ),
+                            )
+                        }
 
                         val score = frame?.let { viewModel.matchScoreOf(it) }
                         container.captureRepository.saveCameraCapture(
