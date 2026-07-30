@@ -59,6 +59,14 @@ class EfficientDetSceneDetector(
     context: Context,
     private val config: EfficientDetSceneDetectorConfig = EfficientDetSceneDetectorConfig(),
 ) : CustomSceneDetector, AcceleratorReporting {
+    /** Result of an explicit lasso refinement. It is intentionally separate
+     * from the live full-frame batch so callers cannot accidentally count a
+     * refinement twice as ordinary frame evidence. */
+    data class ScopedDetectionResult(
+        val objects: List<ObjectObservation>,
+        val scopeRevision: Long,
+        val ran: Boolean,
+    )
     /**
      * A live detector plus the accelerator it is running on.
      *
@@ -223,6 +231,38 @@ class EfficientDetSceneDetector(
     private fun empty() = ObjectDetectionBatch(emptyList(), isFresh = true, sequenceId = sequenceId)
 
     override fun detect(frame: AnalysisFrame): List<ObjectObservation> = detectBatch(frame).objects
+
+    fun detectPolygon(
+        frame: AnalysisFrame,
+        polygon: com.gamdo.app.guide.ScenePolygonRegion,
+        scopeRevision: Long,
+        padding: Float = .03f,
+    ): ScopedDetectionResult {
+        val provider = frame.cropBitmapProvider ?: return ScopedDetectionResult(emptyList(), scopeRevision, false)
+        val crop = ScopeCropResolver.forPolygon(polygon, padding)
+        val bitmap = runCatching {
+            provider(ObjectDetectionCrop(crop.left, crop.top, crop.right, crop.bottom))
+        }.getOrNull() ?: return ScopedDetectionResult(emptyList(), scopeRevision, false)
+        val masked = runCatching {
+            PolygonBitmapMasker().maskOutsidePolygon(bitmap, polygon, crop)
+        }.getOrNull() ?: bitmap
+        return try {
+            val refined = detectBitmap(masked).map { observation ->
+                observation.copy(
+                    box = NormalizedBox(
+                        (crop.left + observation.box.left * crop.width).coerceIn(0f, 1f),
+                        (crop.top + observation.box.top * crop.height).coerceIn(0f, 1f),
+                        (crop.left + observation.box.right * crop.width).coerceIn(0f, 1f),
+                        (crop.top + observation.box.bottom * crop.height).coerceIn(0f, 1f),
+                    ),
+                )
+            }.filter { polygon.accepts(it.box, minimumBoxOverlap = .50f) }
+            ScopedDetectionResult(refined, scopeRevision, true)
+        } finally {
+            if (!masked.isRecycled && masked !== bitmap) masked.recycle()
+            if (!bitmap.isRecycled) bitmap.recycle()
+        }
+    }
 
     override fun close() {
         closed = true

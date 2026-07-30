@@ -50,3 +50,29 @@ class MaskInstanceSplitter(private val minimumPartRatio: Float = .15f, private v
         }
     }
 }
+
+/** Coordinates explicit polygon re-analysis with the same track manager used by
+ * the live detector. A stale result is rejected when the scope revision changed. */
+class ScopedRefinementWorker(
+    private val detector: EfficientDetSceneDetector,
+    private val scopeStore: SceneSearchScopeStore,
+    private val tracks: ObjectTrackManager,
+) {
+    fun refine(frame: AnalysisFrame): List<TrackedSceneObject> {
+        val scope = scopeStore.current() as? DetectionSearchScope.Polygon ?: return emptyList()
+        val result = detector.detectPolygon(frame, scope.region, scope.revision)
+        if (!result.ran || result.scopeRevision != scope.revision) return emptyList()
+        val candidates = result.objects.map { observation ->
+            SceneObjectCandidate(
+                box = observation.box,
+                detectionConfidence = observation.detectionConfidence ?: observation.confidence,
+                category = observation.category,
+                classificationConfidence = observation.classificationConfidence,
+                source = DetectionSource.SCOPE_CROP,
+            )
+        }
+        return tracks.update(result.scopeRevision, candidates)
+            .filter { scope.region.accepts(it.box, minimumBoxOverlap = .50f) }
+            .take(4)
+    }
+}
