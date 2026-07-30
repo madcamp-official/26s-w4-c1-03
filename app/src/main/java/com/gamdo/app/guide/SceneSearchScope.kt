@@ -14,9 +14,11 @@ class ScenePolygonRegion private constructor(val points: List<PointN>) {
     val areaRatio: Float = polygonArea(points)
 
     fun accepts(box: NormalizedBox, minimumBoxOverlap: Float = 0.35f): Boolean {
-        if (contains(PointN(box.centerX, box.centerY))) return true
         val boxArea = (box.width * box.height).coerceAtLeast(0.000001f)
-        return approximateIntersection(box) / boxArea >= minimumBoxOverlap
+        // A center-only hit is not enough: a large nearby object must have at
+        // least half of its box inside the lasso, otherwise it leaks into the
+        // selected scene merely because its center crossed the boundary.
+        return approximateIntersection(box) / boxArea >= maxOf(0.50f, minimumBoxOverlap)
     }
 
     fun contains(point: PointN): Boolean {
@@ -55,7 +57,7 @@ class ScenePolygonRegion private constructor(val points: List<PointN>) {
 
         fun fromNormalized(points: List<PointN>): ScenePolygonRegion? {
             if (points.size < 3) return null
-            val simplified = simplify(points.map(PointN::clamped), tolerance = 0.01f)
+            val simplified = simplify(points.map(PointN::clamped), tolerance = 0.005f)
             if (simplified.size < 3) return null
             val area = polygonArea(simplified)
             if (area !in 0.02f..0.80f) return null
@@ -64,13 +66,19 @@ class ScenePolygonRegion private constructor(val points: List<PointN>) {
 
         private fun simplify(points: List<PointN>, tolerance: Float): List<PointN> {
             if (points.size <= 3) return points
-            val result = mutableListOf(points.first())
-            points.drop(1).dropLast(1).forEach { point ->
-                val last = result.last()
-                if (abs(point.x - last.x) + abs(point.y - last.y) >= tolerance) result += point
+            fun distance(p: PointN, a: PointN, b: PointN): Float {
+                val dx = b.x - a.x; val dy = b.y - a.y
+                if (dx == 0f && dy == 0f) return kotlin.math.hypot(p.x-a.x, p.y-a.y)
+                val t = (((p.x-a.x)*dx + (p.y-a.y)*dy)/(dx*dx+dy*dy)).coerceIn(0f,1f)
+                return kotlin.math.hypot(p.x-(a.x+t*dx), p.y-(a.y+t*dy))
             }
-            result += points.last()
-            return result
+            fun rdp(input: List<PointN>): List<PointN> {
+                var max = tolerance; var index = -1
+                for (i in 1 until input.lastIndex) { val d = distance(input[i], input.first(), input.last()); if (d > max) { max=d; index=i } }
+                if (index >= 0) return rdp(input.subList(0,index+1)) + rdp(input.subList(index,input.size)).drop(1)
+                return listOf(input.first(), input.last())
+            }
+            return rdp(points)
         }
     }
 }

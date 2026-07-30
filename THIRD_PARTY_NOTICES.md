@@ -1,5 +1,13 @@
 # Third-party notices
 
+## EfficientDet-Lite2 INT8
+
+- Asset: `app/src/main/assets/models/efficientdet_lite2_coco_int8.tflite`
+- Source: [MediaPipe EfficientDet-Lite2 INT8](https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite2/int8/1/efficientdet_lite2.tflite)
+- Size: 7,515,971 bytes
+- SHA-256: `B3F50554CB0EA559E90328845F7D9BA4D13C8BFF372914D24E06BC8BB72FA896`
+- License: Apache License 2.0; training images are not bundled.
+
 ## EfficientDet-Lite0 INT8
 
 - Asset: `app/src/main/assets/models/efficientdet_lite0_coco_int8.tflite`
