@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -19,11 +20,14 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -145,8 +149,30 @@ fun AiRestoreThumb(
  *
  * 교체 (replace) is not a separate control: tapping `+` again and completing the
  * flow overwrites the single reference slot (§ 범위: "로컬의 단일 `내 레퍼런스`
- * 슬롯"). 삭제 (delete) is the small badge in the corner, on its own tap target so
- * it does not fire the select action underneath it.
+ * 슬롯"). 삭제 (delete) is the small badge in the corner.
+ *
+ * **The badge deletes on long-press, not on tap**, and that is the fix for 결함 3 of
+ * `docs/P1_전체기능_사용자시나리오_테스트·시연개선요청_2026-07-30.md` §13 — "내 감도
+ * 필터 선택 시 필터 목록/사진이 사라지는 현상", reported as recurring on device after
+ * the single-source `ResultFilterStateHolder` work had already landed.
+ *
+ * It kept recurring because the holder was never the cause. The badge is 15dp inside
+ * a 58dp thumb, Compose hit-tests innermost-first, and [onDelete] runs
+ * `ReferenceCreateController.clearActive()` — which drops the row from Room and
+ * republishes a null reference, so `synchronizeReference` takes the 내 감도 entry out
+ * of the catalogue for good. A finger landing in the top-right corner of the tile the
+ * user meant to *select* therefore deleted their reference outright, with no
+ * confirmation and no undo, and it read from the user's seat as "I picked 내 감도 and
+ * it disappeared from the list". Enlarging the badge to the 48dp minimum would only
+ * make the mis-tap likelier, since the destructive target is *inside* the one the
+ * user is aiming at.
+ *
+ * So the tap goes to [onSelect] — on a control whose whole job is selection that is
+ * the overwhelmingly likely intent, and it makes a corner mis-tap do the right thing
+ * instead of the worst thing — while deletion takes the deliberate gesture. Long-press
+ * is the destructive-action idiom already in use on this screen (`ResultScreen`'s
+ * 길게 누르면 원본이 보여요), so it costs no new vocabulary. Nothing is lost by the
+ * demotion: the slot is single, and `+` overwrites it, so deleting is the rare path.
  */
 @Composable
 fun MyReferenceThumb(
@@ -158,6 +184,14 @@ fun MyReferenceThumb(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Keyed on `Unit` below, so the detector is installed once and survives
+    // recomposition — the call sites pass lambda literals, and keying the
+    // `pointerInput` on those would tear the detector down and rebuild it on every
+    // recomposition, cancelling a long-press that was already in progress. That would
+    // make deletion intermittent, which for a destructive action is worse than either
+    // outcome. Same pattern `ResultScreen` uses for its own 길게 누르기.
+    val select by rememberUpdatedState(onSelect)
+    val delete by rememberUpdatedState(onDelete)
     StripThumb(label = ReferenceLabels.ACTIVE, shape = shape, size = size, selected = selected, onClick = onSelect, modifier = modifier) {
         if (imageUri != null) {
             AsyncImage(
@@ -174,7 +208,15 @@ fun MyReferenceThumb(
                 .size(15.dp)
                 .clip(CircleShape)
                 .background(Ink950)
-                .clickable(onClick = onDelete),
+                // Consumed here rather than left to fall through: an inner pointer
+                // handler swallows the gesture either way, so the tap has to be
+                // forwarded explicitly for the corner of the tile to stay selectable.
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onTap = { select() },
+                        onLongPress = { delete() },
+                    )
+                },
             contentAlignment = Alignment.Center,
         ) {
             Text("×", color = TextHi, fontSize = 10.sp, fontWeight = FontWeight.Bold)
