@@ -195,4 +195,16 @@ fun GamdoPolicy.toCameraStyleTarget(): StyleTarget = StyleTarget(
         (capture.backgroundRatio + 0.12f).coerceIn(0.15f, 0.85f),
     cameraPitchRange = (capture.tiltPreference - 5f).coerceIn(-15f, 5f)..
         (capture.tiltPreference + 5f).coerceIn(-5f, 15f),
+    preferredPortraitTemplateId = capture.portrait.preferredTemplateIds.firstOrNull()
+        ?: when (capture.resolvedPortraitPreference().framing) {
+            PortraitFraming.FULL_BODY -> if (capture.resolvedPortraitPreference().mood == PortraitMood.CENTERED) {
+                "portrait_full_center_v3"
+            } else {
+                "portrait_full_thirds_v3"
+            }
+            PortraitFraming.UPPER_BODY -> "portrait_upper_45_v3"
+            PortraitFraming.ENVIRONMENTAL -> "portrait_environmental_v3"
+            PortraitFraming.AUTO -> null
+        },
+    portraitMood = capture.resolvedPortraitPreference().mood.name,
 )

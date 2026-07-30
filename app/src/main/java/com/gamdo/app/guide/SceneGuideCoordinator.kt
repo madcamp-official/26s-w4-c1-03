@@ -174,6 +174,7 @@ class SceneGuideCoordinator(
                 objectCount = observation.slotDetections.count { detection -> detection.role == SlotRole.OBJECT },
                 backgroundRatio = styleTarget.backgroundRatioRange?.let { range -> (range.start + range.endInclusive) / 2f } ?: 0.4f,
                 symmetry = 0f,
+                preferredTemplateId = styleTarget.preferredPortraitTemplateId,
             )
         }
         val sceneTemplate = autoLayoutResolver.resolve(

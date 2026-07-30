@@ -76,6 +76,7 @@ data class PortraitSceneEvidence(
     val objectCount: Int = 0,
     val backgroundRatio: Float = 0.5f,
     val sceneSymmetry: Float = 0f,
+    val preferredTemplateId: String? = null,
 )
 
 enum class HorizontalDirection { LEFT, RIGHT }
@@ -127,14 +128,29 @@ object PortraitFramingCatalog {
 
 /** Converts face/person boxes into the small amount of evidence needed by V3. */
 object PortraitSceneClassifier {
-    fun classify(face: RectN, person: RectN?, objectCount: Int, backgroundRatio: Float, symmetry: Float): PortraitSceneEvidence {
+    fun classify(
+        face: RectN,
+        person: RectN?,
+        objectCount: Int,
+        backgroundRatio: Float,
+        symmetry: Float,
+        preferredTemplateId: String? = null,
+    ): PortraitSceneEvidence {
         val coverage = when {
             person == null -> PortraitCoverage.FACE_ONLY
             face.height / person.height.coerceAtLeast(0.01f) >= 0.22f || person.bottom > 0.96f -> PortraitCoverage.UPPER_BODY
             person.bottom <= 0.96f && person.height >= 0.42f -> PortraitCoverage.FULL_BODY
             else -> PortraitCoverage.UPPER_BODY
         }
-        return PortraitSceneEvidence(coverage, face, person, objectCount = objectCount, backgroundRatio = backgroundRatio, sceneSymmetry = symmetry)
+        return PortraitSceneEvidence(
+            coverage,
+            face,
+            person,
+            objectCount = objectCount,
+            backgroundRatio = backgroundRatio,
+            sceneSymmetry = symmetry,
+            preferredTemplateId = preferredTemplateId,
+        )
     }
 }
 

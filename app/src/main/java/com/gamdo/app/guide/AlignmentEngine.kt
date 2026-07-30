@@ -43,6 +43,9 @@ data class StyleTarget(
     val layoutTemplateId: String? = null,
     /** Reference-derived slots are screen-fixed and take precedence over auto search. */
     val referenceSlots: List<ReferenceTargetSlot> = emptyList(),
+    /** Optional bounded preference for the fixed portrait framing catalog. */
+    val preferredPortraitTemplateId: String? = null,
+    val portraitMood: String? = null,
 )
 
 data class GuideConfig(

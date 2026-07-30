@@ -168,6 +168,31 @@ class SceneGuideQualityTest {
     }
 
     @Test
+    fun `portrait preference changes only the fixed framing candidate`() {
+        val person = SlotDetection(
+            id = "person",
+            category = GuideObjectCategory.PERSON,
+            bounds = NormalizedBox(0.20f, 0.08f, 0.58f, 0.94f),
+            confidence = 0.9f,
+            isReliable = true,
+            role = SlotRole.PERSON,
+        )
+        val evidence = PortraitSceneClassifier.classify(
+            face = RectN(0.27f, 0.10f, 0.43f, 0.27f),
+            person = RectN(0.20f, 0.08f, 0.58f, 0.94f),
+            objectCount = 0,
+            backgroundRatio = 0.2f,
+            symmetry = 0f,
+            preferredTemplateId = "portrait_full_lead_room_v3",
+        )
+
+        val template = AutoLayoutTemplateResolver().resolve(listOf(person), portraitEvidence = evidence)
+
+        assertEquals("portrait_full_lead_room_v3", template?.id)
+        assertEquals(RectN(0.14f, 0.08f, 0.55f, 0.94f), template?.slots?.single()?.bounds)
+    }
+
+    @Test
     fun `manual layout replaces automatic layout and rescan clears it`() {
         val controller = SceneGuideSessionController()
         assertTrue(controller.selectManualLayout(LayoutTemplateCatalog.GENERIC_PAIR))
