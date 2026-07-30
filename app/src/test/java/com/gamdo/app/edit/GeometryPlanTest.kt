@@ -8,22 +8,52 @@ import org.junit.Test
 /** JVM coverage for the geometry half of §4-1 (levelling + ratio crop). */
 class GeometryPlanTest {
 
+    /**
+     * The editor's ratio list must match the shutter's, and there are three now.
+     *
+     * This test used to assert exactly two and cite D9-1's "do not add 16:9". The
+     * owner reversed that on 2026-07-30 — the redesign's ratio control cycles
+     * `4:5 → 1:1 → 16:9`. It still earns its place: if `CaptureAspect` gains a rung
+     * and this does not, [EditAspect.nearest] silently rounds the new ratio to the
+     * closest old one and the editor re-crops a photo the user framed deliberately.
+     */
     @Test
-    fun `D9-1 only two aspect ratios exist`() {
-        // Guard, not a formality: 16:9 / 3:4 / full are forbidden by D9-1.
-        assertEquals(2, EditAspect.entries.size)
-        assertTrue(EditAspect.entries.containsAll(listOf(EditAspect.RATIO_4_5, EditAspect.RATIO_1_1)))
+    fun `the editor knows every ratio the shutter offers`() {
+        assertEquals(3, EditAspect.entries.size)
+        assertTrue(
+            EditAspect.entries.containsAll(
+                listOf(EditAspect.RATIO_4_5, EditAspect.RATIO_1_1, EditAspect.RATIO_16_9),
+            ),
+        )
+    }
+
+    /**
+     * `16:9` is the **tall** 9:16 frame, not a 1.778 landscape one.
+     *
+     * The camera is portrait-only, so the three rungs descend — 1.0, 0.8, 0.5625 —
+     * and the label follows the convention a portrait camera uses. Getting this
+     * backwards would produce the one wide option in a portrait app and a preview
+     * that disagrees with the file.
+     */
+    @Test
+    fun `16 by 9 means the tall frame`() {
+        assertEquals(0.5625f, EditAspect.RATIO_16_9.ratioWtoH, 1e-6f)
+        assertTrue(EditAspect.RATIO_16_9.ratioWtoH < EditAspect.RATIO_4_5.ratioWtoH)
     }
 
     @Test
     fun `preset aspect keys map to the supported ratios`() {
         assertEquals(EditAspect.RATIO_4_5, EditAspect.fromPresetKey("4:5"))
         assertEquals(EditAspect.RATIO_1_1, EditAspect.fromPresetKey("1:1"))
+        assertEquals(EditAspect.RATIO_16_9, EditAspect.fromPresetKey("16:9"))
     }
 
     @Test
     fun `unknown or missing aspect keys fall back to 4 by 5`() {
-        assertEquals(EditAspect.RATIO_4_5, EditAspect.fromPresetKey("16:9"))
+        // `16:9` used to be the example of an unsupported key. It resolves now, so
+        // the fallback needs a key that is genuinely absent to be testing anything.
+        assertEquals(EditAspect.RATIO_4_5, EditAspect.fromPresetKey("3:4"))
+        assertEquals(EditAspect.RATIO_4_5, EditAspect.fromPresetKey("full"))
         assertEquals(EditAspect.RATIO_4_5, EditAspect.fromPresetKey(null))
     }
 
@@ -31,6 +61,7 @@ class GeometryPlanTest {
     fun `nearest ratio mirrors the camera selection`() {
         assertEquals(EditAspect.RATIO_1_1, EditAspect.nearest(0.99f))
         assertEquals(EditAspect.RATIO_4_5, EditAspect.nearest(0.81f))
+        assertEquals(EditAspect.RATIO_16_9, EditAspect.nearest(0.57f))
     }
 
     @Test

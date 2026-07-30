@@ -17,11 +17,33 @@ import kotlin.math.sin
  */
 
 /**
- * D9-1: the product ships exactly two aspect ratios. Do not add 16:9, 3:4 or full.
+ * The aspect ratios the shutter offers, mirrored here so the editor re-crops a photo
+ * the way the camera cropped it.
+ *
+ * **D9-1 said "exactly two — do not add 16:9", and the owner reversed that**
+ * (2026-07-30): the redesign's ratio control cycles `4:5 → 1:1 → 16:9`. The old
+ * comment is kept here in the history rather than deleted because the reversal is
+ * the interesting fact, not the list.
+ *
+ * ## Why 16:9 is 0.5625 and not 1.778
+ *
+ * The camera is portrait-only. `4:5` (0.8) and `1:1` (1.0) are both at-or-taller
+ * than square, so the third rung continues downward: `16:9` is the **tall** 9:16
+ * frame, the shape of the phone screen, which is what a portrait camera means by
+ * that label. A 1.778 landscape frame would be the only wide option in a portrait
+ * app and would not match what the preview shows.
+ *
+ * ## This enum has to gain the value, not just the camera's
+ *
+ * [nearest] is how a saved photo's ratio is recovered when the editor opens it.
+ * Without the third entry, `nearest(0.5625)` returns [RATIO_4_5] — 0.2375 away
+ * versus 0.4375 for [RATIO_1_1] — and the editor would silently re-crop a 9:16
+ * photograph to 4:5, throwing away the framing the user chose at the shutter.
  */
 enum class EditAspect(val presetKey: String, val ratioWtoH: Float) {
     RATIO_4_5("4:5", 0.8f),
     RATIO_1_1("1:1", 1f),
+    RATIO_16_9("16:9", 9f / 16f),
     ;
 
     companion object {

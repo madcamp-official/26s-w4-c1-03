@@ -125,12 +125,21 @@ class LocalEditorPlanTest {
         assertEquals(1080, plan.geometry.crop.height)
     }
 
+    /**
+     * A 1080×1920 import is **kept** at 9:16 rather than cropped to 4:5.
+     *
+     * 1080/1920 is exactly 0.5625, so once `16:9` joined [EditAspect] (owner
+     * decision 2026-07-30, reversing D9-1) `nearest` recognises the shape instead of
+     * rounding it to the closest of two. The old expectation was 1080×1350 — a 4:5
+     * crop that threw away 570px of a photograph whose framing nobody asked to
+     * change. Preserving it is the point of adding the rung, not a side effect.
+     */
     @Test
-    fun `a portrait import is normalized without exceeding the frame`() {
+    fun `a portrait import keeps its own ratio instead of being cropped to 4 by 5`() {
         val plan = editor().plan(sampleOf(1080, 1920))
-        assertEquals(EditAspect.RATIO_4_5, plan.geometry.aspect)
+        assertEquals(EditAspect.RATIO_16_9, plan.geometry.aspect)
         assertEquals(1080, plan.geometry.crop.width)
-        assertEquals(1350, plan.geometry.crop.height)
+        assertEquals(1920, plan.geometry.crop.height)
     }
 
     @Test
