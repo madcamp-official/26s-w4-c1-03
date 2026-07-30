@@ -32,6 +32,16 @@ import org.junit.Test
  */
 class ProfilePaletteTest {
 
+    /**
+     * The swatch that carries the selection's own lightness, unshifted — the one every
+     * hue and chroma assertion below measures.
+     *
+     * Derived rather than written as `2`, so that if [SWATCH_COUNT] changes again these
+     * tests keep measuring the middle instead of silently measuring an off-centre swatch
+     * whose lightness has been pushed toward a gamut wall.
+     */
+    private val MIDDLE = (SWATCH_COUNT - 1) / 2
+
     private fun r(c: Int) = (c shr 16) and 0xFF
     private fun g(c: Int) = (c shr 8) and 0xFF
     private fun b(c: Int) = c and 0xFF
@@ -103,7 +113,7 @@ class ProfilePaletteTest {
             val chroma = 12f
             val swatch = ProfilePalette.swatches(
                 tone(0.45f, chroma * cos(radians), chroma * sin(radians)),
-            )[1]
+            )[MIDDLE]
             val channels = listOf("R" to r(swatch), "G" to g(swatch), "B" to b(swatch))
             dominants += channels.maxBy { it.second }.first
         }
@@ -128,7 +138,7 @@ class ProfilePaletteTest {
             for (chroma in listOf(6f, 10f, 16f, 22f)) {
                 val radians = Math.toRadians(degrees.toDouble()).toFloat()
                 val requested = tone(0.5f, chroma * cos(radians), chroma * sin(radians))
-                val delta = hueDegrees(ProfilePalette.swatches(requested)[1]) - degrees
+                val delta = hueDegrees(ProfilePalette.swatches(requested)[MIDDLE]) - degrees
                 assertTrue(
                     "hue $degrees° at chroma $chroma came back " +
                         "${"%.1f".format(wrap(delta))}° away",
@@ -266,7 +276,7 @@ class ProfilePaletteTest {
     @Test
     fun `an empty selection is handled instead of dividing by zero`() {
         val swatches = ProfilePalette.swatches(emptyList<CardTone>())
-        assertEquals(3, swatches.size)
+        assertEquals(SWATCH_COUNT, swatches.size)
         swatches.forEach {
             assertTrue(r(it) in 0..255 && g(it) in 0..255 && b(it) in 0..255)
             assertTrue("r≈g", abs(r(it) - g(it)) <= 1)
@@ -276,18 +286,96 @@ class ProfilePaletteTest {
     // ------------------------------------------------------------ shape and safety
 
     @Test
-    fun `three swatches, opaque, ordered dark to light`() {
+    fun `five swatches, opaque, ordered dark to light`() {
         val s = ProfilePalette.swatches(listOf(greenCafe, warmLamp))
-        assertEquals(3, s.size)
+        assertEquals(SWATCH_COUNT, s.size)
         s.forEach { assertEquals(0xFF, (it ushr 24) and 0xFF) }
-        assertTrue(luma(s[0]) < luma(s[1]))
-        assertTrue(luma(s[1]) < luma(s[2]))
+        for (i in 1 until s.size) {
+            assertTrue("swatch $i is not lighter than ${i - 1}", luma(s[i - 1]) < luma(s[i]))
+        }
+    }
+
+    /**
+     * The wall that going from three swatches to five ran into.
+     *
+     * Keeping the old `L_STEP` would have clamped the outer two against `L_MIN` on a dark
+     * selection and against `L_MAX` on a bright one, drawing two identical circles at
+     * every extreme. The old constants failed this at brightness 0 and at brightness 1;
+     * a step small enough to dodge the walls fails
+     * `the five swatches span more range than the three they replaced` instead.
+     *
+     * 8-bit quantisation means adjacent swatches can differ by as little as ~2 luma at
+     * the dark end, so the bound is deliberately low — this is asking "are they distinct
+     * at all", and the spread test below asks "are they far enough apart".
+     */
+    @Test
+    fun `all five swatches stay distinct at every brightness`() {
+        for (brightness in listOf(0f, 0.06f, 0.25f, 0.5f, 0.75f, 0.94f, 1f)) {
+            for (chroma in listOf(0f, 8f, 25f)) {
+                val s = ProfilePalette.swatches(tone(brightness, -chroma, chroma / 2f))
+                val hexes = s.map { "#%02X%02X%02X".format(r(it), g(it), b(it)) }
+                assertEquals(
+                    "brightness $brightness chroma $chroma produced a repeat: $hexes",
+                    SWATCH_COUNT,
+                    s.toSet().size,
+                )
+                for (i in 1 until s.size) {
+                    assertTrue(
+                        "brightness $brightness chroma $chroma: $hexes are not strictly ordered",
+                        luma(s[i]) - luma(s[i - 1]) > 2.0,
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Five swatches have to be a *wider* palette than three, not the same range chopped
+     * finer. The old band spanned 28 L\*; this one spans 44.
+     */
+    @Test
+    fun `the five swatches span more range than the three they replaced`() {
+        for (brightness in listOf(0f, 0.5f, 1f)) {
+            val s = ProfilePalette.swatches(tone(brightness, -12f, 6f))
+            val span = luma(s.last()) - luma(s.first())
+            // The old three-swatch band at mid brightness spanned L* 36..64; in luma that
+            // is roughly 90. Anything at or below that is a regression in reach.
+            assertTrue(
+                "brightness $brightness spans only $span luma across five swatches",
+                span > 90.0,
+            )
+        }
+    }
+
+    /**
+     * Going to five swatches must not have moved the *colour*. Only lightness varies
+     * across the row, and the middle swatch's hue and chroma are the selection's measured
+     * ones — the owner verified the three-swatch palette against the device on
+     * 2026-07-30 and that measurement is what has to survive.
+     */
+    @Test
+    fun `every swatch carries the same hue, and only lightness differs`() {
+        val selections = listOf(
+            listOf(greenCafe, blueSky, lakeAndGrass),
+            listOf(warmPortrait),
+            listOf(warmLamp, greenCafe),
+        )
+        for (selection in selections) {
+            val swatches = ProfilePalette.swatches(selection)
+            val hues = swatches.map { hueDegrees(it) }
+            for (hue in hues) {
+                assertTrue(
+                    "hues drifted across the row: ${hues.map { "%.1f".format(it) }}",
+                    abs(wrap(hue - hues[MIDDLE])) <= 8.0,
+                )
+            }
+        }
     }
 
     @Test
     fun `a brighter selection yields a brighter palette`() {
-        val dark = ProfilePalette.swatches(tone(0.15f, -8f, 4f))[1]
-        val light = ProfilePalette.swatches(tone(0.85f, -8f, 4f))[1]
+        val dark = ProfilePalette.swatches(tone(0.15f, -8f, 4f))[MIDDLE]
+        val light = ProfilePalette.swatches(tone(0.85f, -8f, 4f))[MIDDLE]
         assertTrue(luma(dark) < luma(light))
     }
 
@@ -299,7 +387,7 @@ class ProfilePaletteTest {
     @Test
     fun `a real single-photograph selection is visibly coloured`() {
         listOf(greenCafe, blueSky, warmPortrait, warmLamp).forEach { card ->
-            val c = ProfilePalette.swatches(listOf(card))[1]
+            val c = ProfilePalette.swatches(listOf(card))[MIDDLE]
             val spread = maxOf(r(c), g(c), b(c)) - minOf(r(c), g(c), b(c))
             assertTrue(
                 "#%02X%02X%02X has a channel spread of only $spread".format(r(c), g(c), b(c)),
@@ -310,8 +398,8 @@ class ProfilePaletteTest {
 
     @Test
     fun `a more colourful selection moves further from grey`() {
-        val faint = ProfilePalette.swatches(tone(0.5f, -2f, 1f))[1]
-        val strong = ProfilePalette.swatches(tone(0.5f, -20f, 10f))[1]
+        val faint = ProfilePalette.swatches(tone(0.5f, -2f, 1f))[MIDDLE]
+        val strong = ProfilePalette.swatches(tone(0.5f, -20f, 10f))[MIDDLE]
         val spread = { c: Int -> maxOf(r(c), g(c), b(c)) - minOf(r(c), g(c), b(c)) }
         assertTrue(spread(strong) > spread(faint))
     }
