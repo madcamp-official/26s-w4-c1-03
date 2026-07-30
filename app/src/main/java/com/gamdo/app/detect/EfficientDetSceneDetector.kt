@@ -21,8 +21,8 @@ private const val TAG = "EfficientDet"
  */
 private const val GPU_UPGRADE_THREAD_NAME = "gamdo-gpu-upgrade"
 
-/** EfficientDet-Lite0's own input size, so validation runs the real tensor path. */
-private const val VALIDATION_INPUT_PX = 320
+/** Lite2 uses a 448px input tensor; the runtime performs the final resize. */
+private const val VALIDATION_INPUT_PX = 448
 
 /** Mid grey. Opaque and non-zero so nothing upstream can shortcut an empty image. */
 private const val VALIDATION_FILL = 0xFF808080.toInt()
@@ -30,7 +30,8 @@ private const val VALIDATION_FILL = 0xFF808080.toInt()
 /** Runtime knobs for the bundled mobile object detector. */
 data class EfficientDetSceneDetectorConfig(
     val enabled: Boolean = true,
-    val modelAsset: String = "models/efficientdet_lite0_coco_int8.tflite",
+    val modelAsset: String = "models/efficientdet_lite2_coco_int8.tflite",
+    val fallbackModelAsset: String = "models/efficientdet_lite0_coco_int8.tflite",
     val minimumConfidence: Float = 0.25f,
     val maxResults: Int = 8,
     val preferGpu: Boolean = true,
@@ -57,7 +58,17 @@ data class EfficientDetSceneDetectorConfig(
 class EfficientDetSceneDetector(
     context: Context,
     private val config: EfficientDetSceneDetectorConfig = EfficientDetSceneDetectorConfig(),
-) : CustomSceneDetector, AcceleratorReporting {
+) : CustomSceneDetector, AcceleratorReporting, ScopedObjectRefinement {
+    val scopeStore = SceneSearchScopeStore()
+    private val scopedTracks = ObjectTrackManager()
+    /** Result of an explicit lasso refinement. It is intentionally separate
+     * from the live full-frame batch so callers cannot accidentally count a
+     * refinement twice as ordinary frame evidence. */
+    data class ScopedDetectionResult(
+        val objects: List<ObjectObservation>,
+        val scopeRevision: Long,
+        val ran: Boolean,
+    )
     /**
      * A live detector plus the accelerator it is running on.
      *
@@ -71,7 +82,7 @@ class EfficientDetSceneDetector(
         fun close() = confined.close { runCatching { it.close() } }
     }
 
-    override val modelId: String = "efficientdet-lite0-coco-int8"
+    override val modelId: String = "efficientdet-lite2-coco-int8"
 
     private val appContext = context.applicationContext
 
@@ -151,6 +162,8 @@ class EfficientDetSceneDetector(
 
     private var frameCount = 0
     private var sequenceId = 0L
+    private val detectionFusion = DetectionFusion()
+    private val objectTracks = ObjectTrackManager()
 
     init {
         if (config.enabled) startGpuUpgradeIfWanted()
@@ -195,12 +208,63 @@ class EfficientDetSceneDetector(
             primary
         }
 
-        return ObjectDetectionBatch(merged, isFresh = true, sequenceId = sequenceId)
+        val fused = detectionFusion.fuse(merged.map {
+            SceneObjectCandidate(
+                box = it.box,
+                detectionConfidence = it.detectionConfidence ?: it.confidence,
+                category = it.category,
+                classificationConfidence = it.classificationConfidence,
+                source = DetectionSource.FULL_FRAME,
+                nativeTrackingId = it.trackingId,
+            )
+        })
+        val tracked = objectTracks.update(sequenceId, fused).map { track ->
+            ObjectObservation(
+                box = track.box,
+                detectionConfidence = track.confidence,
+                classificationConfidence = null,
+                category = track.category,
+                sceneTrackId = track.trackId,
+            )
+        }
+        return ObjectDetectionBatch(tracked, isFresh = true, sequenceId = sequenceId)
     }
 
     private fun empty() = ObjectDetectionBatch(emptyList(), isFresh = true, sequenceId = sequenceId)
 
     override fun detect(frame: AnalysisFrame): List<ObjectObservation> = detectBatch(frame).objects
+
+    override fun detectPolygon(
+        frame: AnalysisFrame,
+        polygon: com.gamdo.app.guide.ScenePolygonRegion,
+        scopeRevision: Long,
+        padding: Float,
+    ): ScopedDetectionResult {
+        val provider = frame.cropBitmapProvider ?: return ScopedDetectionResult(emptyList(), scopeRevision, false)
+        val crop = ScopeCropResolver.forPolygon(polygon, padding)
+        val bitmap = runCatching {
+            provider(ObjectDetectionCrop(crop.left, crop.top, crop.right, crop.bottom))
+        }.getOrNull() ?: return ScopedDetectionResult(emptyList(), scopeRevision, false)
+        val masked = runCatching {
+            PolygonBitmapMasker().maskOutsidePolygon(bitmap, polygon, crop)
+        }.getOrNull() ?: bitmap
+        return try {
+            val refined = detectBitmap(masked).map { observation ->
+                observation.copy(
+                    box = NormalizedBox(
+                        (crop.left + observation.box.left * crop.width).coerceIn(0f, 1f),
+                        (crop.top + observation.box.top * crop.height).coerceIn(0f, 1f),
+                        (crop.left + observation.box.right * crop.width).coerceIn(0f, 1f),
+                        (crop.top + observation.box.bottom * crop.height).coerceIn(0f, 1f),
+                    ),
+                )
+            }.filter { polygon.accepts(it.box, minimumBoxOverlap = .50f) }
+            ScopedDetectionResult(refined, scopeRevision, true)
+        } finally {
+            if (!masked.isRecycled && masked !== bitmap) masked.recycle()
+            if (!bitmap.isRecycled) bitmap.recycle()
+        }
+    }
 
     override fun close() {
         closed = true
@@ -209,6 +273,7 @@ class EfficientDetSceneDetector(
         synchronized(lock) { upgraded.also { upgraded = null } }?.close()
         detector?.close()
         detector = null
+        objectTracks.reset()
     }
 
     /**
@@ -225,10 +290,10 @@ class EfficientDetSceneDetector(
     private fun createColdStartDetector(): DetectorHandle? {
         val accelerator = GpuUpgradePolicy.coldStart
         val attempt = runCatching {
-            DetectorHandle(
-                ThreadConfined.unconfined(createDetector(appContext, accelerator)),
-                accelerator,
-            )
+            DetectorHandle(ThreadConfined.unconfined(createDetector(appContext, accelerator, config.modelAsset)), accelerator)
+        }.recoverCatching {
+            Log.w(TAG, "primary model unavailable; using Lite0 fallback", it)
+            DetectorHandle(ThreadConfined.unconfined(createDetector(appContext, accelerator, config.fallbackModelAsset)), accelerator)
         }
         val handle = attempt.getOrNull()
         acceleratorState = DetectorAcceleratorReport(
@@ -385,9 +450,13 @@ class EfficientDetSceneDetector(
         Log.i(TAG, acceleratorState.format())
     }
 
-    private fun createDetector(context: Context, accelerator: DetectorAccelerator): ObjectDetector {
+    private fun createDetector(
+        context: Context,
+        accelerator: DetectorAccelerator,
+        assetPath: String = config.modelAsset,
+    ): ObjectDetector {
         val base = BaseOptions.builder()
-            .setModelAssetPath(config.modelAsset)
+            .setModelAssetPath(assetPath)
             .setDelegate(accelerator.toDelegate())
             .build()
         val options = ObjectDetector.ObjectDetectorOptions.builder()

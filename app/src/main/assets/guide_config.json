@@ -32,9 +32,10 @@
   },
   "objectGuide": {
     "sceneModelEnabled": true,
-    "sceneModelAsset": "models/efficientdet_lite0_coco_int8.tflite",
-    "sceneModelMinimumConfidence": 0.25,
-    "sceneModelMaxResults": 8,
+    "sceneModelAsset": "models/efficientdet_lite2_coco_int8.tflite",
+    "sceneModelFallbackAsset": "models/efficientdet_lite0_coco_int8.tflite",
+    "sceneModelMinimumConfidence": 0.20,
+    "sceneModelMaxResults": 12,
     "sceneModelPreferGpu": true,
     "sceneModelCenterCropEveryFrames": 4,
     "sceneModelCenterCropScale": 1.60,
@@ -77,6 +78,10 @@
     "multiScaleCropScale": 1.60,
     "multiScaleSmallObjectAreaRatio": 0.05,
     "multiScaleDuplicateIou": 0.55,
-    "referenceGraceFrames": 8
+    "referenceGraceFrames": 8,
+    "trackingMaxMissedFrames": 3,
+    "trackingBoxSmoothingAlpha": 0.55,
+    "trackingMinimumMatchIou": 0.15,
+    "trackingMaximumMatchCenterDistance": 0.18
   }
 }

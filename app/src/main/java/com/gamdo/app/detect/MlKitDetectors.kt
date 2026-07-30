@@ -182,8 +182,32 @@ class MlKitSubjectSegmenter : SubjectSceneSegmenter {
     private val segmenter = SubjectSegmentation.getClient(
         SubjectSegmenterOptions.Builder()
             .enableForegroundConfidenceMask()
-            .build(),
+            .enableMultipleSubjects(
+                SubjectSegmenterOptions.SubjectResultOptions.Builder()
+                    .enableConfidenceMask()
+                    .build(),
+            ).build(),
     )
+
+    /** Multi-subject masks are optional refinement evidence, never a replacement
+     * for detector boxes. Each local mask is kept separate so touching subjects
+     * are not collapsed into one union foreground contour. */
+    fun detectInstances(frame: AnalysisFrame): List<InstanceMaskObservation> {
+        val image = frame.image as? InputImage ?: return emptyList()
+        return runCatching {
+            Tasks.await(segmenter.process(image)).subjects.mapNotNull { subject ->
+                val buffer = subject.confidenceMask ?: return@mapNotNull null
+                val values = FloatArray(buffer.remaining()).also { buffer.rewind(); buffer.get(it) }
+                if (values.isEmpty()) return@mapNotNull null
+                val box = NormalizedBox(
+                    subject.startX / frame.width.toFloat(), subject.startY / frame.height.toFloat(),
+                    (subject.startX + subject.width) / frame.width.toFloat(),
+                    (subject.startY + subject.height) / frame.height.toFloat(),
+                )
+                InstanceMaskObservation(box, CompactConfidenceMask(64, 64, values.copyOf(64 * 64), box), 1f)
+            }
+        }.getOrDefault(emptyList())
+    }
 
     /**
      * Blocks until segmentation finishes. **Deliberately no timeout.**

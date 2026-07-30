@@ -56,7 +56,8 @@ data class GuideConfigBundle(
 @Serializable
 data class ObjectGuideConfigJson(
     val sceneModelEnabled: Boolean = true,
-    val sceneModelAsset: String = "models/efficientdet_lite0_coco_int8.tflite",
+    val sceneModelAsset: String = "models/efficientdet_lite2_coco_int8.tflite",
+    val sceneModelFallbackAsset: String = "models/efficientdet_lite0_coco_int8.tflite",
     val sceneModelMinimumConfidence: Float = 0.25f,
     val sceneModelMaxResults: Int = 8,
     /**
@@ -138,6 +139,10 @@ data class ObjectGuideConfigJson(
     val multiScaleCropScale: Float = 1.60f,
     val multiScaleSmallObjectAreaRatio: Float = 0.05f,
     val multiScaleDuplicateIou: Float = 0.55f,
+    val trackingMaxMissedFrames: Int = 3,
+    val trackingBoxSmoothingAlpha: Float = 0.55f,
+    val trackingMinimumMatchIou: Float = 0.15f,
+    val trackingMaximumMatchCenterDistance: Float = 0.18f,
     /**
      * O-13 (2): how many analysed frames the scene analyser gets before a selected
      * reference's composition is drawn instead. `0` = show the reference the instant
@@ -154,6 +159,7 @@ data class ObjectGuideConfigJson(
 ) {
     init {
         require(sceneModelAsset.isNotBlank())
+        require(sceneModelFallbackAsset.isNotBlank())
         require(sceneModelMinimumConfidence in 0f..1f)
         require(sceneModelMaxResults in 1..25)
         require(sceneModelCenterCropEveryFrames >= 1)
@@ -235,6 +241,7 @@ data class ObjectGuideConfigJson(
     fun toEfficientDetConfig(): EfficientDetSceneDetectorConfig = EfficientDetSceneDetectorConfig(
         enabled = sceneModelEnabled,
         modelAsset = sceneModelAsset,
+        fallbackModelAsset = sceneModelFallbackAsset,
         minimumConfidence = sceneModelMinimumConfidence,
         maxResults = sceneModelMaxResults,
         preferGpu = sceneModelPreferGpu,

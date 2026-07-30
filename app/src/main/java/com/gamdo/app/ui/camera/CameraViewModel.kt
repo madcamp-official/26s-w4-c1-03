@@ -152,6 +152,7 @@ class CameraViewModel(
     fun attachDetector(detector: com.gamdo.app.detect.SceneDetector) {
         if (this.detector === detector) return
         this.detector = detector
+        sceneGuideSessionController.attachScopeStore(detector.scopeStore)
         detector.setObjectDetectionPaused(false)
     }
 
