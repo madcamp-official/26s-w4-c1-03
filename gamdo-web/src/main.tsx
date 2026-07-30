@@ -21,15 +21,21 @@ type ShootPolicy = {
 
 type ShootConfig = { maxPhotos: number; policy: ShootPolicy }
 
-function GuideOverlay({ slots = [] }: { slots?: ShootSlot[] }) {
-  return <svg className="guide-overlay" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true">
+function GuideOverlay({ slots = [], frameWidth, frameHeight }: { slots?: ShootSlot[]; frameWidth: number; frameHeight: number }) {
+  return <svg className="guide-overlay" viewBox={`0 0 ${frameWidth} ${frameHeight}`} preserveAspectRatio="xMidYMid slice" aria-hidden="true">
     {slots.map(slot => {
       const { left, top, right, bottom } = slot.bounds
       const width = right - left
       const height = bottom - top
+      const x = left * frameWidth
+      const y = top * frameHeight
+      const w = width * frameWidth
+      const h = height * frameHeight
+      const r = right * frameWidth
+      const b = bottom * frameHeight
       return <g key={slot.id} className={slot.role === 'PERSON' ? 'person-guide' : 'object-guide'}>
-        <rect x={left} y={top} width={width} height={height} rx={0.012} />
-        <path d={`M ${left} ${top + height * .14} V ${top} H ${left + width * .14} M ${right - width * .14} ${top} H ${right} V ${top + height * .14} M ${left} ${bottom - height * .14} V ${bottom} H ${left + width * .14} M ${right - width * .14} ${bottom} H ${right} V ${bottom - height * .14}`} />
+        <rect x={x} y={y} width={w} height={h} rx={Math.min(frameWidth, frameHeight) * 0.012} />
+        <path d={`M ${x} ${y + h * .14} V ${y} H ${x + w * .14} M ${r - w * .14} ${y} H ${r} V ${y + h * .14} M ${x} ${b - h * .14} V ${b} H ${x + w * .14} M ${r - w * .14} ${b} H ${r} V ${b - h * .14}`} />
       </g>
     })}
   </svg>
@@ -42,6 +48,7 @@ function ShootPage({ token }: { token: string }) {
   const [count, setCount] = useState(0)
   const [sending, setSending] = useState(false)
   const [retryBlob, setRetryBlob] = useState<Blob | null>(null)
+  const [frameSize, setFrameSize] = useState({ width: 1, height: 1 })
 
   useEffect(() => {
     let stream: MediaStream | undefined
@@ -99,8 +106,10 @@ function ShootPage({ token }: { token: string }) {
   const slots = policy.slots ?? []
   const targetPhotos = Math.min(config?.maxPhotos ?? 5, policy.recommendedPhotos ?? 3)
   return <main className="camera">
-    <video ref={video} autoPlay playsInline muted />
-    <GuideOverlay slots={slots} />
+    <video ref={video} autoPlay playsInline muted onLoadedMetadata={() => {
+      if (video.current) setFrameSize({ width: video.current.videoWidth || 1, height: video.current.videoHeight || 1 })
+    }} />
+    <GuideOverlay slots={slots} frameWidth={frameSize.width} frameHeight={frameSize.height} />
     <div className="shade top"><strong>감도</strong><span className="shot-dots" aria-label={`${count}장 촬영됨`}>{Array.from({ length: targetPhotos }, (_, index) => <i key={index} className={index < count ? 'done' : ''} />)}</span></div>
     <div className="shade bottom"><span role="status" aria-live="polite">{message}</span><button aria-label={retryBlob ? '사진 다시 보내기' : '촬영'} aria-busy={sending} onClick={takePhoto} disabled={!config || sending || count >= targetPhotos}><i /></button></div>
   </main>
