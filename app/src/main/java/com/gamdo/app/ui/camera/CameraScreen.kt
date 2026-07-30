@@ -111,7 +111,10 @@ import com.gamdo.app.data.preset.StylePreset
 import com.gamdo.app.detect.DetectionResult
 import com.gamdo.app.guide.toSceneObservation
 import com.gamdo.app.detect.toAnalysisFrame
+import com.gamdo.app.guide.CaptureSceneMode
 import com.gamdo.app.guide.GuideLayoutState
+import com.gamdo.app.guide.SceneGuideMarks
+import com.gamdo.app.guide.SceneModeDecision
 import com.gamdo.app.guide.LayoutPreviewSlot
 import com.gamdo.app.guide.LayoutTemplateSummary
 import com.gamdo.app.guide.SceneSearchScope
@@ -129,6 +132,7 @@ import com.gamdo.app.ui.theme.TextHi
 import com.gamdo.app.ui.theme.TextMid
 import com.gamdo.app.ui.theme.TextLow
 import com.gamdo.app.ui.theme.Amber
+import com.gamdo.app.ui.theme.Outline
 import kotlin.math.abs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -535,6 +539,13 @@ fun CameraScreen(
     // 나갔다 오면 자동 탐색으로 복귀한다".
     val layoutState by viewModel.layoutState.collectAsState()
 
+    // 상황 우선 가이드 V2 (요구사항 §10). Observed for the same reason `layoutState`
+    // is: the chosen situation lives in P2's controller, so a local copy could only
+    // disagree with it. Null is a real state — the classifier declines an ambiguous
+    // frame rather than guessing — and reads as 자동.
+    val sceneModeDecision by viewModel.sceneModeDecision.collectAsState()
+    val guideMarks by viewModel.guideMarks.collectAsState()
+
     // O-13 (1): **a preset is colour. It does not reach the guide.**
     //
     // This effect used to read `activePreset` and publish
@@ -837,6 +848,10 @@ fun CameraScreen(
             // §3-2: the product overlay is bracket + silhouette + horizon only.
             // Raw face boxes / centre dot ride the same toggle as the HUD.
             showDetections = DebugHudGate.visible(BuildConfig.DEBUG, showHud),
+            // 상황 우선 가이드 V2 (요구사항 §10). Null until P2 latches a scene for the
+            // current situation, and null is what keeps the existing slot rendering in
+            // charge — see [CameraOverlay]'s parameter.
+            guideMarks = guideMarks,
             // Pinch-to-zoom lives inside the pane and drives CameraX directly;
             // this is the read-back of CameraX's actual ZoomState, not a request.
             zoomRatio = actualZoom,
@@ -946,6 +961,11 @@ fun CameraScreen(
                 // §3.1's "자동으로 돌아가기" — the same call the 재탐색 button makes,
                 // because it is the same act.
                 onSelectAuto = { viewModel.rescanLayout() },
+                sceneModeDecision = sceneModeDecision,
+                onSelectSceneMode = { mode ->
+                    if (mode == CaptureSceneMode.AUTO) viewModel.resetSceneMode()
+                    else viewModel.selectSceneMode(mode)
+                },
             )
         }
 
@@ -1626,6 +1646,8 @@ private fun CameraFrameSheet(
     activeLayoutId: String?,
     onSelectLayout: (String) -> Unit,
     onSelectAuto: () -> Unit,
+    sceneModeDecision: SceneModeDecision?,
+    onSelectSceneMode: (CaptureSceneMode) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -1637,6 +1659,14 @@ private fun CameraFrameSheet(
         verticalArrangement = Arrangement.spacedBy(11.dp),
     ) {
         SheetHandle()
+        // 상황 (요구사항 §10), above the frames because it is the coarser choice: a
+        // situation steers the *automatic* search, while a frame below overrides it
+        // with one fixed template. Two axes, so they are two rows rather than one
+        // list — merging them would make 인물 and 전신 중앙 look like alternatives.
+        SceneModeChips(
+            selected = SceneModeSelection.selectedChip(sceneModeDecision),
+            onSelect = onSelectSceneMode,
+        )
         val listState = rememberLazyListState()
         LaunchedEffect(activeLayoutId, layouts) {
             // Offset by one for the leading `자동` cell.
@@ -1672,6 +1702,59 @@ private fun CameraFrameSheet(
                 ) { color ->
                     drawFrameThumbSlots(summary.slots, color)
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 상황 칩 — the six modes of 요구사항 §10, in [SceneModeSelection.chips] order.
+ *
+ * Text pills rather than miniatures, and that is the point of contrast with the frame
+ * cells below: a situation has no shape to draw. Trying to picture 카페·음식 would
+ * either invent a food icon (a label by another name, and §10 bans object names) or
+ * draw a composition, which is what the row underneath already means.
+ *
+ * `자동` routes to `resetSceneMode()` rather than `selectSceneMode(AUTO)`. The
+ * controller treats them identically — it stores `mode.takeUnless { it == AUTO }` —
+ * but §10 names the reset as its own operation, and calling the one that says what is
+ * happening keeps the call site readable.
+ */
+@Composable
+private fun SceneModeChips(
+    selected: CaptureSceneMode,
+    onSelect: (CaptureSceneMode) -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = STRIP_H_PADDING),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        items(SceneModeSelection.chips, key = { it.name }) { mode ->
+            val isSelected = mode == selected
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(15.dp))
+                    // Amber outline, never an amber fill: the shutter is the only
+                    // filled amber surface on this screen and a row of six would
+                    // out-shout it.
+                    .border(
+                        width = if (isSelected) 1.5.dp else 1.dp,
+                        color = if (isSelected) Amber else Outline,
+                        shape = RoundedCornerShape(15.dp),
+                    )
+                    .clickable { onSelect(mode) }
+                    .padding(horizontal = 13.dp, vertical = 7.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = SceneModeSelection.label(mode),
+                    color = if (isSelected) Amber else TextMid,
+                    fontSize = 12.sp,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                    maxLines = 1,
+                )
             }
         }
     }
@@ -1933,6 +2016,8 @@ private fun CameraPreviewPane(
     pitchDeg: Float,
     showGuide: Boolean,
     showDetections: Boolean,
+    /** 상황 우선 가이드 V2의 고정 마크 (요구사항 §10). See [CameraOverlay]. */
+    guideMarks: SceneGuideMarks?,
     zoomRatio: Float,
     zoomBounds: ZoomBounds,
     onSelectZoom: (Float) -> Unit,
@@ -2208,6 +2293,7 @@ private fun CameraPreviewPane(
                 pitchDeg = pitchDeg,
                 modifier = Modifier.fillMaxSize(),
                 showDetections = showDetections,
+                guideMarks = guideMarks,
             )
         }
 
