@@ -4,6 +4,8 @@ import com.gamdo.app.data.preset.ColorParams
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
 
 class GamdoProfileTest {
     private val policy = GamdoPolicy(
@@ -39,5 +41,15 @@ class GamdoProfileTest {
         ).toCameraStyleTarget()
         assertTrue(target.subjectAnchorX <= 0.9f)
         assertTrue(target.subjectScaleRange.start >= 0.2f)
+    }
+
+    @Test fun `portrait preference has safe defaults and maps legacy mood`() {
+        val legacy = """
+            {"version":2,"global":{"capture":{"poseMood":"CANDID"},"color":{"colorTemperature":5500.0,"exposureBias":0.0,"contrast":0.1,"saturation":0.2,"fade":0.0,"grain":0.0,"vignette":0.0,"blurStrength":0.0}},"updatedAt":1}
+        """.trimIndent()
+        val profile = Json { ignoreUnknownKeys = true }.decodeFromString<GamdoProfileV2>(legacy)
+
+        assertEquals(PortraitFraming.AUTO, profile.global.capture.portrait.framing)
+        assertEquals(PortraitMood.CANDID, profile.global.capture.resolvedPortraitPreference().mood)
     }
 }

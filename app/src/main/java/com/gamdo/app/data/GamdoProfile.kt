@@ -41,12 +41,45 @@ data class CapturePreference(
     val flash: FlashPreference = FlashPreference.AUTO,
     val backgroundRatio: Float = 0.4f,
     val tiltPreference: Float = 0f,
+    /** New V3 framing preference. This is not a live pose instruction. */
+    val portrait: PortraitPreference = PortraitPreference(),
+    /**
+     * Kept only so profiles written by the pre-V3 app can still decode. New
+     * writers should use [portrait.mood]; no camera code reads this field.
+     */
+    @Deprecated("Use portrait.mood; retained for profile JSON compatibility")
     val poseMood: PoseMood = PoseMood.NATURAL,
 )
 
 @Serializable enum class CameraHeight { LOW, EYE, HIGH }
 @Serializable enum class FlashPreference { ON, OFF, AUTO }
 @Serializable enum class PoseMood { NATURAL, CENTERED, CANDID }
+
+@Serializable
+enum class PortraitMood { CENTERED, NATURAL, CANDID }
+
+@Serializable
+enum class PortraitFraming { AUTO, FULL_BODY, UPPER_BODY, ENVIRONMENTAL }
+
+@Serializable
+data class PortraitPreference(
+    val framing: PortraitFraming = PortraitFraming.AUTO,
+    val mood: PortraitMood = PortraitMood.NATURAL,
+    val preferLeadRoom: Boolean = true,
+    val preferredTemplateIds: List<String> = emptyList(),
+)
+
+fun CapturePreference.resolvedPortraitPreference(): PortraitPreference = portrait.copy(
+    // Old profiles had only poseMood. Use it as a one-time compatibility
+    // signal without reintroducing pose inference or pose rendering.
+    mood = if (portrait == PortraitPreference()) {
+        when (poseMood) {
+            PoseMood.CENTERED -> PortraitMood.CENTERED
+            PoseMood.CANDID -> PortraitMood.CANDID
+            PoseMood.NATURAL -> PortraitMood.NATURAL
+        }
+    } else portrait.mood,
+)
 
 @Serializable
 data class PreferenceEvidence(
