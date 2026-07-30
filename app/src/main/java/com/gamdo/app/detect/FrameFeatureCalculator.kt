@@ -55,9 +55,7 @@ class FrameFeatureCalculator(
 ) {
     fun calculate(input: FrameFeatureInput): FrameFeatures {
         val face = selectPrimaryFace(input.detection.faces)
-        val poseBox = input.detection.pose
-            ?.let { pose -> boundingBox(pose.landmarks.filter { it.inFrameLikelihood >= minLandmarkLikelihood }) }
-        val person = selectPrimaryPerson(input.personCandidates, poseBox, face?.box)
+        val person = selectPrimaryPerson(input.personCandidates, face?.box)
         val personCenter = person?.let { PointN(it.centerX, it.centerY) }
         val faceTop = face?.box?.top ?: person?.top ?: 0f
         val brightness = input.brightness.frameMean.coerceIn(0f, 1f)
@@ -81,8 +79,8 @@ class FrameFeatureCalculator(
             brightnessMean = brightness,
             backlightFlag = backlight,
             lowLightFlag = brightness <= lowLightThreshold,
-            // Compatibility only. Production V3.1 supplies no pose observation.
-            poseConfidence = input.detection.pose?.averageInFrameLikelihood?.coerceIn(0f, 1f) ?: 0f,
+            // V3.1 uses a face/person box or fixed framing, never live pose.
+            poseConfidence = 0f,
             shake = input.shake.coerceAtLeast(0f),
         )
     }
@@ -99,7 +97,6 @@ class FrameFeatureCalculator(
 
     private fun selectPrimaryPerson(
         candidates: List<NormalizedBox>,
-        poseBox: NormalizedBox?,
         fallbackFace: NormalizedBox?,
     ): NormalizedBox? {
         val allCandidates = candidates.map { it.clamped() }
@@ -110,19 +107,7 @@ class FrameFeatureCalculator(
                 area(box) * (1f + 0.35f * centrality)
             }
         }
-        return poseBox?.clamped() ?: fallbackFace?.clamped()
-    }
-
-    private fun boundingBox(landmarks: List<PoseLandmarkPoint>): NormalizedBox? {
-        if (landmarks.isEmpty()) return null
-        val xs = landmarks.map { it.x }
-        val ys = landmarks.map { it.y }
-        return NormalizedBox(
-            left = xs.minOrNull() ?: return null,
-            top = ys.minOrNull() ?: return null,
-            right = xs.maxOrNull() ?: return null,
-            bottom = ys.maxOrNull() ?: return null,
-        ).clamped()
+        return fallbackFace?.clamped()
     }
 
     private fun area(box: NormalizedBox): Float =

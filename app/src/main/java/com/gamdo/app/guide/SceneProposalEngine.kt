@@ -95,18 +95,7 @@ private const val DETECTED_SUBJECT_FLOOR = 0.7f
 
 /** Minimal bridge from the detector aggregate to the proposal contract. */
 fun DetectionResult.toSceneObservation(): SceneObservation {
-    val poseBox = pose?.landmarks
-        ?.filter { it.inFrameLikelihood >= 0.3f }
-        ?.let { points ->
-            if (points.isEmpty()) null else NormalizedBox(
-                left = points.minOf { it.x },
-                top = points.minOf { it.y },
-                right = points.maxOf { it.x },
-                bottom = points.maxOf { it.y },
-            )
-        }
     val personBox = objects.firstOrNull { it.category == GuideObjectCategory.PERSON }?.box
-        ?: poseBox
         ?: faces.maxByOrNull { it.box.width * it.box.height }?.box
     val objectCandidate = objects
         .filter { it.box.width > 0f && it.box.height > 0f }
@@ -119,19 +108,10 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
         else -> SubjectKind.UNKNOWN
     }
     val detectorConfidence = when {
-        // Pose likelihood is a real measurement of person-presence, so it wins.
-        // Without it, ML Kit's face detector exposes **no confidence at all** —
-        // DETECTED_SUBJECT_FLOOR stands in for a number that does not exist,
-        // exactly as the object branch below already does.
-        //
-        // This used to fall back to `leftEyeOpenProbability`. That is eyelid
-        // state, not detection confidence: a blink, sunglasses, or simply the
-        // classifier being off reported "no confident subject" for a person
-        // standing in plain view. Pose detection fails routinely on upper-body
-        // and backlit framing, so that fallback was the common path, not the rare
-        // one. `SceneObservationAdapterTest` pins the property that eye state
-        // cannot move this number.
-        personBox != null -> pose?.averageInFrameLikelihood ?: DETECTED_SUBJECT_FLOOR
+        // Face/person detectors do not expose a common confidence scale. A
+        // valid person or face box is therefore treated as a present subject;
+        // no pose model is consulted for confidence or outline generation.
+        personBox != null -> DETECTED_SUBJECT_FLOOR
         objectCandidate != null -> objectCandidate.detectionConfidence
             ?: objectCandidate.confidence.takeIf { it > 0f }
             ?: DETECTED_SUBJECT_FLOOR
@@ -146,17 +126,13 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
         subjectOutline = segmented?.outline
             ?.map { LayoutGuidePoint(it.x, it.y) }
             ?.takeIf { it.size >= 3 }
-            .orEmpty()
-            .ifEmpty {
-                pose?.landmarks
-                    ?.filter { it.inFrameLikelihood >= 0.3f }
-                    ?.map { LayoutGuidePoint(it.x, it.y) }
-                    .orEmpty()
-            },
+            .orEmpty(),
         subjectLabels = objectCandidate?.labels.orEmpty(),
         hasReliableOutline = when {
             segmented?.outline?.size ?: 0 >= 3 -> true
-            personBox != null -> pose != null || objects.any { it.category == GuideObjectCategory.PERSON }
+            // A person box is sufficient for a fixed bracket. The product path
+            // does not promise a pose skeleton or a live contour.
+            personBox != null -> true
             else -> objectCandidate?.mask?.outline?.size?.let { it >= 3 } == true
         },
         slotDetections = buildList {

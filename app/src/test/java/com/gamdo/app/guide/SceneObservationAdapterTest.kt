@@ -66,12 +66,11 @@ class SceneObservationAdapterTest {
     }
 
     /**
-     * Pose is a real measurement of person-presence, so it still wins when present.
-     * The floor is a stand-in for a number ML Kit's face detector does not expose,
-     * not a better estimate than one it does.
+     * V3.1 deliberately does not use pose likelihood for person confidence.
+     * A valid face/person box is enough for a fixed portrait bracket.
      */
     @Test
-    fun `pose likelihood still takes precedence over the floor`() {
+    fun `pose likelihood does not change face confidence`() {
         val withPose = DetectionResult(
             faces = faceOnly(leftEyeOpen = null).faces,
             pose = com.gamdo.app.detect.PoseObservation(
@@ -84,7 +83,8 @@ class SceneObservationAdapterTest {
             ),
         ).toSceneObservation()
 
-        assertEquals(0.95f, withPose.subjectConfidence, 0.001f)
+        val withoutPose = faceOnly(leftEyeOpen = null).toSceneObservation()
+        assertEquals(withoutPose.subjectConfidence, withPose.subjectConfidence, 0.001f)
     }
 
     @Test

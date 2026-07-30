@@ -96,7 +96,7 @@ class AlignmentEngine {
         // A detected object has its own confidence; it must not be rejected just
         // because there is no human pose in the frame.
         val confidenceUsable = observedSubjectBox != null ||
-            features.poseConfidence >= config.minPoseConfidence
+            features.personBox != null || features.faceBox != null
         val previous = lastStableTarget
 
         if (!confidenceUsable) {

@@ -4,9 +4,9 @@ import com.gamdo.app.camera.TiltReading
 import com.gamdo.app.detect.BrightnessSample
 import com.gamdo.app.detect.DetectionResult
 import com.gamdo.app.detect.FaceObservation
+import com.gamdo.app.detect.GuideObjectCategory
 import com.gamdo.app.detect.NormalizedBox
-import com.gamdo.app.detect.PoseLandmarkPoint
-import com.gamdo.app.detect.PoseObservation
+import com.gamdo.app.detect.ObjectObservation
 import com.gamdo.app.guide.GuideConfigBundle
 import com.gamdo.app.guide.OverlayStabilizerConfig
 import com.gamdo.app.guide.RectN
@@ -246,26 +246,10 @@ internal object OverlayStabilityHarness {
         }
     }
 
-    /**
-     * Builds a detector result whose pose bounding box is exactly [box].
-     *
-     * Landmark likelihood tracks [confidence] so that a genuine confidence
-     * collapse also removes the box — that is how ML Kit behaves, and separating
-     * the two would hide the very dropout the harness is looking for.
-     */
+    /** Builds a detector result whose person box is exactly [box]. */
     private fun detectionOf(box: RectN, confidence: Float): DetectionResult {
         val c = confidence.coerceIn(0f, 1f)
         val clamped = box.clamped()
-        val landmarkLikelihood = if (c >= 0.3f) max(c, 0.31f) else c * 0.5f
-        val landmarks = listOf(
-            clamped.left to clamped.top,
-            clamped.right to clamped.top,
-            clamped.left to clamped.bottom,
-            clamped.right to clamped.bottom,
-            (clamped.left + clamped.right) / 2f to (clamped.top + clamped.bottom) / 2f,
-        ).mapIndexed { type, (x, y) ->
-            PoseLandmarkPoint(type = type, x = x, y = y, inFrameLikelihood = landmarkLikelihood)
-        }
         // Head roughly in the top fifth of the body box.
         val faceHeight = clamped.height * 0.2f
         val faceWidth = clamped.width * 0.45f
@@ -283,7 +267,14 @@ internal object OverlayStabilityHarness {
         )
         return DetectionResult(
             faces = if (c >= 0.3f) listOf(face) else emptyList(),
-            pose = PoseObservation(landmarks = landmarks, averageInFrameLikelihood = c),
+            pose = null,
+            objects = if (c >= 0.3f) listOf(
+                ObjectObservation(
+                    box = clamped.toBox(),
+                    detectionConfidence = c,
+                    category = GuideObjectCategory.PERSON,
+                ),
+            ) else emptyList(),
         )
     }
 
