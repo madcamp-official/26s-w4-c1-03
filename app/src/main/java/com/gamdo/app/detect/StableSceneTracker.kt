@@ -180,6 +180,17 @@ class StableSceneTracker(
                 if (selected.none { isDuplicate(it, candidate) }) selected += candidate
             }
 
+        // A polygon is an explicit multi-object selection. It must not reuse
+        // the automatic anchor-neighbourhood policy below: two objects may be
+        // intentionally far apart inside the same lasso. Keep every valid
+        // in-scope candidate and only apply the global slot cap here.
+        if (polygonRegion != null) {
+            return selected
+                .sortedWith(compareByDescending<ObjectObservation> { polygonRegion!!.overlapRatio(it.box) }
+                    .thenByDescending(::rankingScore))
+                .take(config.maxObjects)
+        }
+
         val people = selected.filter { it.category == GuideObjectCategory.PERSON }
         val objectsInRegion = selected.filter { it.category != GuideObjectCategory.PERSON }
         val anchor = chooseAnchor(objectsInRegion)

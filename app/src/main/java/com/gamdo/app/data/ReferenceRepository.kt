@@ -117,7 +117,11 @@ class ReferenceRepository(
         require(scope == ResolvedStyle.ReferenceScope.COMPOSITION || resolution.colorAvailable) {
             "color analysis is unavailable; choose composition-only"
         }
+        val previousHash = settings.getActiveReferenceHash()
         settings.saveActiveReference(resolution.contentHash, scope.name.lowercase(), strength)
+        if (previousHash != null && previousHash != resolution.contentHash) {
+            overlayFile(previousHash).delete()
+        }
         cleanupCache(resolution.contentHash)
         return ResolvedStyle.fromReference(
             hash = resolution.contentHash,
@@ -133,6 +137,22 @@ class ReferenceRepository(
         val now = System.currentTimeMillis()
         cachedReferencesDao.deleteExpiredInactive(now - CACHE_MAX_AGE_MS, active)
         cachedReferencesDao.trimInactive(MAX_CACHE_ENTRIES, active)
+        cleanupOverlayCache(active)
+    }
+
+    /**
+     * Returns the short-lived, locally sanitized source image for the camera's
+     * reference-opacity overlay. Analysis JSON remains the durable reference; this
+     * bitmap is merely a 24-hour visual aid and is never uploaded again.
+     */
+    suspend fun activeOverlayUri(settings: SettingsRepository): Uri? = withContext(Dispatchers.IO) {
+        val hash = settings.getActiveReferenceHash() ?: return@withContext null
+        val file = overlayFile(hash)
+        if (!file.exists() || System.currentTimeMillis() - file.lastModified() > OVERLAY_CACHE_MAX_AGE_MS) {
+            file.delete()
+            return@withContext null
+        }
+        Uri.fromFile(file)
     }
 
     suspend fun active(settings: SettingsRepository): ReferenceResolution? {
@@ -152,7 +172,9 @@ class ReferenceRepository(
     }
 
     suspend fun clearActive(settings: SettingsRepository) {
+        val hash = settings.getActiveReferenceHash()
         settings.clearActiveReference()
+        hash?.let { overlayFile(it).delete() }
         publishActiveReference(null)
         cleanupCache()
     }
@@ -211,6 +233,14 @@ class ReferenceRepository(
             sanitizer.sanitize(tempFile)
             val response = analysisClient.analyzeReference(tempFile)
 
+            // The same normalized/sanitized bytes used for analysis are the only
+            // image allowed behind the in-camera opacity control. Keeping them for a
+            // short session window fixes the otherwise empty overlay after a relaunch
+            // without turning a reference photo into permanent app data.
+            val overlay = overlayFile(hash)
+            overlay.parentFile?.mkdirs()
+            tempFile.copyTo(overlay, overwrite = true)
+
             val entry = CachedReferences(
                 contentHash = hash,
                 analysisJson = json.encodeToString(JsonObject.serializer(), response.analysis),
@@ -241,12 +271,25 @@ class ReferenceRepository(
         const val MAX_INPUT_BYTES = 20 * 1024 * 1024
         const val MAX_CACHE_ENTRIES = 20
         const val CACHE_MAX_AGE_MS = 30L * 24L * 60L * 60L * 1000L
+        const val OVERLAY_CACHE_MAX_AGE_MS = 24L * 60L * 60L * 1000L
         /** SHA-256 of [bytes] as lowercase hex — the `cached_references` cache key. */
         fun sha256Hex(bytes: ByteArray): String {
             val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
             val hex = StringBuilder(digest.size * 2)
             for (b in digest) hex.append("%02x".format(b.toInt() and 0xFF))
             return hex.toString()
+        }
+    }
+
+    private fun overlayFile(hash: String): File = File(cacheDir, "reference-overlays/$hash.jpg")
+
+    private fun cleanupOverlayCache(activeHash: String) {
+        val directory = File(cacheDir, "reference-overlays")
+        directory.listFiles()?.forEach { file ->
+            val hash = file.nameWithoutExtension
+            if (hash != activeHash || System.currentTimeMillis() - file.lastModified() > OVERLAY_CACHE_MAX_AGE_MS) {
+                file.delete()
+            }
         }
     }
 }

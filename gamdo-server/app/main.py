@@ -31,7 +31,10 @@ app = FastAPI(title="GAMDO Server", version="0.1.0", lifespan=lifespan)
 app.mount("/files", StaticFiles(directory=str(RESULT_DIR)), name="generated-files")
 WEB_DIST = SERVER_ROOT.parent / "gamdo-web" / "dist"
 if WEB_DIST.is_dir():
-    app.mount("/web-assets", StaticFiles(directory=str(WEB_DIST / "assets")), name="web-assets")
+    # Vite's built index uses `/web-assets/assets/<hash>.*`. Mount the dist
+    # root, not its assets child, or every JS/CSS request gains a second
+    # `/assets` segment and the QR page renders as a blank shell.
+    app.mount("/web-assets", StaticFiles(directory=str(WEB_DIST)), name="web-assets")
 
 
 def error_payload(code: str, message: str, retryable: bool) -> dict[str, Any]:

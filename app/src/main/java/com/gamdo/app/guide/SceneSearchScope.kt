@@ -21,6 +21,18 @@ class ScenePolygonRegion private constructor(val points: List<PointN>) {
         return approximateIntersection(box) / boxArea >= maxOf(0.50f, minimumBoxOverlap)
     }
 
+    /** Fraction of a box covered by the explicitly selected polygon. */
+    fun overlapRatio(box: NormalizedBox): Float {
+        val samples = 12
+        var accepted = 0
+        for (iy in 0 until samples) for (ix in 0 until samples) {
+            val x = box.left + box.width * (ix + 0.5f) / samples
+            val y = box.top + box.height * (iy + 0.5f) / samples
+            if (contains(PointN(x, y))) accepted++
+        }
+        return accepted.toFloat() / (samples * samples)
+    }
+
     fun contains(point: PointN): Boolean {
         var inside = false
         var previous = points.last()

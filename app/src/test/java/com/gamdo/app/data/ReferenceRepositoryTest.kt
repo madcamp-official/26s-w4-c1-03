@@ -182,13 +182,14 @@ class ReferenceRepositoryTest {
     }
 
     @Test
-    fun `resolveBytes cleans up its scratch file after a successful upload`() = runBlocking {
-        repository.resolveBytes(byteArrayOf(5, 5, 5))
+    fun `resolveBytes cleans up its scratch file while retaining the short lived overlay copy`() = runBlocking {
+        val resolution = repository.resolveBytes(byteArrayOf(5, 5, 5))
 
         assertTrue(
-            "no leftover temp file expected, found: ${tempDir.list()?.toList()}",
-            tempDir.listFiles()?.isEmpty() ?: true,
+            "only the dedicated reference-overlays directory may remain, found: ${tempDir.list()?.toList()}",
+            tempDir.listFiles()?.all { it.name == "reference-overlays" } ?: true,
         )
+        assertTrue(File(tempDir, "reference-overlays/${resolution.contentHash}.jpg").exists())
     }
 
     @Test
