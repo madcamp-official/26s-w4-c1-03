@@ -109,7 +109,9 @@ import com.gamdo.app.ui.theme.OnDarkMuted
 import com.gamdo.app.ui.theme.OnSage
 import com.gamdo.app.ui.theme.Sage
 import kotlin.math.abs
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
@@ -627,93 +629,128 @@ fun CameraScreen(
                     // the same reason — a body that never starts cannot pause.
                     val pauseToken = analysisPauseGate.pause()
                     try {
-                        // capture() must be called on the main thread: it reaches
-                        // CameraX's takePicture(), which asserts it outright
-                        // (Threads.checkMainThread). It is already off-main where it
-                        // matters — the decode/rotate runs on the callback executor
-                        // it passes in. Wrapping the call in withContext(Default)
-                        // therefore bought nothing and threw IllegalStateException on
-                        // every shutter press, losing the shot; three presses, three
-                        // "촬영에 실패했어요" toasts, verified on SM-G970N.
                         // §3-3: read the analysis state *before* awaiting the
                         // capture. takePicture() takes a few hundred ms, during
                         // which the analyzer keeps publishing — awaiting first
                         // would record the frame the shutter produced rather than
                         // the one the user was looking at when they pressed it.
+                        //
+                        // Outside the uncancellable region below because it cannot
+                        // block: it is a `.value` read of a StateFlow.
                         val frame = viewModel.lastFrame.value
 
-                        // The aspect crop is part of the capture's single transform
-                        // now, not a fifth full-resolution copy afterwards — see
-                        // `captureGeometryFor`. `capture()` already runs its work on
-                        // Dispatchers.Default inside CameraX's callback.
-                        val bitmap = controller.capture(trace, aspect.ratioWtoH)
-                        // The thumb stays a separate downscale: it is a different
-                        // size from the photo, so it cannot share the same pass. It
-                        // is small and it means no full-resolution bitmap is
-                        // retained for a 44dp preview.
-                        lastThumb = withContext(Dispatchers.Default) {
-                            bitmap.scaledToMaxSide(256)
-                        }
-                        trace?.mark(CapturePhase.CROP)
+                        // ── The photo's life. Nothing in here may be cancelled. ──
+                        //
+                        // `scope` is `rememberCoroutineScope()`, so leaving the
+                        // camera screen cancels this coroutine. Pressing the shutter
+                        // and then tapping 앨범 0.3s later therefore threw the photo
+                        // away at whichever suspension point it happened to be
+                        // sitting on — usually inside `capture()`, since
+                        // `CapturePhase.CAMERA_X` measures 290-1613ms. A user who
+                        // pressed the shutter asked for a photo; not waiting for it
+                        // is not a reason to discard it.
+                        //
+                        // The region ends where the photo stops depending on this
+                        // screen. `saveCameraCapture` writes the private file
+                        // (`CapturePhase.APP_FILE`, "the photo is safe") and the
+                        // `captures` row in one call, and the row is inside the
+                        // region rather than after it on purpose: a file with no row
+                        // is invisible to the album and the editor, which is not a
+                        // saved photo in any sense the user would recognise.
+                        //
+                        // Everything else in here is between those two points and
+                        // must not be reordered out — the thumbnail because moving
+                        // it would print `CapturePhase.CROP` after ENCODE/ROW and
+                        // silently corrupt every latency breakdown, and the two log
+                        // lines because they are the only evidence that any of this
+                        // ran. In particular the `capture ...` line is what the
+                        // on-device check for this fix reads.
+                        //
+                        // `NonCancellable` replaces the Job, not the dispatcher, so
+                        // this still runs on Main — which `capture()` requires:
+                        // it reaches CameraX's takePicture(), which asserts the main
+                        // thread outright (Threads.checkMainThread). It is already
+                        // off-main where it matters, since the decode/rotate runs on
+                        // the callback executor it passes in. Wrapping the call in
+                        // withContext(Default) bought nothing and threw
+                        // IllegalStateException on every shutter press, losing the
+                        // shot; three presses, three "촬영에 실패했어요" toasts,
+                        // verified on SM-G970N.
+                        val score = withContext(NonCancellable) {
+                            // The aspect crop is part of the capture's single
+                            // transform now, not a fifth full-resolution copy
+                            // afterwards — see `captureGeometryFor`. `capture()`
+                            // already runs its work on Dispatchers.Default inside
+                            // CameraX's callback.
+                            val bitmap = controller.capture(trace, aspect.ratioWtoH)
+                            // The thumb stays a separate downscale: it is a different
+                            // size from the photo, so it cannot share the same pass.
+                            // It is small and it means no full-resolution bitmap is
+                            // retained for a 44dp preview.
+                            lastThumb = withContext(Dispatchers.Default) {
+                                bitmap.scaledToMaxSide(256)
+                            }
+                            trace?.mark(CapturePhase.CROP)
 
-                        // P1-1 evidence line, DEBUG only. **Measurement, not
-                        // behaviour** — nothing reads this back.
-                        //
-                        // The full-bleed decision turns on one number nobody has:
-                        // whether CameraX's viewport crop is actually reaching the
-                        // capture. The two recorded device measurements imply
-                        // opposite answers — `SubjectProjection`'s KDoc has
-                        // SM-G970N at 2904×3630 (a viewport crop of 96% of the
-                        // sensor width, predicted exactly from a 1080×1500 pane),
-                        // while `remain_plan` and the 기능명세서 both record
-                        // 3024×3780 (no width crop at all). Both cannot describe the
-                        // same pipeline.
-                        //
-                        // The pane ratio and the saved size on the same line settle
-                        // it from a single photo: `saved.width == buffer.width`
-                        // means the viewport is not cropping and the preview shows
-                        // less than the file holds. Everything the full-bleed
-                        // geometry predicts hangs off which of those it is.
-                        if (BuildConfig.DEBUG) {
-                            Log.d(
-                                LATENCY_TAG,
-                                "geometry pane=%.4f target=%.4f saved=%dx%d (%.4f)".format(
-                                    paneRatioWtoH,
-                                    aspect.ratioWtoH,
-                                    bitmap.width,
-                                    bitmap.height,
-                                    bitmap.width.toFloat() / bitmap.height.toFloat(),
+                            // Geometry evidence line, DEBUG only. **Measurement, not
+                            // behaviour** — nothing reads this back.
+                            //
+                            // It settled the full-bleed question from a single photo:
+                            // `saved.width == buffer.width` means CameraX's viewport
+                            // is not cropping the width and the preview shows less
+                            // than the file holds. Measured 2026-07-30 on SM-G970N —
+                            // 3024×3780 rear, 2736×3420 front, both exactly 4:5 at the
+                            // sensor's full width — which is why `SubjectProjection`'s
+                            // 2904×3630 is recorded there as the stale figure.
+                            if (BuildConfig.DEBUG) {
+                                Log.d(
+                                    LATENCY_TAG,
+                                    "geometry pane=%.4f target=%.4f saved=%dx%d (%.4f)".format(
+                                        paneRatioWtoH,
+                                        aspect.ratioWtoH,
+                                        bitmap.width,
+                                        bitmap.height,
+                                        bitmap.width.toFloat() / bitmap.height.toFloat(),
+                                    ),
+                                )
+                            }
+
+                            val score = frame?.let { viewModel.matchScoreOf(it) }
+                            container.captureRepository.saveCameraCapture(
+                                bitmap,
+                                buildCaptureSnapshot(
+                                    frame = frame,
+                                    matchScore = score,
+                                    sessionId = sessionId,
+                                    paneRatioWtoH = paneRatioWtoH,
+                                    targetRatioWtoH = aspect.ratioWtoH,
+                                    mirror = isFront,
+                                    tiltRecorded = tiltSensor.hasReading,
                                 ),
+                                trace = trace,
                             )
+                            // Logged here rather than in `finally`: this is the point
+                            // the user's photo is safe and the shutter's job is done.
+                            // The gallery copy is still running and reports itself on
+                            // the same tag when it finishes.
+                            trace?.let {
+                                Log.d(
+                                    LATENCY_TAG,
+                                    "capture ${it.format()} pause=" +
+                                        (if (analysisPauseGate.isEnabled) "on" else "off") +
+                                        " watchdogTrips=${analysisPauseGate.watchdogTrips}",
+                                )
+                            }
+                            score
                         }
 
-                        val score = frame?.let { viewModel.matchScoreOf(it) }
-                        container.captureRepository.saveCameraCapture(
-                            bitmap,
-                            buildCaptureSnapshot(
-                                frame = frame,
-                                matchScore = score,
-                                sessionId = sessionId,
-                                paneRatioWtoH = paneRatioWtoH,
-                                targetRatioWtoH = aspect.ratioWtoH,
-                                mirror = isFront,
-                                tiltRecorded = tiltSensor.hasReading,
-                            ),
-                            trace = trace,
-                        )
-                        // Logged here rather than in `finally`: this is the point
-                        // the user's photo is safe and the shutter's job is done.
-                        // The gallery copy is still running and reports itself on
-                        // the same tag when it finishes.
-                        trace?.let {
-                            Log.d(
-                                LATENCY_TAG,
-                                "capture ${it.format()} pause=" +
-                                    (if (analysisPauseGate.isEnabled) "on" else "off") +
-                                    " watchdogTrips=${analysisPauseGate.watchdogTrips}",
-                            )
-                        }
-
+                        // Outside the region: the photo is already saved, and this is
+                        // a session aggregate rather than the shot's own record. The
+                        // score itself is not at risk — `buildCaptureSnapshot` wrote
+                        // it into the `captures` row above — so what a navigate-away
+                        // costs here is `sessions.final_match_score` for that session,
+                        // not any part of the photo.
+                        //
                         // KPI, and never a reason to fail a capture — the repository
                         // swallows its own errors. `ended_at` is refreshed with every
                         // press so it tracks the last shot of the session; the screen
@@ -724,6 +761,20 @@ fun CameraScreen(
                             container.guideKpiRepository.recordFinalScore(sid, score)
                             container.guideKpiRepository.endSession(sid)
                         }
+                    } catch (t: CancellationException) {
+                        // The screen was left. Everything the user asked for already
+                        // happened inside the region above; what was cancelled is the
+                        // KPI tail. Rethrown rather than swallowed so this coroutine
+                        // still completes as cancelled, and — the visible half —
+                        // ahead of the generic catch so it cannot reach the toast.
+                        //
+                        // It used to. `catch (t: Throwable)` catches
+                        // CancellationException too, so walking away from the camera
+                        // mid-capture reported "촬영에 실패했어요" for a capture that
+                        // had not failed. Only the two clauses together are correct:
+                        // a real failure must still say so (W2-2 — silence about a
+                        // failure is its own defect), and a cancellation must not.
+                        throw t
                     } catch (t: Throwable) {
                         Log.e(TAG, "capture failed", t)
                         Toast.makeText(context, "촬영에 실패했어요", Toast.LENGTH_SHORT).show()
