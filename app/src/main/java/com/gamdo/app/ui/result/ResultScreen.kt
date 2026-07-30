@@ -723,20 +723,31 @@ fun ResultScreen(
                 modifier = Modifier.padding(12.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Box(
+                // P1-B3 "활성 감도의 이름을 표시해 무엇이 적용됐는지 알게 하기".
+                //
+                // Only over a photo. The badge is a caption on the picture, and the
+                // Box it sits in also renders 사진을 불러오는 중이에요 / 사진을 열지
+                // 못했어요 — a Sage 밤거리 chip floating over either of those names a
+                // look on something that is not there.
+                if (displayBitmap != null) Box(
                     modifier = Modifier.clip(RoundedCornerShape(5.dp))
                         .background(Sage).padding(horizontal = 8.dp, vertical = 3.dp),
                 ) {
-                    // P1-B3 "활성 감도의 이름을 표시해 무엇이 적용됐는지 알게 하기".
-                    // The name comes from the same catalogue the strip draws, so the
-                    // badge and the highlighted thumb cannot disagree about what is
-                    // on the photo. A preset shows its own name (밤거리); the
-                    // reference slot shows 내 감도 rather than P2's raw `displayName`,
-                    // which is the wording decision in [ReferenceLabels].
+                    // [appliedStyleLabel], not [stripLabelFor]: the badge describes the
+                    // pixels, and a style pass that threw leaves the strip pointing at
+                    // 밤거리 while the photo underneath is the untouched decode. The
+                    // rule, including why the reference slot is exempt from it, is
+                    // documented on `appliedStyleLabel`.
                     Text(
-                        text = filterState.items.firstOrNull { it.id == selectedFilterId }
-                            ?.let(::stripLabelFor)
-                            ?: LocalFilter.ORIGINAL.label,
+                        text = appliedStyleLabel(
+                            state = filterState,
+                            // The reference's colour is part of the plan, so a plan is
+                            // the evidence it landed. `passes.style` is what asked for
+                            // one; null after that means `corrected` fell back to the
+                            // untouched decode.
+                            referenceColorLanded = !passes.style ||
+                                (corrected as? OpenedPhoto.Ready)?.plan != null,
+                        ),
                         color = OnSage,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.SemiBold,

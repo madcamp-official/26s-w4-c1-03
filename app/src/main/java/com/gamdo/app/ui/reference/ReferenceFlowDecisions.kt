@@ -62,12 +62,20 @@ fun clampReferenceOverlayAlpha(value: Float): Float =
  * and nothing else: the button that creates a 감도 and the 감도 you had just created
  * were the same two words, so a user who made one saw no evidence of it.
  *
+ * That also retires 레퍼런스 from the product surface. It was the internal word for
+ * this feature — AI 2, `ReferenceRepository`, `ResolvedStyle`, and still the literal
+ * `displayName` that `ResolvedStyle.fromReference` stamps on every analysis — and it
+ * leaked onto the strip from there. 감도 is what the app is called and what onboarding
+ * taught the user, so it is the only one of the two words they have ever been shown.
+ *
  * Both strips read from here, so the wording changes in one place for the camera
  * and the result screen at once; [com.gamdo.app.ui.camera.CameraScreen] renders the
  * same two composables and needs no edit of its own.
  *
- * `ResultFilterSelectionTest` pins the property that has to hold whatever the
- * wording turns out to be: the two are never the same string.
+ * `ResultFilterSelectionTest` pins the property that has to hold whatever the wording
+ * turns out to be — the two are never the same string — and `ResultStripLabelTest`
+ * pins the settled strings themselves, so a rename is an explicit edit rather than a
+ * silent one.
  */
 object ReferenceLabels {
 
