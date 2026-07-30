@@ -44,10 +44,46 @@ class MaskInstanceSplitter(private val minimumPartRatio: Float = .15f, private v
             return part }
         for(i in mask.values.indices) if(!seen[i]&&mask.values[i]>=threshold) parts += visit(i)
         val minSize=(w*h*minimumPartRatio).toInt().coerceAtLeast(1)
-        if(parts.size<=1 || parts.none { it.size>=minSize }) return listOf(mask)
+        if (parts.size <= 1) {
+            val component = parts.firstOrNull().orEmpty()
+            val seeds = distancePeaks(component, mask)
+            if (seeds.size >= 2) {
+                val split = seeds.map { seed -> component.sortedBy { distance(it, seed, w) }.take(component.size / seeds.size + 1) }.flatten().distinct()
+                val groups = seeds.map { seed -> split.filter { pixel ->
+                    seeds.indices.minByOrNull { distance(pixel, seeds[it], w) } == seeds.indexOf(seed)
+                } }
+                if (groups.size >= 2 && groups.all { it.size >= minSize }) {
+                    return groups.take(maxParts).map { pixels ->
+                        val values = FloatArray(w * h); pixels.forEach { values[it] = mask.values[it] }; mask.copy(values = values)
+                    }
+                }
+            }
+            return listOf(mask)
+        }
+        if(parts.none { it.size>=minSize }) return listOf(mask)
         return parts.filter { it.size>=minSize }.sortedByDescending { it.size }.take(maxParts).map { pixels ->
             val values=FloatArray(w*h); pixels.forEach { values[it]=mask.values[it] }; mask.copy(values=values)
         }
+    }
+
+    /** Chamfer-style distance transform peaks. Peaks must be six cells apart,
+     * preventing texture noise from becoming fake objects. */
+    private fun distancePeaks(component: List<Int>, mask: CompactConfidenceMask): List<Int> {
+        val w = mask.width
+        val inside = component.toHashSet()
+        val distances = component.associateWith { pixel ->
+            val x = pixel % w; val y = pixel / w
+            minOf(x, w - 1 - x, y, mask.height - 1 - y).toFloat()
+        }
+        return component.sortedByDescending { distances[it] ?: 0f }.filter { candidate ->
+            (distances[candidate] ?: 0f) >= 3f &&
+                distances.keys.none { it != candidate && distances[it]!! >= distances[candidate]!! && distance(it, candidate, w) < 6 }
+        }.take(maxParts)
+    }
+
+    private fun distance(a: Int, b: Int, width: Int): Int {
+        val ax = a % width; val ay = a / width; val bx = b % width; val by = b / width
+        return kotlin.math.abs(ax - bx) + kotlin.math.abs(ay - by)
     }
 }
 
