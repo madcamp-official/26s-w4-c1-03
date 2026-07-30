@@ -737,8 +737,12 @@ fun CameraScreen(
                             // is not cropping the width and the preview shows less
                             // than the file holds. Measured 2026-07-30 on SM-G970N —
                             // 3024×3780 rear, 2736×3420 front, both exactly 4:5 at the
-                            // sensor's full width — which is why `SubjectProjection`'s
-                            // 2904×3630 is recorded there as the stale figure.
+                            // sensor's full width, so there is no viewport width crop.
+                            //
+                            // ⚠️ `SubjectProjection`'s KDoc still predicts 2904×3630
+                            // from a 1080×1500 pane and has not been corrected — that
+                            // file is out of scope here. Believe this line, not that
+                            // one, until someone owns the fix.
                             if (BuildConfig.DEBUG) {
                                 Log.d(
                                     LATENCY_TAG,
