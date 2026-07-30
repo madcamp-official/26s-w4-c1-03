@@ -103,20 +103,39 @@ class ShootSessionRepository(
             )
     }
 
-    /** Downloads every currently available photo then purges the temporary server session. */
+    /**
+     * Downloads every currently available photo then purges the temporary server session.
+     *
+     * The ordering is the safety property, and it is delegated to [downloadThenClaim] so
+     * it can be tested: the claim is what makes this irreversible, so it must not run
+     * until every download has succeeded. A download that fails throws first, the server
+     * session survives, and 다시 시도 fetches the whole set again.
+     */
     suspend fun receiveAndClaim(session: ActiveSession): List<File> {
         val status = api.getShootSession(session.sessionId, session.ownerToken)
         val destination = File(cacheDir, session.sessionId).apply { mkdirs() }
-        val files = status.photos.map { photo ->
-            File(destination, "${photo.photoId}.png").also { file ->
-                api.downloadShootPhoto(session.sessionId, photo.photoId, session.ownerToken, file)
-            }
-        }
-        api.claimShootSession(session.sessionId, session.ownerToken)
+        val files = downloadThenClaim(
+            photoIds = status.photos.map { it.photoId },
+            download = { photoId ->
+                File(destination, "$photoId.png").also { file ->
+                    api.downloadShootPhoto(session.sessionId, photoId, session.ownerToken, file)
+                }
+            },
+            claim = { api.claimShootSession(session.sessionId, session.ownerToken) },
+        )
         settings.clearShootSession()
         _snapshot.value = SessionSnapshot()
         return files
     }
+
+    /**
+     * Where [receiveAndClaim] puts what it downloaded.
+     *
+     * Exposed because a file still sitting in here means "downloaded but not yet turned
+     * into a `captures` row" — see `ui/shoot/ReceivedPhotoImport.kt`, which both maintains
+     * and reads that invariant.
+     */
+    val receivedPhotosRoot: File get() = cacheDir
 
     suspend fun clear() {
         settings.clearShootSession()
@@ -124,4 +143,30 @@ class ShootSessionRepository(
     }
 
     private fun ShootSessionCreated.toActive() = ActiveSession(sessionId, ownerToken, api.publicUrl(shareUrl), expiresAt, maxPhotos)
+}
+
+/**
+ * Downloads every photo, and only then claims.
+ *
+ * Extracted from [ShootSessionRepository.receiveAndClaim] purely so the ordering can be
+ * driven by a test, because the ordering is the only thing standing between a flaky
+ * network and lost photos. `claim` deletes the session **and its files** on the server;
+ * once it has run there is no second chance. So a download that throws must take the
+ * whole operation down with it, before the claim, leaving the session alive for a retry.
+ *
+ * Sequential on purpose. Parallel downloads would finish some and abandon others while
+ * still refusing to claim, which is not faster in any way that matters here (at most five
+ * photos) and makes the partial state harder to reason about.
+ *
+ * @param download must write the photo and return the file it wrote.
+ * @param claim runs exactly once, after the last successful download, or never.
+ */
+internal suspend fun downloadThenClaim(
+    photoIds: List<String>,
+    download: suspend (String) -> File,
+    claim: suspend () -> Unit,
+): List<File> {
+    val files = photoIds.map { photoId -> download(photoId) }
+    claim()
+    return files
 }

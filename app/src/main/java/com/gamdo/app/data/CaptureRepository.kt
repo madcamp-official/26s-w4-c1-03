@@ -35,6 +35,42 @@ import java.io.File
 enum class CaptureSource(val value: String) {
     CAMERA_MANUAL("camera_manual"),
     GALLERY_IMPORT("gallery_import"),
+
+    /**
+     * A photo a friend took through the `나 찍어줘` hand-off (P2 §5).
+     *
+     * A distinct value rather than reusing [GALLERY_IMPORT] because the two differ in the
+     * fact a user would care about: a gallery import was already in this user's own
+     * library, and one of these was taken on someone else's phone and has never been in
+     * anybody's gallery. The row is otherwise an ordinary capture — it appears in the
+     * album and opens in the editor like any other — so this column is the only place
+     * that difference is recorded.
+     *
+     * `conditions_json` and `analysis_json` stay `{}` for these rows: a friend's phone
+     * recorded no tilt, no subject rectangle and no session, and defaulting them to
+     * neutral numbers would claim a measurement nobody took.
+     *
+     * ## A warning for whoever brings the diagnostic chips back
+     *
+     * `{}` has no user-visible effect **today** only because §4-3's chips were cut from
+     * the UI in `daafdb7` (`P1_Plan_1.md` §4-3 = 컷; `remain_plan.md` records
+     * `problems_json` staying `"[]"` as intended). The computation path in
+     * `detect/ProblemDiagnoser.kt` is still there with zero production callers.
+     *
+     * If chips are ever rebuilt in the shape they had — `if (problems.isNotEmpty())` —
+     * then `{}` reads as **"this photo has no problems"**, which is a claim, not an
+     * absence. `CaptureConditions.parse` returns `tiltDeg = null, subject = null` for
+     * `{}`, and those nulls collapse to neutral numbers at `CaptureConditions.tiltDegOrZero`,
+     * `ImageStats.horizontalMargins(null)` and `ProblemDiagnoser`'s `backlightRatio ?: 0f`,
+     * so `TILT`, `EXCESS_MARGIN` and `BACKLIGHT` can never fire. A genuinely crooked,
+     * badly framed, backlit photo is then reported as fine.
+     * `DiagnosisReachabilityTest` (the missing-shutter-facts case) already pins exactly
+     * this, and **rows created here are the first real photos in the app to take that
+     * path** — every other row is written by `ShutterSnapshot`, which always has real
+     * conditions. A rebuilt chip row must distinguish "measured, nothing wrong" from
+     * "never measured" before it renders anything about one of these.
+     */
+    DELEGATED_SHOOT("delegated_shoot"),
 }
 
 /**
@@ -338,6 +374,7 @@ class CaptureRepository(
     suspend fun importFromGallery(
         uri: Uri,
         snapshot: CaptureSnapshot = CaptureSnapshot(),
+        source: CaptureSource = CaptureSource.GALLERY_IMPORT,
     ): SavedCapture = withContext(Dispatchers.IO) {
         val id = newCaptureId()
         val orientationDegrees = readExifRotation(uri)
@@ -355,13 +392,36 @@ class CaptureRepository(
         insertCapture(
             id = id,
             file = file,
-            source = CaptureSource.GALLERY_IMPORT,
+            source = source,
             snapshot = snapshot,
-            // Not a failure: no export was asked for. The photo was in the user's
-            // gallery before this app saw it, and this import did not put it there.
+            // Not a failure: no export was asked for. A gallery import was already in the
+            // user's gallery before this app saw it; a received photo is not in anyone's
+            // gallery and is not being put there on the user's behalf either. Neither
+            // case is [GalleryExport.REFUSED] — nothing was attempted.
             gallery = GalleryExport.NOT_REQUESTED,
         )
     }
+
+    /**
+     * Files a photo a friend took through the `나 찍어줘` hand-off (P2 §5) as an ordinary
+     * capture.
+     *
+     * Deliberately a thin delegation to [importFromGallery] rather than a second copy of
+     * it. That function already does every part of this correctly — decode, bake the EXIF
+     * rotation into the pixels, re-encode so the source EXIF block (**and its GPS tags**)
+     * is dropped, write to app-private storage, insert the row — and a parallel
+     * implementation would be a second place for the D8 location-stripping rule to rot.
+     * Only [CaptureSource] differs, and it is passed in.
+     *
+     * The snapshot is left at its defaults, which is `conditions_json = "{}"` and
+     * `analysis_json = "{}"`. That is the honest record: the shutter facts belong to a
+     * phone this app never ran on.
+     *
+     * @param file a downloaded photo in the received-photo cache. The caller deletes it
+     *   once this returns; the bytes it needed are now in app-private storage.
+     */
+    suspend fun importReceivedShootPhoto(file: File): SavedCapture =
+        importFromGallery(Uri.fromFile(file), source = CaptureSource.DELEGATED_SHOOT)
 
     /**
      * Writes an edited derivative of [captureId] and records how it was produced.
