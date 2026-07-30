@@ -52,4 +52,17 @@ class GamdoProfileTest {
         assertEquals(PortraitFraming.AUTO, profile.global.capture.portrait.framing)
         assertEquals(PortraitMood.CANDID, profile.global.capture.resolvedPortraitPreference().mood)
     }
+
+    @Test fun `portrait preference becomes a bounded guide template preference`() {
+        val policy = this.policy.copy(
+            capture = CapturePreference(
+                portrait = PortraitPreference(framing = PortraitFraming.FULL_BODY, mood = PortraitMood.CENTERED),
+            ),
+        )
+
+        val target = policy.toCameraStyleTarget()
+
+        assertEquals("portrait_full_center_v3", target.preferredPortraitTemplateId)
+        assertEquals("CENTERED", target.portraitMood)
+    }
 }
