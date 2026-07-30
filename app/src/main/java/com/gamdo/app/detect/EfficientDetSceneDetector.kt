@@ -31,6 +31,7 @@ private const val VALIDATION_FILL = 0xFF808080.toInt()
 data class EfficientDetSceneDetectorConfig(
     val enabled: Boolean = true,
     val modelAsset: String = "models/efficientdet_lite2_coco_int8.tflite",
+    val fallbackModelAsset: String = "models/efficientdet_lite0_coco_int8.tflite",
     val minimumConfidence: Float = 0.25f,
     val maxResults: Int = 8,
     val preferGpu: Boolean = true,
@@ -247,10 +248,10 @@ class EfficientDetSceneDetector(
     private fun createColdStartDetector(): DetectorHandle? {
         val accelerator = GpuUpgradePolicy.coldStart
         val attempt = runCatching {
-            DetectorHandle(
-                ThreadConfined.unconfined(createDetector(appContext, accelerator)),
-                accelerator,
-            )
+            DetectorHandle(ThreadConfined.unconfined(createDetector(appContext, accelerator, config.modelAsset)), accelerator)
+        }.recoverCatching {
+            Log.w(TAG, "primary model unavailable; using Lite0 fallback", it)
+            DetectorHandle(ThreadConfined.unconfined(createDetector(appContext, accelerator, config.fallbackModelAsset)), accelerator)
         }
         val handle = attempt.getOrNull()
         acceleratorState = DetectorAcceleratorReport(
@@ -407,9 +408,13 @@ class EfficientDetSceneDetector(
         Log.i(TAG, acceleratorState.format())
     }
 
-    private fun createDetector(context: Context, accelerator: DetectorAccelerator): ObjectDetector {
+    private fun createDetector(
+        context: Context,
+        accelerator: DetectorAccelerator,
+        assetPath: String = config.modelAsset,
+    ): ObjectDetector {
         val base = BaseOptions.builder()
-            .setModelAssetPath(config.modelAsset)
+            .setModelAssetPath(assetPath)
             .setDelegate(accelerator.toDelegate())
             .build()
         val options = ObjectDetector.ObjectDetectorOptions.builder()

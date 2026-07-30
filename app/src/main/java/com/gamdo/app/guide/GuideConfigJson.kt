@@ -241,6 +241,7 @@ data class ObjectGuideConfigJson(
     fun toEfficientDetConfig(): EfficientDetSceneDetectorConfig = EfficientDetSceneDetectorConfig(
         enabled = sceneModelEnabled,
         modelAsset = sceneModelAsset,
+        fallbackModelAsset = sceneModelFallbackAsset,
         minimumConfidence = sceneModelMinimumConfidence,
         maxResults = sceneModelMaxResults,
         preferGpu = sceneModelPreferGpu,

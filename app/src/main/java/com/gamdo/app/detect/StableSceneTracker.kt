@@ -210,6 +210,7 @@ class StableSceneTracker(
     }
 
     private fun sameSubject(a: ObjectObservation, b: ObjectObservation): Boolean {
+        if (a.sceneTrackId != null && b.sceneTrackId != null) return a.sceneTrackId == b.sceneTrackId
         if (a.trackingId != null && b.trackingId != null) return a.trackingId == b.trackingId
         // Nearby centers are not identity. Two cups placed next to each other
         // routinely fall within the old distance threshold, which collapsed a
