@@ -62,6 +62,20 @@ internal data class CardJson(
     val grain: Float,
     val candidness: Float,
     val framing: Float,
+    /**
+     * SHA-256 (first 16 hex chars) of the image these numbers were measured from.
+     *
+     * Not used at runtime — it exists so `CardRepositoryTest` can fail when a
+     * photo is swapped and its row is not re-measured. That is not hypothetical:
+     * until 2026-07-30 every bundled image was a close-up portrait while this file
+     * described a range from `subjectScale` 0.08 to 0.95, and every existing
+     * assertion passed, because none of them tied a row to its picture. Someone
+     * choosing "the wide overcast one" was shown a face.
+     *
+     * Defaulted so an older or hand-written bundle still parses; the test is what
+     * requires it to be present and correct.
+     */
+    val measuredFrom: String = "",
 ) {
     fun toFeature() = CardFeature(
         id, subjectScale, subjectPosition, headroom, backgroundRatio, brightness,

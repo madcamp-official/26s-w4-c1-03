@@ -115,6 +115,98 @@ class CardRepositoryTest {
     }
 
     /**
+     * The declared tone must be the tone of the actual pixels.
+     *
+     * **This is the gap the spread test above left open.** A card set can vary on
+     * every declared dimension and still be one photograph repeated, or sixteen
+     * photographs whose numbers describe some other sixteen — and that is not
+     * hypothetical: until 2026-07-30 all sixteen images were close-up portraits
+     * while `cards.json` described a range from `subjectScale` 0.08 to 0.95. Every
+     * assertion in this file passed throughout, because none of them opened the
+     * images. Someone picking "the wide overcast one" was shown a face.
+     *
+     * Only the photometric axes are checkable here — brightness, saturation and
+     * contrast are functions of the pixels alone. `subjectScale`, `headroom` and
+     * `framing` are semantic and stay unverified; see
+     * `docs/감도_카드_에셋_라이선스_기록.md` for why measuring them was tried and
+     * abandoned.
+     *
+     * Tolerances are loose on purpose. The point is to catch a card whose numbers
+     * belong to a different photograph, not to re-derive them.
+     */
+    @Test
+    fun `every row names the image it was measured from`() {
+        // Decoding the JPEG and re-deriving brightness here would be the direct
+        // check, and it is not available: unit tests compile against `android.jar`,
+        // which has no `javax.imageio` and no working `BitmapFactory`. Same
+        // constraint that shapes the rest of this module — no androidTest source
+        // set, no Robolectric.
+        //
+        // So this pins the weaker property that still catches the real failure:
+        // the numbers must belong to *this* file. Swap a photo without re-measuring
+        // and the hash stops matching.
+        val parsed = json.decodeFromString<CardsFile>(cardsJsonText)
+        val digest = MessageDigest.getInstance("SHA-256")
+        for (card in parsed.cards) {
+            val file = File(cardsDir, "${card.id}.jpg")
+            val actual = digest.digest(file.readBytes())
+                .joinToString("") { "%02x".format(it) }
+                .take(16)
+            assertTrue(
+                "${card.id} has no measuredFrom — its numbers cannot be tied to any image",
+                card.measuredFrom.isNotBlank(),
+            )
+            assertEquals(
+                "${card.id}: cards.json was measured from an image with hash " +
+                    "${card.measuredFrom} but ${file.name} hashes to $actual. The photo " +
+                    "was replaced without re-measuring its row, so the picker is " +
+                    "describing a different picture than the one it shows.",
+                card.measuredFrom,
+                actual,
+            )
+        }
+    }
+
+    /**
+     * Two different tastes must produce two different profiles.
+     *
+     * This is the onboarding's whole purpose stated as a test: the user picks five
+     * of sixteen, and what they picked has to change the answer. With the old set
+     * it could not — sixteen portraits under different lighting meant every
+     * selection landed on the same composition profile, so the screen asked a
+     * question whose answer was fixed before it was asked.
+     *
+     * The two selections are chosen by the data rather than hard-coded, so this
+     * keeps testing the *current* bundle: the five darkest against the five
+     * brightest. If a future set cannot separate even those, it cannot separate
+     * anything a user would do.
+     */
+    @Test
+    fun `a dark selection and a bright selection produce different profiles`() {
+        val byBrightness = cards().sortedBy { it.brightness }
+        val dark = byBrightness.take(5)
+        val bright = byBrightness.takeLast(5)
+        val presets = emptyList<PresetProfile>()
+
+        val darkProfile = ProfileEngine.build(dark, presets)
+        val brightProfile = ProfileEngine.build(bright, presets)
+
+        val darkMean = darkProfile.color.getValue("brightness").mean
+        val brightMean = brightProfile.color.getValue("brightness").mean
+        assertTrue(
+            "the darkest five and the brightest five differ by only " +
+                "${"%.2f".format(brightMean - darkMean)} in brightness — the picker " +
+                "cannot tell these tastes apart",
+            brightMean - darkMean >= 0.20f,
+        )
+        assertTrue(
+            "both selections summarise identically (\"${darkProfile.summary}\"), so " +
+                "the onboarding tells every user the same thing",
+            darkProfile.summary != brightProfile.summary,
+        )
+    }
+
+    /**
      * `decodeCardEntries` is what the onboarding picker calls instead of re-parsing
      * `cards.json` itself: it must carry the same 16 features as [decodeCards] plus the
      * `thumbnail` path each `PickCard` needs for its `AsyncImage`.
