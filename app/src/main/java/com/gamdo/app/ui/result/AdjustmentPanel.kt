@@ -36,13 +36,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gamdo.app.edit.EditTool
 import com.gamdo.app.edit.FilterEngine
-import com.gamdo.app.ui.theme.Charcoal600
-import com.gamdo.app.ui.theme.Charcoal900
-import com.gamdo.app.ui.theme.OnDarkHigh
-import com.gamdo.app.ui.theme.OnDarkMedium
-import com.gamdo.app.ui.theme.OnDarkMuted
-import com.gamdo.app.ui.theme.OutlineDim
-import com.gamdo.app.ui.theme.Sage
+import com.gamdo.app.ui.theme.Ink700
+import com.gamdo.app.ui.theme.Ink900
+import com.gamdo.app.ui.theme.TextHi
+import com.gamdo.app.ui.theme.TextMid
+import com.gamdo.app.ui.theme.TextLow
+import com.gamdo.app.ui.theme.Outline
+import com.gamdo.app.ui.theme.Amber
 import kotlin.math.abs
 
 /**
@@ -119,7 +119,7 @@ fun AdjustmentPanel(
 
         Text(
             text = "좌우로 밀어서 ${selected.label} 조절",
-            color = OnDarkMuted,
+            color = TextLow,
             fontSize = 11.sp,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
@@ -150,21 +150,21 @@ private fun ToolDial(
     ) {
         Box(modifier = Modifier.size(46.dp), contentAlignment = Alignment.Center) {
             Canvas(modifier = Modifier.size(46.dp)) {
-                drawArc(color = Charcoal600, startAngle = -90f, sweepAngle = 360f, useCenter = true)
+                drawArc(color = Ink700, startAngle = -90f, sweepAngle = 360f, useCenter = true)
                 drawArc(
-                    color = if (active) Sage else OutlineDim,
+                    color = if (active) Amber else Outline,
                     startAngle = -90f,
                     sweepAngle = 360f * fraction,
                     useCenter = true,
                 )
             }
             Box(
-                modifier = Modifier.size(38.dp).background(Charcoal900, CircleShape),
+                modifier = Modifier.size(38.dp).background(Ink900, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = formatValue(tool, value),
-                    color = if (active) Sage else OnDarkMuted,
+                    color = if (active) Amber else TextLow,
                     fontSize = 11.sp,
                     fontWeight = if (active) FontWeight.ExtraBold else FontWeight.Bold,
                 )
@@ -172,7 +172,7 @@ private fun ToolDial(
         }
         Text(
             text = tool.label,
-            color = if (selected) OnDarkHigh else OnDarkMedium,
+            color = if (selected) TextHi else TextMid,
             fontSize = 10.5.sp,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
         )
@@ -240,7 +240,7 @@ private fun TickRuler(
                     val half = if (tick % 25 == 0) majorHalf else minorHalf
                     val near = 1f - (abs(x - centreX) / (size.width / 2f)).coerceIn(0f, 1f)
                     drawLine(
-                        color = if (near > 0.45f) OnDarkMuted else OutlineDim,
+                        color = if (near > 0.45f) TextLow else Outline,
                         start = Offset(x, midY - half),
                         end = Offset(x, midY + half),
                         strokeWidth = tickWidth,
@@ -254,13 +254,13 @@ private fun TickRuler(
             // The design asks for a box-shadow glow, which a Canvas line has no
             // equivalent for; a wider faint pass underneath reads the same.
             drawLine(
-                color = Sage.copy(alpha = 0.30f),
+                color = Amber.copy(alpha = 0.30f),
                 start = Offset(centreX, midY - indicatorHalf),
                 end = Offset(centreX, midY + indicatorHalf),
                 strokeWidth = indicatorWidth * 3f,
             )
             drawLine(
-                color = Sage,
+                color = Amber,
                 start = Offset(centreX, midY - indicatorHalf),
                 end = Offset(centreX, midY + indicatorHalf),
                 strokeWidth = indicatorWidth,

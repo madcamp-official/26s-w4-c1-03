@@ -47,11 +47,11 @@ import com.gamdo.app.data.media.AlbumEntry
 import com.gamdo.app.data.media.DEFAULT_ALBUM_PAGE_SIZE
 import com.gamdo.app.data.media.PhotoPageRequest
 import com.gamdo.app.data.media.mergeAlbumEntries
-import com.gamdo.app.ui.theme.Charcoal700
-import com.gamdo.app.ui.theme.Charcoal900
-import com.gamdo.app.ui.theme.OnDarkHigh
-import com.gamdo.app.ui.theme.OnDarkMedium
-import com.gamdo.app.ui.theme.OnDarkMuted
+import com.gamdo.app.ui.theme.Ink800
+import com.gamdo.app.ui.theme.Ink900
+import com.gamdo.app.ui.theme.TextHi
+import com.gamdo.app.ui.theme.TextMid
+import com.gamdo.app.ui.theme.TextLow
 import java.io.File
 
 /**
@@ -161,7 +161,7 @@ fun AlbumScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Charcoal900),
+            .background(Ink900),
     ) {
         // 2e header: `‹ 앨범`, gap 12dp, 16dp/20dp. The back glyph gets a 44dp touch
         // target through padding rather than a larger box, so it still sits where
@@ -183,14 +183,14 @@ fun AlbumScreen(
                     .clickable(onClick = onBack),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(text = "‹", color = OnDarkMedium, fontSize = 18.sp)
+                Text(text = "‹", color = TextMid, fontSize = 18.sp)
             }
-            Text(text = "앨범", color = OnDarkHigh, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+            Text(text = "앨범", color = TextHi, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
         }
 
         if (merged.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("아직 촬영한 사진이 없어요", color = OnDarkMuted, fontSize = 13.sp)
+                Text("아직 촬영한 사진이 없어요", color = TextLow, fontSize = 13.sp)
             }
         } else {
             val gridState = rememberLazyGridState()
@@ -232,7 +232,7 @@ fun AlbumScreen(
                             .fillMaxWidth()
                             .aspectRatio(1f)
                             .clip(RoundedCornerShape(10.dp))
-                            .background(Charcoal700)
+                            .background(Ink800)
                             .clickable {
                                 when (entry) {
                                     is AlbumEntry.AppCapture -> onOpenPhoto(entry.captureId)

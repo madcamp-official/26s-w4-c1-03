@@ -87,14 +87,14 @@ import com.gamdo.app.ui.rescue.retainedCandidateId
 import com.gamdo.app.ui.rescue.retainedRecommendations
 import com.gamdo.app.ui.rescue.retainedRunningOperation
 import com.gamdo.app.ui.rescue.styleParamsJson
-import com.gamdo.app.ui.theme.Charcoal700
-import com.gamdo.app.ui.theme.Charcoal900
-import com.gamdo.app.ui.theme.Charcoal950
-import com.gamdo.app.ui.theme.OnDarkHigh
-import com.gamdo.app.ui.theme.OnDarkMedium
-import com.gamdo.app.ui.theme.OnDarkMuted
-import com.gamdo.app.ui.theme.OnSage
-import com.gamdo.app.ui.theme.Sage
+import com.gamdo.app.ui.theme.Ink800
+import com.gamdo.app.ui.theme.Ink900
+import com.gamdo.app.ui.theme.Ink950
+import com.gamdo.app.ui.theme.TextHi
+import com.gamdo.app.ui.theme.TextMid
+import com.gamdo.app.ui.theme.TextLow
+import com.gamdo.app.ui.theme.OnAmber
+import com.gamdo.app.ui.theme.Amber
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -650,13 +650,13 @@ fun ResultScreen(
     // The AI 3 sheet overlays the whole screen, so the editor becomes one child of a
     // Box rather than the root. Nothing about the editor's own layout changes.
     Box(modifier = Modifier.fillMaxSize()) {
-    Column(modifier = Modifier.fillMaxSize().background(Charcoal900)) {
-        // 2f header: `‹` (18sp, OnDarkMedium) · `보정` (15sp bold) · `완료`
-        // (13.5sp bold, Sage), space-between at 20dp / 14dp top.
+    Column(modifier = Modifier.fillMaxSize().background(Ink900)) {
+        // 2f header: `‹` (18sp, TextMid) · `보정` (15sp bold) · `완료`
+        // (13.5sp bold, Amber), space-between at 20dp / 14dp top.
         //
         // The one thing added to the drawing is that both ends are real 44dp touch
         // targets, reached with padding so the glyphs still land where the design
-        // puts them. `완료` in particular was Sage + Bold with no click at all — the
+        // puts them. `완료` in particular was Amber + Bold with no click at all — the
         // design draws it as the way out of the screen, so it has to be one.
         Row(
             modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 2.dp),
@@ -670,9 +670,9 @@ fun ResultScreen(
                     .clickable(onClick = onBack),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("‹", color = OnDarkMedium, fontSize = 18.sp)
+                Text("‹", color = TextMid, fontSize = 18.sp)
             }
-            Text("보정", color = OnDarkHigh, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("보정", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             Box(
                 modifier = Modifier
                     .heightIn(min = 44.dp)
@@ -681,13 +681,13 @@ fun ResultScreen(
                     .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("완료", color = Sage, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                Text("완료", color = Amber, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
             }
         }
 
         Box(
             modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth().weight(1f)
-                .clip(RoundedCornerShape(16.dp)).background(Charcoal950),
+                .clip(RoundedCornerShape(16.dp)).background(Ink950),
         ) {
             val displayBitmap = edited ?: source
             // Show the untouched source immediately while the full-resolution
@@ -713,7 +713,7 @@ fun ResultScreen(
                     } else {
                         "사진을 불러오는 중이에요"
                     },
-                    color = OnDarkMuted,
+                    color = TextLow,
                     fontSize = 12.sp,
                     modifier = Modifier.align(Alignment.Center),
                 )
@@ -727,11 +727,11 @@ fun ResultScreen(
                 //
                 // Only over a photo. The badge is a caption on the picture, and the
                 // Box it sits in also renders 사진을 불러오는 중이에요 / 사진을 열지
-                // 못했어요 — a Sage 밤거리 chip floating over either of those names a
+                // 못했어요 — a Amber 밤거리 chip floating over either of those names a
                 // look on something that is not there.
                 if (displayBitmap != null) Box(
                     modifier = Modifier.clip(RoundedCornerShape(5.dp))
-                        .background(Sage).padding(horizontal = 8.dp, vertical = 3.dp),
+                        .background(Amber).padding(horizontal = 8.dp, vertical = 3.dp),
                 ) {
                     // [appliedStyleLabel], not [stripLabelFor]: the badge describes the
                     // pixels, and a style pass that threw leaves the strip pointing at
@@ -748,7 +748,7 @@ fun ResultScreen(
                             referenceColorLanded = !passes.style ||
                                 (corrected as? OpenedPhoto.Ready)?.plan != null,
                         ),
-                        color = OnSage,
+                        color = OnAmber,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -843,7 +843,7 @@ fun ResultScreen(
             saveError?.let { status ->
                 Text(
                     text = status,
-                    color = OnDarkMedium,
+                    color = TextMid,
                     fontSize = 12.5.sp,
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
@@ -1088,8 +1088,8 @@ private fun filterAsset(filterId: String): String {
 private fun FilterThumb(label: String, asset: String, selected: Boolean, onClick: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable(onClick = onClick)) {
         Box(
-            modifier = Modifier.size(58.dp).clip(RoundedCornerShape(11.dp)).background(Charcoal700)
-                .then(if (selected) Modifier.border(2.dp, Sage, RoundedCornerShape(11.dp)) else Modifier),
+            modifier = Modifier.size(58.dp).clip(RoundedCornerShape(11.dp)).background(Ink800)
+                .then(if (selected) Modifier.border(2.dp, Amber, RoundedCornerShape(11.dp)) else Modifier),
         ) {
             AsyncImage(
                 model = "file:///android_asset/$asset",
@@ -1098,7 +1098,7 @@ private fun FilterThumb(label: String, asset: String, selected: Boolean, onClick
                 modifier = Modifier.fillMaxSize(),
             )
         }
-        Text(label, color = if (selected) Sage else OnDarkMedium, fontSize = 10.5.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.padding(top = 4.dp))
+        Text(label, color = if (selected) Amber else TextMid, fontSize = 10.5.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.padding(top = 4.dp))
     }
 }
 
