@@ -40,6 +40,8 @@ function ShootPage({ token }: { token: string }) {
   const [config, setConfig] = useState<ShootConfig | null>(null)
   const [message, setMessage] = useState('')
   const [count, setCount] = useState(0)
+  const [sending, setSending] = useState(false)
+  const [retryBlob, setRetryBlob] = useState<Blob | null>(null)
 
   useEffect(() => {
     let stream: MediaStream | undefined
@@ -63,18 +65,34 @@ function ShootPage({ token }: { token: string }) {
     return () => stream?.getTracks().forEach(track => track.stop())
   }, [token])
 
+  async function uploadPhoto(blob: Blob) {
+    if (!config || sending || count >= config.maxPhotos) return
+    setSending(true)
+    setMessage('사진을 보내는 중입니다')
+    const form = new FormData(); form.append('image', blob, 'gamdo-shoot.jpg')
+    try {
+      const response = await fetch(`/api/v1/shoot-upload/${token}`, { method: 'POST', body: form })
+      if (!response.ok) throw new Error('upload failed')
+      setCount(value => value + 1)
+      setRetryBlob(null)
+      setMessage('')
+    } catch {
+      setRetryBlob(blob)
+      setMessage('사진을 보내지 못했습니다')
+    } finally {
+      setSending(false)
+    }
+  }
+
   async function takePhoto() {
-    if (!video.current || !config || count >= config.maxPhotos) return
+    if (retryBlob) return uploadPhoto(retryBlob)
+    if (!video.current || !config || sending || count >= config.maxPhotos) return
     const canvas = document.createElement('canvas')
     canvas.width = video.current.videoWidth; canvas.height = video.current.videoHeight
     canvas.getContext('2d')?.drawImage(video.current, 0, 0)
-    setMessage('전송 중')
     const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92))
     if (!blob) return setMessage('사진을 만들지 못했어요.')
-    const form = new FormData(); form.append('image', blob, 'gamdo-shoot.jpg')
-    const response = await fetch(`/api/v1/shoot-upload/${token}`, { method: 'POST', body: form })
-    if (!response.ok) return setMessage('전송하지 못했어요. 다시 시도해 주세요.')
-    setCount(value => value + 1); setMessage('')
+    await uploadPhoto(blob)
   }
 
   const policy = config?.policy ?? {}
@@ -84,7 +102,7 @@ function ShootPage({ token }: { token: string }) {
     <video ref={video} autoPlay playsInline muted />
     <GuideOverlay slots={slots} />
     <div className="shade top"><strong>감도</strong><span className="shot-dots" aria-label={`${count}장 촬영됨`}>{Array.from({ length: targetPhotos }, (_, index) => <i key={index} className={index < count ? 'done' : ''} />)}</span></div>
-    <div className="shade bottom"><span role="status" aria-live="polite">{message}</span><button aria-label="촬영" onClick={takePhoto} disabled={!config || count >= targetPhotos}><i /></button></div>
+    <div className="shade bottom"><span role="status" aria-live="polite">{message}</span><button aria-label={retryBlob ? '사진 다시 보내기' : '촬영'} aria-busy={sending} onClick={takePhoto} disabled={!config || sending || count >= targetPhotos}><i /></button></div>
   </main>
 }
 
