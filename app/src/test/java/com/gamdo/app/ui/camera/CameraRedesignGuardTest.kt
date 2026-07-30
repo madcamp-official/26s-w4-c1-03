@@ -122,29 +122,59 @@ class CameraRedesignGuardTest {
     // ---- D2 still holds after the rebuild ---------------------------------------
 
     /**
-     * D2-4: capture is manual only. The redesign rebuilt the shutter row, so this is
-     * re-asserted here — an `onFrame` / `LaunchedEffect` / `collect` reaching the
-     * shutter would be auto-capture however it was introduced.
+     * D2-4: capture is manual only. The redesign rebuilt the shutter row, so it is
+     * re-asserted here.
+     *
+     * **Structural, not proximity-based**, and the difference matters. A first draft
+     * checked the six lines above each `onShutter =` for `LaunchedEffect`/`delay`, which
+     * a realistic auto-capture would walk straight past: hoist the shutter body into a
+     * local `val fire = { … }`, call it from the click *and* from an effect, and nothing
+     * suspicious sits near either line. Asking instead where `controller.capture(`
+     * **lives** catches that, because hoisting it moves it out of the block.
      */
     @Test
-    fun `the shutter is reachable from a click and nothing else`() {
+    fun `the only capture call is inside the shutter's click lambda`() {
         val lines = KotlinSourceProbe.codeLines(screen)
-        val callers = lines.withIndex()
-            .filter { (_, line) -> line.contains("onShutter") }
+        val captures = lines.withIndex()
+            .filter { (_, line) -> line.contains("controller.capture(") }
+            .map { (i, _) -> i }
+        assertEquals(
+            "there must be exactly one capture call site in this screen",
+            1,
+            captures.size,
+        )
+        val clickBody = KotlinSourceProbe.blockAt("onShutter = {", lines)
+        assertTrue(
+            "D2-4: capture must be reachable from the shutter's onClick lambda and " +
+                "nowhere else. Found `controller.capture(` at line ${captures[0] + 1}, " +
+                "outside the onShutter block (lines ${clickBody.first + 1}..${clickBody.last + 1}). " +
+                "Hoisting the shutter body so an effect can also call it is auto-capture.",
+            captures[0] in clickBody,
+        )
+    }
+
+    /**
+     * D2-1 bans auto-capture "카운트다운 포함". A countdown needs a wait, and the only
+     * way to wait is to suspend — so the absence of a timer in this file is a stronger
+     * statement than the absence of the word "countdown".
+     *
+     * `delay` is the whole ban surface here: `CameraScreen` has no other legitimate use
+     * for one. The teardown watchdog is a `Handler.postDelayed`, deliberately named in
+     * the exclusion below rather than left to look like an oversight.
+     */
+    @Test
+    fun `nothing on the camera screen waits before capturing`() {
+        val offenders = KotlinSourceProbe.codeLines(screen)
+            .withIndex()
+            .filter { (_, line) -> Regex("""\bdelay\s*\(""").containsMatchIn(line) }
             .map { (i, line) -> "line ${i + 1}: ${line.trim()}" }
-        assertTrue("the shutter must still be wired", callers.isNotEmpty())
-        val forbidden = listOf("LaunchedEffect", "collect {", "delay(", "onFrame")
-        for ((index, line) in lines.withIndex()) {
-            if (!line.contains("onShutter =") && !line.contains("onClick = onShutter")) continue
-            val window = lines.subList((index - 6).coerceAtLeast(0), index)
-            for (marker in forbidden) {
-                assertFalse(
-                    "D2-4: `takePicture` runs from a click lambda only. Line ${index + 1} " +
-                        "sits under `$marker`, which would be auto-capture.",
-                    window.any { it.contains(marker) },
-                )
-            }
-        }
+        assertEquals(
+            "D2-1 bans auto-capture including a countdown, and a countdown needs a wait. " +
+                "The one legitimate timer here is scheduleTeardownWatchdog's " +
+                "Handler.postDelayed, which is not a `delay(` call.",
+            emptyList<String>(),
+            offenders,
+        )
     }
 
     /**
