@@ -48,6 +48,7 @@ data class FrameFeatures(
  * threshold rules that can be tested on the JVM.
  */
 class FrameFeatureCalculator(
+    @Suppress("UNUSED_PARAMETER")
     private val minLandmarkLikelihood: Float = 0.3f,
     private val lowLightThreshold: Float = 0.18f,
     private val backlightRatioThreshold: Float = 1.8f,
@@ -55,7 +56,7 @@ class FrameFeatureCalculator(
     fun calculate(input: FrameFeatureInput): FrameFeatures {
         val face = selectPrimaryFace(input.detection.faces)
         val poseBox = input.detection.pose
-            ?.let { boundingBox(it.landmarks.filter { landmark -> landmark.inFrameLikelihood >= minLandmarkLikelihood }) }
+            ?.let { pose -> boundingBox(pose.landmarks.filter { it.inFrameLikelihood >= minLandmarkLikelihood }) }
         val person = selectPrimaryPerson(input.personCandidates, poseBox, face?.box)
         val personCenter = person?.let { PointN(it.centerX, it.centerY) }
         val faceTop = face?.box?.top ?: person?.top ?: 0f
@@ -80,8 +81,8 @@ class FrameFeatureCalculator(
             brightnessMean = brightness,
             backlightFlag = backlight,
             lowLightFlag = brightness <= lowLightThreshold,
-            poseConfidence = input.detection.pose?.averageInFrameLikelihood
-                ?.coerceIn(0f, 1f) ?: 0f,
+            // Compatibility only. Production V3.1 supplies no pose observation.
+            poseConfidence = input.detection.pose?.averageInFrameLikelihood?.coerceIn(0f, 1f) ?: 0f,
             shake = input.shake.coerceAtLeast(0f),
         )
     }

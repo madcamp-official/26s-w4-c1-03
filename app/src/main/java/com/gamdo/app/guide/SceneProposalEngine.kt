@@ -2,6 +2,7 @@ package com.gamdo.app.guide
 
 import com.gamdo.app.detect.NormalizedBox
 import com.gamdo.app.detect.DetectionResult
+import com.gamdo.app.detect.GuideObjectCategory
 import com.gamdo.app.detect.SceneRecognitionPolicy
 import kotlin.math.abs
 
@@ -102,7 +103,9 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
                 bottom = points.maxOf { it.y },
             )
         }
-    val personBox = poseBox ?: faces.maxByOrNull { it.box.width * it.box.height }?.box
+    val personBox = objects.firstOrNull { it.category == GuideObjectCategory.PERSON }?.box
+        ?: poseBox
+        ?: faces.maxByOrNull { it.box.width * it.box.height }?.box
     val objectCandidate = objects
         .filter { it.box.width > 0f && it.box.height > 0f }
         .maxByOrNull { it.box.width * it.box.height * (it.detectionConfidence ?: it.confidence.takeIf { confidence -> confidence > 0f } ?: 0.7f) }
@@ -140,14 +143,17 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
         subjectOutline = segmented?.outline
             ?.map { LayoutGuidePoint(it.x, it.y) }
             ?.takeIf { it.size >= 3 }
-            ?: pose?.landmarks
-            ?.filter { it.inFrameLikelihood >= 0.3f }
-            ?.map { LayoutGuidePoint(it.x, it.y) }
-            .orEmpty(),
+            .orEmpty()
+            .ifEmpty {
+                pose?.landmarks
+                    ?.filter { it.inFrameLikelihood >= 0.3f }
+                    ?.map { LayoutGuidePoint(it.x, it.y) }
+                    .orEmpty()
+            },
         subjectLabels = objectCandidate?.labels.orEmpty(),
         hasReliableOutline = when {
             segmented?.outline?.size ?: 0 >= 3 -> true
-            personBox != null -> (pose?.landmarks?.count { it.inFrameLikelihood >= 0.3f } ?: 0) >= 3
+            personBox != null -> pose != null || objects.any { it.category == GuideObjectCategory.PERSON }
             else -> objectCandidate?.mask?.outline?.size?.let { it >= 3 } == true
         },
         slotDetections = buildList {

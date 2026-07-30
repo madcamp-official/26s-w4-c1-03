@@ -5,12 +5,10 @@ import android.util.Log
 import com.gamdo.app.BuildConfig
 import com.gamdo.app.detect.EfficientDetSceneDetector
 import com.gamdo.app.detect.MlKitFaceDetector
-import com.gamdo.app.detect.MlKitPoseDetector
 import com.gamdo.app.detect.MlKitSubjectSegmenter
 import com.gamdo.app.detect.SceneDetector
 import com.gamdo.app.detect.ThrottledFaceDetector
 import com.gamdo.app.detect.ThrottledObjectSceneDetector
-import com.gamdo.app.detect.ThrottledPoseDetector
 import com.gamdo.app.detect.ThrottledSubjectSceneSegmenter
 import com.gamdo.app.guide.GuideConfigBundle
 import com.gamdo.app.guide.parseGuideConfigBundle
@@ -298,21 +296,9 @@ private fun buildSceneDetector(context: Context, guideConfig: GuideConfigBundle)
         refreshEveryFrames = guideConfig.objectGuide.faceRefreshEveryFrames,
     )
     val t1 = System.nanoTime()
-    // Pose cost 89.8ms of a measured 263ms frame and ran on every frame.
-    // Like every model here it does not get cheaper on an empty frame, so
-    // cadence is the only lever (owner decision, 2026-07-28). It was the last
-    // divisor still compiled in; see `poseRefreshEveryFrames` in
-    // ObjectGuideConfigJson for why it is 2.
-    val poseDetector = ThrottledPoseDetector(
-        MlKitPoseDetector(),
-        refreshEveryFrames = guideConfig.objectGuide.poseRefreshEveryFrames,
-        // Face above is the phase reference at 0. Both are 1/2, so without this
-        // they refresh on the same frames and the cost lands together — measured
-        // 376ms when both ran against 118ms when neither did. Same total work,
-        // half the worst case.
-        phaseOffset = 1,
-    )
-    val t2 = System.nanoTime()
+    // V3.1 removes live pose inference. Person framing uses face + EfficientDet
+    // person boxes, so no pose model is initialized during camera warmup.
+    val t2 = t1
     // CameraX already keeps only the newest frame. Refreshing objects on
     // every processed frame gives the 3/5 tracker enough real evidence
     // to meet the two-second first-layout target without a queue.
@@ -331,7 +317,7 @@ private fun buildSceneDetector(context: Context, guideConfig: GuideConfigBundle)
         fun ms(from: Long, to: Long) = (to - from) / 1_000_000.0
         Log.d(
             TAG,
-            "detectorBuild face=%.0f pose=%.0f object=%.0f seg=%.0f total=%.0fms (%s)".format(
+            "detectorBuild face=%.0f pose=0 object=%.0f seg=%.0f total=%.0fms (%s)".format(
                 ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3, t4), ms(t0, t4),
                 Thread.currentThread().name,
             ),
@@ -340,7 +326,6 @@ private fun buildSceneDetector(context: Context, guideConfig: GuideConfigBundle)
 
     return SceneDetector(
         faceDetector = faceDetector,
-        poseDetector = poseDetector,
         objectDetector = objectDetector,
         subjectSegmenter = subjectSegmenter,
         // Per-stage cost, debug builds only. Every ML Kit model here blocks the

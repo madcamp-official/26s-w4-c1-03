@@ -101,7 +101,10 @@ class SceneGuideCoordinator(
                 styleTarget = styleTarget,
                 signals = signals,
                 referenceTemplate = referenceTemplate,
-                poseGuide = PoseGuideSelector.select(detection.pose),
+                // V3 no longer runs live pose inference. Person framing is
+                // selected from face/person boxes and rendered as a fixed
+                // bracket.
+                poseGuide = null,
             )
         }
         val template = baseTemplate?.let { GenericLayoutSynthesizer.transform(it, styleTarget, templateSafetyMargin) }
@@ -212,14 +215,7 @@ class SceneGuideCoordinator(
             // frames use fixedBaseTemplate and cannot move or resize the brackets
             // until the user explicitly rescans.
             GuideCompositionSource.SCENE -> sceneTemplate?.let { selected ->
-                val selectedWithPose = if (selected.slots.any { it.role == SlotRole.PERSON } && poseGuide != null) {
-                    selected.copy(
-                        poseGuide = poseGuide,
-                        slots = selected.slots.map { slot ->
-                            if (slot.role == SlotRole.PERSON) slot.copy(visualKind = SlotVisualKind.POSE_SKELETON) else slot
-                        },
-                    )
-                } else selected
+                val selectedWithPose = selected
                 GenericLayoutSynthesizer.snapshotObjectShapes(
                     template = selectedWithPose,
                     detections = observation.slotDetections,

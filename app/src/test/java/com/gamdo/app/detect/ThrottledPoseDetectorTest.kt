@@ -143,20 +143,8 @@ class ThrottledPoseDetectorTest {
      * `guide_config.json` fails here instead of on a device.
      */
     @Test
-    fun `the asset divisor drives the cadence when wired through`() {
-        val bundle = parseGuideConfigBundle(
-            readAsset("guide_config.json").replace("\"poseRefreshEveryFrames\": 2", "\"poseRefreshEveryFrames\": 4"),
-        )
-        val delegate = Recording(listOf(pose(0.9f)))
-        val throttled = ThrottledPoseDetector(
-            delegate,
-            refreshEveryFrames = bundle.objectGuide.poseRefreshEveryFrames,
-        )
-
-        repeat(8) { throttled.detect(frame) }
-
-        // frames 1, 4, 8 with a divisor of 4 — not the 5 calls a divisor of 2 gives.
-        assertEquals("the asset value, not the code default, must set the cadence", 3, delegate.calls)
+    fun `production compatibility detector is intentionally empty`() {
+        assertEquals(null, NoPoseDetector.detect(frame))
     }
 
     private fun readAsset(name: String): String {

@@ -8,7 +8,7 @@ import kotlin.math.sqrt
 
 enum class SlotRole { PERSON, OBJECT }
 
-enum class SlotVisualKind { PERSON_SILHOUETTE, POSE_SKELETON, GENERIC_OBJECT, CUP, PLATE }
+enum class SlotVisualKind { PERSON_SILHOUETTE, PERSON_BRACKET, GENERIC_OBJECT, CUP, PLATE }
 
 /** Server-derived, normalized slot used only when a reference is active. */
 data class ReferenceTargetSlot(
@@ -39,7 +39,7 @@ data class LayoutSlot(
     /** Rendering hint only; it never changes the composition decision. */
     val preferredAspectRatio: Float = when (visualKind) {
         SlotVisualKind.PERSON_SILHOUETTE -> 0.52f
-        SlotVisualKind.POSE_SKELETON -> 0.52f
+        SlotVisualKind.PERSON_BRACKET -> 0.52f
         SlotVisualKind.CUP -> 0.78f
         SlotVisualKind.PLATE -> 1.15f
         SlotVisualKind.GENERIC_OBJECT -> 1f
@@ -204,6 +204,8 @@ object LayoutTemplateCatalog {
 
     const val PERSON_FULL_CENTER = "person_full_center_v2"
     const val PERSON_FULL_OFFSET = "person_full_offset_v2"
+    const val PERSON_FULL_RELAXED = "person_full_relaxed_v3"
+    const val PERSON_FULL_WALKING = "person_full_walking_v3"
     const val PERSON_UPPER = "person_upper_v2"
     const val PERSON_SEATED = "person_seated_v2"
     const val PERSON_OBJECT = "person_object_v2"
@@ -213,12 +215,14 @@ object LayoutTemplateCatalog {
     const val OBJECT_TRIO_TRIANGLE = "object_trio_triangle_v2"
     const val OBJECT_TRIO_ROW = "object_trio_row_v2"
     const val OBJECT_QUAD_GRID = "object_quad_grid_v2"
+    const val OBJECT_QUAD_HIERARCHY = "object_quad_hierarchy_v3"
     const val CAFE_TABLE_V2 = "cafe_table_v2"
 
     val manualIds = listOf(
-        PERSON_FULL_CENTER, PERSON_FULL_OFFSET, PERSON_UPPER, PERSON_SEATED,
-        PERSON_OBJECT, OBJECT_SINGLE, OBJECT_PAIR_BALANCED, OBJECT_PAIR_DIAGONAL,
-        OBJECT_TRIO_TRIANGLE, OBJECT_TRIO_ROW, OBJECT_QUAD_GRID, CAFE_TABLE_V2,
+        PERSON_FULL_CENTER, PERSON_FULL_OFFSET, PERSON_FULL_RELAXED, PERSON_FULL_WALKING,
+        PERSON_UPPER, PERSON_SEATED,
+        OBJECT_SINGLE, OBJECT_PAIR_BALANCED, OBJECT_PAIR_DIAGONAL,
+        OBJECT_TRIO_TRIANGLE, OBJECT_QUAD_HIERARCHY, CAFE_TABLE_V2,
     )
 
     val legacyIds = listOf(
@@ -234,7 +238,9 @@ object LayoutTemplateCatalog {
                     displayName = displayName(id),
                     category = if (template.slots.any { it.role == SlotRole.PERSON }) LayoutCategory.PERSON else LayoutCategory.OBJECT,
                     slots = template.slots.map { LayoutPreviewSlot(it.role, it.visualKind, it.bounds) },
-                    poseTemplateId = template.poseGuide?.id,
+                    // Kept nullable for persisted-client compatibility. New
+                    // templates do not expose pose landmarks or a skeleton.
+                    poseTemplateId = null,
                 )
             }
         }
@@ -245,10 +251,12 @@ object LayoutTemplateCatalog {
         viewportAspect: GuideViewportAspect = GuideViewportAspect.FOUR_TO_FIVE,
     ): LayoutTemplate? = when (id) {
         PORTRAIT_PERSON -> LayoutTemplate(id, listOf(LayoutSlot("person", GuideObjectCategory.PERSON, RectN(0.25f, 0.14f, 0.75f, 0.86f), role = SlotRole.PERSON, visualKind = SlotVisualKind.PERSON_SILHOUETTE)), viewportAspect = viewportAspect)
-        PERSON_FULL_CENTER -> portraitTemplate(id, PoseGuideCatalog.FULL_CENTER, RectN(0.25f, 0.10f, 0.75f, 0.92f), viewportAspect)
-        PERSON_FULL_OFFSET -> portraitTemplate(id, PoseGuideCatalog.FULL_OFFSET, RectN(0.18f, 0.10f, 0.68f, 0.92f), viewportAspect)
-        PERSON_UPPER -> portraitTemplate(id, PoseGuideCatalog.UPPER_BODY, RectN(0.23f, 0.18f, 0.77f, 0.88f), viewportAspect)
-        PERSON_SEATED -> portraitTemplate(id, PoseGuideCatalog.SEATED, RectN(0.20f, 0.16f, 0.80f, 0.88f), viewportAspect)
+        PERSON_FULL_CENTER -> portraitFrame(id, RectN(0.30f, 0.08f, 0.70f, 0.94f), viewportAspect)
+        PERSON_FULL_OFFSET -> portraitFrame(id, RectN(0.15f, 0.08f, 0.53f, 0.94f), viewportAspect)
+        PERSON_FULL_RELAXED -> portraitFrame(id, RectN(0.27f, 0.08f, 0.72f, 0.94f), viewportAspect)
+        PERSON_FULL_WALKING -> portraitFrame(id, RectN(0.14f, 0.08f, 0.55f, 0.94f), viewportAspect)
+        PERSON_UPPER -> portraitFrame(id, RectN(0.30f, 0.17f, 0.78f, 0.92f), viewportAspect)
+        PERSON_SEATED -> portraitFrame(id, RectN(0.20f, 0.15f, 0.80f, 0.90f), viewportAspect)
         PERSON_OBJECT -> LayoutTemplate(id, listOf(
             LayoutSlot("person", GuideObjectCategory.PERSON, RectN(0.08f, 0.14f, 0.50f, 0.88f), role = SlotRole.PERSON, visualKind = SlotVisualKind.PERSON_SILHOUETTE),
             LayoutSlot("object", null, RectN(0.60f, 0.56f, 0.84f, 0.78f)),
@@ -268,21 +276,23 @@ object LayoutTemplateCatalog {
         GENERIC_PAIR, OBJECT_PAIR_BALANCED -> GenericLayoutSynthesizer.generic(2, Arrangement.ROW, id = id, viewportAspect = viewportAspect)
         OBJECT_PAIR_DIAGONAL -> GenericLayoutSynthesizer.generic(2, Arrangement.DIAGONAL, id = id, viewportAspect = viewportAspect)
         GENERIC_TRIO, OBJECT_TRIO_TRIANGLE -> GenericLayoutSynthesizer.generic(3, Arrangement.TRIANGLE, id = id, viewportAspect = viewportAspect)
-        OBJECT_TRIO_ROW -> GenericLayoutSynthesizer.generic(3, Arrangement.ROW, id = id, viewportAspect = viewportAspect)
-        GENERIC_QUAD, OBJECT_QUAD_GRID -> GenericLayoutSynthesizer.generic(4, Arrangement.GRID, id = id, viewportAspect = viewportAspect)
+        OBJECT_TRIO_ROW -> GenericLayoutSynthesizer.generic(3, Arrangement.TRIANGLE, id = id, viewportAspect = viewportAspect)
+        GENERIC_QUAD, OBJECT_QUAD_GRID -> GenericLayoutSynthesizer.generic(4, Arrangement.DIAMOND, id = id, viewportAspect = viewportAspect)
+        OBJECT_QUAD_HIERARCHY -> GenericLayoutSynthesizer.generic(4, Arrangement.DIAMOND, id = id, viewportAspect = viewportAspect)
         else -> null
     }
 
-    private fun portraitTemplate(id: String, poseId: String, bounds: RectN, viewportAspect: GuideViewportAspect) = LayoutTemplate(
+    private fun portraitFrame(id: String, bounds: RectN, viewportAspect: GuideViewportAspect) = LayoutTemplate(
         id = id,
-        slots = listOf(LayoutSlot("person", GuideObjectCategory.PERSON, bounds, role = SlotRole.PERSON, visualKind = SlotVisualKind.POSE_SKELETON)),
+        slots = listOf(LayoutSlot("person", GuideObjectCategory.PERSON, bounds, role = SlotRole.PERSON, visualKind = SlotVisualKind.PERSON_BRACKET)),
         viewportAspect = viewportAspect,
-        poseGuide = PoseGuideCatalog.resolve(poseId),
     )
 
     private fun displayName(id: String): String = when (id) {
         PERSON_FULL_CENTER -> "전신 중앙"
         PERSON_FULL_OFFSET -> "전신 비대칭"
+        PERSON_FULL_RELAXED -> "전신 자연스러운 흐름"
+        PERSON_FULL_WALKING -> "전신 리드 룸"
         PERSON_UPPER -> "상반신"
         PERSON_SEATED -> "앉은 인물"
         PERSON_OBJECT -> "인물과 소품"
@@ -324,7 +334,7 @@ data class LayoutTemplateSummary(
     val slotCount: Int get() = slots.size
 }
 
-enum class Arrangement { SINGLE, ROW, COLUMN, DIAGONAL, TRIANGLE, GRID }
+enum class Arrangement { SINGLE, ROW, COLUMN, DIAGONAL, TRIANGLE, DIAMOND, GRID }
 
 /** Privacy-safe scene decision trace: no pixels or coordinates are retained. */
 data class SceneSignature(
@@ -364,11 +374,11 @@ object GenericLayoutSynthesizer {
         val xSpan = detections.maxOf { it.bounds.centerX } - detections.minOf { it.bounds.centerX }
         val ySpan = detections.maxOf { it.bounds.centerY } - detections.minOf { it.bounds.centerY }
         return when {
-            xSpan >= ySpan * 1.5f -> Arrangement.ROW
-            ySpan >= xSpan * 1.5f -> Arrangement.COLUMN
+            detections.size == 2 && xSpan >= ySpan * 1.5f -> Arrangement.ROW
             detections.size == 2 -> Arrangement.DIAGONAL
             detections.size == 3 -> Arrangement.TRIANGLE
-            else -> Arrangement.GRID
+            detections.size >= 4 -> Arrangement.DIAMOND
+            else -> Arrangement.SINGLE
         }
     }
 
@@ -387,6 +397,12 @@ object GenericLayoutSynthesizer {
             Arrangement.COLUMN -> (0 until count).map { index -> slotRect(index, count, horizontal = false, viewportAspect = viewportAspect) }
             Arrangement.DIAGONAL -> listOf(RectN(0.26f, 0.38f, 0.46f, 0.62f), RectN(0.54f, 0.44f, 0.74f, 0.68f))
             Arrangement.TRIANGLE -> listOf(RectN(0.25f, 0.50f, 0.45f, 0.74f), RectN(0.55f, 0.50f, 0.75f, 0.74f), RectN(0.40f, 0.25f, 0.60f, 0.49f))
+            Arrangement.DIAMOND -> listOf(
+                RectN(0.40f, 0.18f, 0.60f, 0.38f),
+                RectN(0.18f, 0.42f, 0.38f, 0.62f),
+                RectN(0.62f, 0.42f, 0.82f, 0.62f),
+                RectN(0.40f, 0.66f, 0.60f, 0.86f),
+            )
             Arrangement.GRID -> listOf(RectN(0.24f, 0.26f, 0.44f, 0.48f), RectN(0.56f, 0.26f, 0.76f, 0.48f), RectN(0.24f, 0.56f, 0.44f, 0.78f), RectN(0.56f, 0.56f, 0.76f, 0.78f)).take(count)
         }
         return LayoutTemplate(

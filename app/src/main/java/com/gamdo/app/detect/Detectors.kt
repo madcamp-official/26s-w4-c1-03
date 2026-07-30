@@ -15,6 +15,12 @@ interface PoseDetector {
     fun close()
 }
 
+/** Compatibility seam for old tests/serialized callers; production wiring does not run pose inference. */
+object NoPoseDetector : PoseDetector {
+    override fun detect(frame: AnalysisFrame): PoseObservation? = null
+    override fun close() = Unit
+}
+
 interface ObjectSceneDetector {
     fun detect(frame: AnalysisFrame): List<ObjectObservation>
     fun detectBatch(frame: AnalysisFrame): ObjectDetectionBatch =
@@ -338,7 +344,7 @@ data class DetectStageTimings(
  */
 class SceneDetector(
     private val faceDetector: FaceDetector,
-    private val poseDetector: PoseDetector,
+    private val poseDetector: PoseDetector = NoPoseDetector,
     private val objectDetector: ObjectSceneDetector? = null,
     private val subjectSegmenter: SubjectSceneSegmenter? = null,
     private val customObjectDetector: CustomSceneDetector? = null,
@@ -367,7 +373,10 @@ class SceneDetector(
         val t0 = System.nanoTime()
         val faces = faceDetector.detect(frame)
         val t1 = System.nanoTime()
-        val pose = poseDetector.detect(frame)
+        // V3.1 production wiring passes NoPoseDetector. A non-default detector
+        // is still honored for old JVM fixtures and migration tests; it is not
+        // reachable from the camera warmup path.
+        val pose: PoseObservation? = if (poseDetector === NoPoseDetector) null else poseDetector.detect(frame)
         val t2 = System.nanoTime()
         val objectBatch = when {
             customObjectDetector != null -> customObjectDetector.detectBatch(frame)

@@ -5,8 +5,6 @@ import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
-import com.google.mlkit.vision.pose.PoseDetection
-import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions
 import com.google.mlkit.vision.objects.ObjectDetection
 import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
 import com.google.mlkit.vision.segmentation.subject.SubjectSegmentation
@@ -61,45 +59,6 @@ class MlKitFaceDetector : FaceDetector {
                     headEulerAngleZ = face.headEulerAngleZ,
                 )
             }
-    }
-
-    override fun close() = detector.close()
-}
-
-/**
- * ML Kit pose detector — stream mode, 33 landmarks with in-frame likelihood.
- * Returns normalized landmark points. (§2-2)
- */
-class MlKitPoseDetector : PoseDetector {
-
-    private val detector = PoseDetection.getClient(
-        PoseDetectorOptions.Builder()
-            .setDetectorMode(PoseDetectorOptions.STREAM_MODE)
-            .build(),
-    )
-
-    override fun detect(frame: AnalysisFrame): PoseObservation? {
-        val image = frame.image as? InputImage ?: return null
-        val w = frame.width.toFloat().coerceAtLeast(1f)
-        val h = frame.height.toFloat().coerceAtLeast(1f)
-        val pose = runCatching { Tasks.await(detector.process(image)) }
-            .onFailure { Log.w(TAG, "pose detect failed", it) }
-            .getOrNull() ?: return null
-
-        val marks = pose.allPoseLandmarks
-        if (marks.isEmpty()) return null
-        val points = marks.map { m ->
-            PoseLandmarkPoint(
-                type = m.landmarkType,
-                x = m.position.x / w,
-                y = m.position.y / h,
-                inFrameLikelihood = m.inFrameLikelihood,
-            )
-        }
-        return PoseObservation(
-            landmarks = points,
-            averageInFrameLikelihood = points.map { it.inFrameLikelihood }.average().toFloat(),
-        )
     }
 
     override fun close() = detector.close()
