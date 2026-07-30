@@ -10,7 +10,10 @@ import com.gamdo.app.detect.DetectionResult
 import com.gamdo.app.detect.FrameFeatures
 import com.gamdo.app.detect.FrameFeatureInput
 import com.gamdo.app.guide.AlignmentEngine
+import com.gamdo.app.guide.CaptureSceneMode
 import com.gamdo.app.guide.GuideConfigBundle
+import com.gamdo.app.guide.SceneGuideMarks
+import com.gamdo.app.guide.SceneModeDecision
 import com.gamdo.app.guide.MatchScoreCalculator
 import com.gamdo.app.guide.OverlayStabilizer
 import com.gamdo.app.guide.StyleTarget
@@ -247,6 +250,16 @@ class CameraViewModel(
     /** UI-safe current automatic-search scope; P1 never reaches into the controller. */
     val searchScope: StateFlow<SceneSearchScope> = sceneGuideSessionController.searchScope
     val availableManualLayouts: List<LayoutTemplateSummary> = sceneGuideSessionController.availableManualLayouts
+
+    /** 상황 우선 가이드 V2 (요구사항 §10). Re-exposed, never reached into directly. */
+    val sceneModeDecision: StateFlow<SceneModeDecision?> = sceneGuideSessionController.sceneModeDecision
+
+    /**
+     * The fixed dots/silhouette/horizon P2 wants drawn. Distinct from [layoutState]:
+     * that carries slot rectangles, this carries product marks with no detector
+     * geometry in them at all.
+     */
+    val guideMarks: StateFlow<SceneGuideMarks?> = sceneGuideSessionController.guideMarks
 
     private val _sceneGuideMetrics = MutableStateFlow(SceneGuideMetrics())
     val sceneGuideMetrics: StateFlow<SceneGuideMetrics> = _sceneGuideMetrics.asStateFlow()
@@ -497,6 +510,29 @@ class CameraViewModel(
         val target = _styleTarget.value
         pendingGuideWork.add { sceneGuideSessionController.selectManualLayout(templateId, target) }
         return true
+    }
+
+    /**
+     * 상황 선택 (요구사항 §10) — "현재 고정 장면을 폐기하고 새 모드의 탐색을 시작한다".
+     *
+     * Deferred to the analysis thread like every other UI-originated guide mutation:
+     * `selectSceneMode` calls `resetSearchState()`, which touches the tracker and the
+     * coordinator, and both are mutated per frame on CameraX's analysis executor. See
+     * [pendingGuideWork] and [rescanLayout] for the race this avoids.
+     *
+     * Detection is un-paused first because the previous scene may have latched and
+     * stopped the detector — a new situation with a paused detector would search
+     * nothing and sit on 자동 forever.
+     */
+    fun selectSceneMode(mode: CaptureSceneMode) {
+        detector?.setObjectDetectionPaused(false)
+        pendingGuideWork.add { sceneGuideSessionController.selectSceneMode(mode) }
+    }
+
+    /** 자동으로 복귀 — drops the user override so the classifier drives again (§10). */
+    fun resetSceneMode() {
+        detector?.setObjectDetectionPaused(false)
+        pendingGuideWork.add { sceneGuideSessionController.resetSceneMode() }
     }
 
     /**
