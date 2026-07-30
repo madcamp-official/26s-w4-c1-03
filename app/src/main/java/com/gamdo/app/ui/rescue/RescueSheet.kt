@@ -42,6 +42,7 @@ import com.gamdo.app.ui.theme.Ink900
 import com.gamdo.app.ui.theme.TextHi
 import com.gamdo.app.ui.theme.TextMid
 import com.gamdo.app.ui.theme.OnAmber
+import com.gamdo.app.ui.theme.Outline
 import com.gamdo.app.ui.theme.Amber
 import com.gamdo.app.ui.theme.Scrim
 import kotlinx.serialization.json.JsonObject
@@ -118,6 +119,10 @@ fun RescueSheet(
     saved: Boolean?,
     saveError: String?,
     localStyleWouldChange: Boolean,
+    /** 브리프 §8's 비교 — what the photo behind the sheet is showing right now. */
+    comparison: RescueComparison,
+    onCompareOriginal: () -> Unit,
+    onCompareCurrentGamdo: () -> Unit,
     onHide: () -> Unit = onDismiss,
     modifier: Modifier = Modifier,
 ) {
@@ -242,6 +247,9 @@ fun RescueSheet(
                     saving = saving,
                     saved = saved,
                     saveError = saveError,
+                    comparison = comparison,
+                    onCompareOriginal = onCompareOriginal,
+                    onCompareCurrentGamdo = onCompareCurrentGamdo,
                     onClose = dismiss,
                 )
                 RescueSection.FALLBACK -> FallbackSection(
@@ -468,6 +476,9 @@ private fun CandidatesSection(
     saving: Boolean,
     saved: Boolean?,
     saveError: String?,
+    comparison: RescueComparison,
+    onCompareOriginal: () -> Unit,
+    onCompareCurrentGamdo: () -> Unit,
     onClose: () -> Unit,
 ) {
     if (candidates.isEmpty()) {
@@ -479,8 +490,27 @@ private fun CandidatesSection(
     }
 
     Text("마음에 드는 걸 골라주세요", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+    // 원본·현재 감도·AI 후보 비교 (브리프 §8). Pills rather than thumbnails, and the
+    // photograph behind the sheet is the actual comparison surface — see
+    // [RescueComparison]. Pills also cannot lie: a tile that showed the same file for
+    // both 원본 and 현재 감도 would claim a difference it is too small to show.
     Row(
-        modifier = Modifier.padding(top = 14.dp),
+        modifier = Modifier.padding(top = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        ComparePill(
+            text = "원본",
+            selected = comparison == RescueComparison.ORIGINAL,
+            onClick = onCompareOriginal,
+        )
+        ComparePill(
+            text = "현재 감도",
+            selected = comparison == RescueComparison.CURRENT_GAMDO,
+            onClick = onCompareCurrentGamdo,
+        )
+    }
+    Row(
+        modifier = Modifier.padding(top = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         candidates.forEach { candidate ->
@@ -495,11 +525,15 @@ private fun CandidatesSection(
         // two-up layout draws rather than stretching a single result across the sheet.
         if (candidates.size < MAX_RESCUE_CANDIDATES) Box(Modifier.weight(1f))
     }
-    // Saving needs something chosen. Without a pick the photo behind the sheet is
-    // still the local correction, and a 저장 that quietly wrote *that* under a heading
-    // asking the user to choose a candidate would be the flow lying about what it
-    // saved — 기본 보정 그대로 두기 below is the deliberate way to that outcome.
-    val picked = candidates.any { it.resultId == selectedCandidateId }
+    // Save whatever the comparison row says is on screen, candidate or not.
+    //
+    // This used to require a picked candidate, on the grounds that saving with no pick
+    // would quietly write the local correction under a heading asking the user to
+    // choose one. That reasoning came from a section where "no candidate picked" was
+    // an *absence* of a choice. With the row above it is a choice — 원본 and 현재 감도
+    // are two of the three things being compared — so the gate would now block the
+    // outcome the comparison exists to reach: 비교 → 저장 (브리프 §8), where what the
+    // user preferred turns out not to be the generated one.
     PrimaryPillButton(
         text = when {
             saving -> "저장 중이에요"
@@ -507,7 +541,7 @@ private fun CandidatesSection(
             else -> "이 사진으로 저장"
         },
         onClick = onSave,
-        enabled = picked && !saving && saved != true,
+        enabled = !saving && saved != true,
         modifier = Modifier.padding(top = 18.dp),
     )
     // The header's own save status is behind this sheet, so it has to be repeated
@@ -545,6 +579,34 @@ private fun CandidateTile(
             modifier = Modifier.fillMaxSize(),
         )
         GenerativeBadge(modifier = Modifier.align(Alignment.TopStart).padding(6.dp))
+    }
+}
+
+/**
+ * One choice in the comparison row. Outline-only, so a row of them cannot compete with
+ * the amber-filled save button below or with the candidate tiles' own selection rings.
+ */
+@Composable
+private fun ComparePill(text: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(15.dp))
+            .border(
+                width = if (selected) 1.5.dp else 1.dp,
+                color = if (selected) Amber else Outline,
+                shape = RoundedCornerShape(15.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            color = if (selected) Amber else TextMid,
+            fontSize = 12.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            maxLines = 1,
+        )
     }
 }
 

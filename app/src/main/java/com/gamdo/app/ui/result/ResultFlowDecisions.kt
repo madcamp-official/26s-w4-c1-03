@@ -7,6 +7,7 @@ import com.gamdo.app.data.ResultFilterState
 import com.gamdo.app.data.ResultFilterStateHolder
 import com.gamdo.app.edit.LocalFilter
 import com.gamdo.app.ui.reference.ReferenceLabels
+import com.gamdo.app.ui.rescue.RescueComparison
 
 /**
  * 보정(결과) 화면의 순수 판정 — **platform-free** (zero `android.*` imports), same
@@ -466,3 +467,25 @@ fun localStyleFilterId(state: ResultFilterState): String = state.recommendedDefa
  */
 fun localStyleChangesPhoto(state: ResultFilterState): Boolean =
     localStyleFilterId(state) != state.selectedId
+
+/**
+ * Which of 원본 / 현재 감도 / AI 후보 the photograph behind the rescue sheet is showing.
+ *
+ * A picked candidate wins outright, because picking one replaces the editor's *source*
+ * — everything downstream, filter included, is then a statement about the generated
+ * file rather than about the capture. With no pick the strip decides, and the only
+ * distinction that matters to this row is 원본 versus anything else: every preset and
+ * the reference slot alike are "a look of the user's", which is what 현재 감도 means
+ * here.
+ *
+ * Lives on the result side rather than in `RescueFlowDecisions` because both inputs are
+ * this screen's — the sheet is told the answer, it does not work it out.
+ */
+fun rescueComparisonFor(
+    pickedCandidateId: String?,
+    selectedFilterId: String,
+): RescueComparison = when {
+    pickedCandidateId != null -> RescueComparison.CANDIDATE
+    stripSelectionFor(selectedFilterId) == StripSelection.ORIGINAL -> RescueComparison.ORIGINAL
+    else -> RescueComparison.CURRENT_GAMDO
+}

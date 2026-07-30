@@ -905,7 +905,16 @@ fun ResultScreen(
                 // the finger lifts, so the reveal lasts exactly as long as the hold
                 // rather than toggling — a toggle would leave the screen showing 원본
                 // with nothing on it saying so.
-                .pointerInput(Unit) {
+                //
+                // Disabled while a generated candidate is picked, because there the
+                // word would be false: `source` derives from `editSource`, which *is*
+                // the candidate file once one is chosen, so the reveal showed the AI
+                // result without a filter and called it 원본. The real original is
+                // reachable — the rescue sheet's 비교 row selects it — so the fix is to
+                // stop the gesture rather than decode the capture a second time on this
+                // screen's peak-memory moment (see `corrected`, 결함 3).
+                .pointerInput(pickedCandidate != null) {
+                    if (pickedCandidate != null) return@pointerInput
                     detectTapGestures(
                         onLongPress = { holdingOriginal = true },
                         onPress = {
@@ -955,7 +964,11 @@ fun ResultScreen(
             // already holding one down — once the reveal is happening the instruction
             // for it is noise, and it would sit on top of the very thing it invited the
             // user to look at.
-            if (displayBitmap != null && !holdingOriginal) {
+            //
+            // Gone entirely while a candidate is picked, in step with the gesture above:
+            // an instruction for something that no longer happens is worse than no
+            // instruction, and worse still when the word it uses would be wrong.
+            if (displayBitmap != null && !holdingOriginal && pickedCandidate == null) {
                 Text(
                     text = "길게 누르면 원본이 보여요",
                     color = TextHi,
@@ -1172,6 +1185,19 @@ fun ResultScreen(
                 rescueController.reset()
             }
         }
+        // Un-records the generated variant. Every deliberate move *away* from a
+        // candidate runs this, so the row that says what is on screen and the row
+        // recorded in `capture_edit_stack` cannot disagree.
+        //
+        // `captureId` is null only for a device photo, which cannot reach AI 3 at all
+        // (the strip slot is not drawn) — so that branch is a type-level guard, not a
+        // behaviour change.
+        val clearSelectedResult: () -> Unit = {
+            scope.launch {
+                runCatching { captureId?.let { container.database.captureEditStackDao().setSelectedResult(it, null) } }
+                    .onFailure { Log.w(TAG, "clearing selected_result_id failed", it) }
+            }
+        }
         // 기본 보정 유지 — the contract's other branch out of Candidates. Unlike a
         // cancel, this is a *choice*, so it also un-records the variant.
         val keepLocalResult: () -> Unit = {
@@ -1275,6 +1301,20 @@ fun ResultScreen(
             saved = saved,
             saveError = saveError,
             localStyleWouldChange = localStyleChangesPhoto(filterState),
+            // 비교 (브리프 §8). Both branches drop the generated pick and then move the
+            // strip, which is what puts the chosen thing on the *photograph* — the
+            // sheet's row is a selector over the big image, not a set of previews.
+            comparison = rescueComparisonFor(pickedCandidateId, selectedFilterId),
+            onCompareOriginal = {
+                pickedCandidateId = null
+                selectStrip(LocalFilter.ORIGINAL.filter.id)
+                clearSelectedResult()
+            },
+            onCompareCurrentGamdo = {
+                pickedCandidateId = null
+                selectStrip(localStyleFilterId(filterState))
+                clearSelectedResult()
+            },
             onSelectCandidate = { candidate ->
                 // A different candidate is a different photograph, so the save that
                 // already happened is not a statement about this one. Without the
