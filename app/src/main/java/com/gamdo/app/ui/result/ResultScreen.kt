@@ -1275,6 +1275,17 @@ fun ResultScreen(
             saveError = saveError,
             localStyleWouldChange = localStyleChangesPhoto(filterState),
             onSelectCandidate = { candidate ->
+                // A different candidate is a different photograph, so the save that
+                // already happened is not a statement about this one. Without the
+                // reset, `saved == true` latches the sheet's 저장 button off for the
+                // rest of the visit — `saved` is written only by `performSave` and
+                // never cleared — and the user who wanted both candidates could save
+                // exactly one. The header's own pill has the same latch, but it was
+                // never a gate there: it only changes a label.
+                if (candidate.resultId != pickedCandidateId) {
+                    saved = null
+                    saveError = null
+                }
                 pickedCandidateId = candidate.resultId
                 scope.launch {
                     runCatching {
