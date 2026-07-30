@@ -7,6 +7,10 @@ import android.os.Looper
 import android.util.Log
 import android.widget.Toast
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -14,6 +18,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -21,7 +26,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -63,10 +68,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.LifecycleOwner
@@ -103,11 +110,11 @@ import com.gamdo.app.ui.reference.MyReferenceThumb
 import com.gamdo.app.ui.reference.StripEntry
 import com.gamdo.app.ui.reference.buildFilterStrip
 import com.gamdo.app.ui.theme.Ink700
+import com.gamdo.app.ui.theme.Ink800
 import com.gamdo.app.ui.theme.Ink950
 import com.gamdo.app.ui.theme.TextHi
 import com.gamdo.app.ui.theme.TextMid
 import com.gamdo.app.ui.theme.TextLow
-import com.gamdo.app.ui.theme.OnAmber
 import com.gamdo.app.ui.theme.Amber
 import kotlin.math.abs
 import kotlinx.coroutines.CancellationException
@@ -141,12 +148,60 @@ private const val LATENCY_TAG = "CaptureLatency"
 /** 52dp thumbnail + 4dp gap + label, fixed so the preview pane is laid out once. */
 private val STYLE_STRIP_HEIGHT = 78.dp
 
+// ---- redesign dimensions (owner's final UI redesign, 2026-07-30) ---------------
+//
+// Every value here is the mock's, and they are named rather than inlined so a diff
+// against `감도 리디자인.dc.html` is a list of numbers in one place. The redesign is
+// explicit that the horizontal margin is 20dp everywhere **except the strip**, which
+// is 18 — that one-off is real and is why there are two constants.
+
+/** `height:50px` on the top bar. */
+private val TOP_BAR_HEIGHT = 50.dp
+
+/** `padding:0 20px` — the screen's horizontal margin. */
+private val SCREEN_H_PADDING = 20.dp
+
+/** `padding:0 18px` — the filter strip only. */
+private val STRIP_H_PADDING = 18.dp
+
+/** `gap:24px` between the top bar's right-hand icons. */
+private val TOP_BAR_ICON_GAP = 24.dp
+
+/** The redesign's floor for anything pressable; the glyphs inside are 19-21dp. */
+private val MIN_TOUCH_TARGET = 44.dp
+
+/** `border-radius:20px 20px 0 0` on both bottom sheets. */
+private val SHEET_CORNER = 20.dp
+
+/**
+ * `rgba(244,241,234,0.85)` — the stroke every inactive glyph uses.
+ *
+ * [TextHi] at 85%, not [TextLow]. The redesign has one signal for state and it is
+ * amber; dimming an inactive icon as well would give it two, and a 가이드 icon that
+ * is both grey *and* not-amber reads as disabled rather than off. No new colour
+ * constant (D11-5) — this is a token at an alpha.
+ */
+private val IconInactive = TextHi.copy(alpha = 0.85f)
+
 /** How much later than the deadline [scheduleTeardownWatchdog] pokes. See there. */
 private const val TEARDOWN_WATCHDOG_SLACK_MS = 50L
 
 enum class CaptureAspect(val label: String, val ratioWtoH: Float) {
     RATIO_4_5("4:5", 4f / 5f),
     RATIO_1_1("1:1", 1f),
+    ;
+
+    /**
+     * The next ratio — the redesign's top bar is a single label that toggles rather
+     * than the two-cell segmented control it replaces.
+     *
+     * Written as `entries` arithmetic rather than `if (this == RATIO_4_5) RATIO_1_1`
+     * so that D9-1 stays enforced by the type: with exactly two members this is a
+     * toggle, and adding a third (16:9, 3:4, full — all banned) would silently turn
+     * the control into a three-way cycle instead of quietly doing the wrong thing.
+     * `CaptureAspectTest` pins the count.
+     */
+    fun toggled(): CaptureAspect = entries[(ordinal + 1) % entries.size]
 }
 
 /**
@@ -341,6 +396,18 @@ fun CameraScreen(
     // explicit act for now.)
     val hudAvailable = DebugHudGate.availableIn(BuildConfig.DEBUG)
     var showHud by rememberSaveable { mutableStateOf(DebugHudGate.initialVisible(BuildConfig.DEBUG)) }
+
+    // Which sheet is up / whether the lasso is armed — exactly one of them, by
+    // construction. See [CameraPanels]: every open/close rule the redesign states
+    // lives there as a pure function, because a decision written inside a
+    // @Composable cannot be tested on the JVM and "picking a filter closes the
+    // sheet" is a one-character regression.
+    //
+    // Read back through `resolve` rather than trusted as stored: this survives
+    // process death, so a bundle written by a debug build must not raise the
+    // debug-only 설정 sheet in a build that has none.
+    var storedMode by rememberSaveable { mutableStateOf(CameraOverlayMode.NONE) }
+    val overlayMode = CameraPanels.resolve(storedMode, BuildConfig.DEBUG)
 
     // O-13 (1): **a preset is colour. It does not reach the guide.**
     //
@@ -559,9 +626,11 @@ fun CameraScreen(
             guideVisible = guideVisible,
             onToggleGuide = { guideVisible = !guideVisible },
             aspect = aspect,
-            onSelectAspect = { aspect = it },
-            hudToggleEnabled = hudAvailable,
-            onToggleHud = { showHud = !showHud },
+            onToggleAspect = { aspect = aspect.toggled() },
+            settingsAvailable = CameraPanels.settingsSheetAvailable(BuildConfig.DEBUG),
+            onToggleSettings = {
+                storedMode = CameraPanels.toggled(overlayMode, CameraOverlayMode.SETTINGS_SHEET)
+            },
             referenceEntry = referenceEntry,
             demoControls = demoControls,
         )
@@ -595,6 +664,11 @@ fun CameraScreen(
             onPreviewFrameNs = viewModel::onPreviewFrame,
             onPreviewFpsAvailability = viewModel::onPreviewFpsAvailability,
             referenceLayer = referenceLayer,
+            // "버튼 바깥 탭 또는 버튼 재탭으로 닫는다". The layer that receives that
+            // tap only exists while a sheet is up — see the parameter's KDoc for why
+            // that condition is load-bearing rather than tidiness.
+            dismissSheetOnTap = CameraPanels.sheetVisible(overlayMode),
+            onDismissSheet = { storedMode = CameraPanels.scrimTapped(overlayMode) },
             hud = {
                 if (DebugHudGate.visible(BuildConfig.DEBUG, showHud)) {
                     CameraHud(
@@ -611,6 +685,17 @@ fun CameraScreen(
                 }
             },
         )
+
+        // The sheet slot. A **sibling** of the shutter row in this Column, never a
+        // layer over it — that is why "시트가 열린 상태에서도 셔터는 계속 쓸 수 있다"
+        // holds structurally instead of depending on where the sheet's top edge
+        // happens to land. The preview (`weight(1f)`) is what gives up the space.
+        CameraSheetSlot(visible = overlayMode == CameraOverlayMode.SETTINGS_SHEET) {
+            CameraSettingsSheet(
+                hudVisible = DebugHudGate.visible(BuildConfig.DEBUG, showHud),
+                onToggleHud = { showHud = !showHud },
+            )
+        }
 
         // 2c: the style strip is a permanent row between the preview and the
         // shutter, not something you open. Choosing a look is the screen's primary
@@ -923,132 +1008,221 @@ private fun scheduleTeardownWatchdog() {
 }
 
 /**
- * Top bar, per **2c** of `감도 화면 디자인.dc.html`: one centred pill saying the
- * personalisation is on, and nothing else competing with it.
+ * Top bar, per the owner's final redesign (시안 03): **four ghost icons and nothing
+ * else** — 설정 on the left, 비율 · 직접 지정 · 가이드 grouped on the right.
  *
- * The design's bar is *only* that pill — style selection lives in the permanent
- * strip above the shutter ([CameraStyleStrip]), so the top of the screen has no job
- * beyond telling you the app is doing something on your behalf.
+ * ```
+ * height 50dp · padding horizontal 20dp · space-between · right group gap 24dp
+ * ```
  *
- * Two controls the design does not draw are kept, in its own chip language, on
- * owner instruction: the guide on/off toggle (§3-2 requires it) and the 4:5 / 1:1
- * selector (D9 allows exactly those two ratios and §1-5 requires the choice).
- * Dropping them would make plan items unreachable rather than merely unstyled.
+ * Two things left, and the design says where each went:
  *
- * Zones are a [Row] with the centre weighted, never a [Box] with alignments: a Box
- * lets the centre chip overlap the sides, and that overlap steals input as well as
- * being silent — with `부드러운 필름` (6 glyphs) the old style chip covered the
- * debug HUD chip on SM-G970N and ate its taps, while `밝은 리뷰` (4) left it alone.
+ *  - the `내 감도 적용 중` **pill is gone**. Mood state is now the dot on the filter
+ *    button (see [CameraBottomBar]) — a pill saying the app is doing something on
+ *    your behalf costs a quarter of the bar to say what a 6px dot says.
+ *  - the `HUD` chip **moved into the 설정 sheet**. It is the sheet's only content,
+ *    which is why [CameraPanels.settingsSheetAvailable] delegates to the HUD's own
+ *    gate: in a demo build the sheet has nothing to hold, so the bar drops to three
+ *    icons rather than opening an empty sheet.
+ *
+ * **No element here has a background.** The bar's controls are ghost — stroke only.
+ * The `White 8%` discs belong to the shutter row, which sits over the photo; this bar
+ * does not. Every glyph is [StrokeIcon] over the mock's own path data.
+ *
+ * Amber is used for exactly one thing: **active**. `#E8C38B` stroke on 가이드 when
+ * the guide is on, `TextHi` at 85% for everything else including the ratio label —
+ * the design does not highlight the selected ratio, so neither does this.
+ *
+ * @param referenceEntry kept, and empty at every call site since O-10 — see
+ *   [CameraScreen]'s KDoc. An occupant would make this bar five icons, which the
+ *   redesign does not draw; it stays only because deleting a public parameter costs
+ *   a whole-tree grep.
+ * @param demoControls §7-3's demo toggle, deliberately outside the design.
  */
 @Composable
 private fun CameraTopBar(
     guideVisible: Boolean,
     onToggleGuide: () -> Unit,
     aspect: CaptureAspect,
-    onSelectAspect: (CaptureAspect) -> Unit,
-    hudToggleEnabled: Boolean,
-    onToggleHud: () -> Unit,
+    onToggleAspect: () -> Unit,
+    settingsAvailable: Boolean,
+    onToggleSettings: () -> Unit,
     referenceEntry: @Composable () -> Unit,
     demoControls: @Composable () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = 10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(TOP_BAR_HEIGHT)
+            .padding(horizontal = SCREEN_H_PADDING),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            BarChip(onClick = onToggleGuide) {
-                Box(
-                    modifier = Modifier
-                        .size(7.dp)
-                        .clip(CircleShape)
-                        .background(if (guideVisible) Amber else TextLow),
+        // Double-gated like CameraHud: BuildConfig.DEBUG is a compile-time constant,
+        // so this control does not exist in a release build whatever the caller says.
+        if (BuildConfig.DEBUG && settingsAvailable) {
+            BarIconButton(onClick = onToggleSettings, contentDescription = "설정") {
+                StrokeIcon(
+                    pathData = CameraIconPaths.SETTINGS,
+                    viewBox = 22f,
+                    size = 21.dp,
+                    strokeWidth = 1.6f,
+                    color = IconInactive,
+                    // The knobs are filled with the surface behind them, which is what
+                    // makes each rail read as a slider track passing under its knob.
+                    dots = CameraIconPaths.settingsKnobs(background = Ink950),
                 )
-                Text(
-                    text = "가이드",
-                    color = if (guideVisible) TextHi else TextLow,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            // Double-gated like CameraHud: BuildConfig.DEBUG is a compile-time
-            // constant, so this chip does not exist in a release build no matter
-            // what the caller passes.
-            if (BuildConfig.DEBUG && hudToggleEnabled) {
-                BarChip(onClick = onToggleHud) {
-                    Text("HUD", color = TextMid, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                }
             }
         }
 
-        Box(
-            modifier = Modifier.weight(1f).padding(horizontal = 3.dp),
-            contentAlignment = Alignment.Center,
+        Spacer(modifier = Modifier.weight(1f))
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(TOP_BAR_ICON_GAP),
         ) {
-            Row(
+            // 4:5 / 1:1 only (D9-1). One label that toggles, not a segmented pair;
+            // the design draws no selected/unselected distinction on it at all.
+            Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Ink700.copy(alpha = 0.9f))
-                    .padding(horizontal = 11.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    .size(MIN_TOUCH_TARGET)
+                    .clickable(onClick = onToggleAspect),
+                contentAlignment = Alignment.Center,
             ) {
-                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Amber))
                 Text(
-                    text = "내 감도 적용 중",
-                    color = TextHi,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    text = aspect.label,
+                    color = IconInactive,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.03.em,
                 )
             }
-        }
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            AspectChip(selected = aspect, onSelect = onSelectAspect)
-            // 재탐색은 프리뷰 우측 하단 버튼 하나로 일원화했다(오너 지정 위치,
-            // 2026-07-28). 같은 동작을 상단 드롭다운에도 두면 두 곳이 갈라진다.
-            //
-            // ⚠️ 그 드롭다운이 D13의 **수동 레이아웃 선택**도 담고 있었으므로
-            // 지금은 그 기능이 없다. `CameraViewModel.selectManualLayout`과
-            // `availableManualLayouts`는 완성된 채 호출자 0으로 남아 있다 —
-            // D13 미충족 상태이며 remain_plan 부록 C에 기록한다.
+            BarIconButton(onClick = onToggleGuide, contentDescription = "가이드") {
+                StrokeIcon(
+                    pathData = CameraIconPaths.GUIDE,
+                    viewBox = 22f,
+                    size = 21.dp,
+                    strokeWidth = 1.7f,
+                    color = if (guideVisible) Amber else IconInactive,
+                    dots = CameraIconPaths.guideCentreDot(
+                        color = if (guideVisible) Amber else IconInactive,
+                    ),
+                )
+            }
+
+            // 재탐색 stays where the owner put it (2026-07-28) — the preview's
+            // bottom-right. It is not in this bar.
             referenceEntry()
             demoControls()
         }
     }
 }
 
-/** 4:5 / 1:1 only (D9), as a segmented chip in the top bar's language. */
+/**
+ * Shared hit target for the bar's ghost icons: 44dp of touch around a 19-21dp glyph.
+ *
+ * The padding *is* the touch target — the design's icons are too small to press
+ * reliably and it gives no button box for them, so the box exists only for the
+ * finger and never draws.
+ */
 @Composable
-private fun AspectChip(selected: CaptureAspect, onSelect: (CaptureAspect) -> Unit) {
-    Row(
+private fun BarIconButton(
+    onClick: () -> Unit,
+    contentDescription: String,
+    content: @Composable () -> Unit,
+) {
+    Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(Ink700.copy(alpha = 0.9f))
-            .padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+            .size(MIN_TOUCH_TARGET)
+            .semantics { this.contentDescription = contentDescription }
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
     ) {
-        CaptureAspect.entries.forEach { option ->
-            val isSelected = option == selected
-            Text(
-                text = option.label,
-                color = if (isSelected) OnAmber else TextMid,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
+        content()
+    }
+}
+
+/**
+ * 설정 — debug only, and its whole content is the HUD toggle.
+ *
+ * A sheet holding one row is the honest shape of it. The alternative considered was
+ * filling it out with preview-colour and analysis-rate switches, which do not exist
+ * as product features; inventing controls to justify a container is a mistake this
+ * project has made before.
+ */
+@Composable
+private fun CameraSettingsSheet(
+    hudVisible: Boolean,
+    onToggleHud: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(topStart = SHEET_CORNER, topEnd = SHEET_CORNER))
+            .background(Ink800)
+            .padding(top = 8.dp, bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(11.dp),
+    ) {
+        SheetHandle()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = STRIP_H_PADDING)
+                .clickable(onClick = onToggleHud)
+                .padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text("디버그 HUD", color = TextHi, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(if (isSelected) Amber else Color.Transparent)
-                    .clickable { onSelect(option) }
-                    .padding(horizontal = 7.dp, vertical = 4.dp),
-            )
+                    .size(width = 34.dp, height = 20.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (hudVisible) Amber.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.08f))
+                    .padding(3.dp),
+                contentAlignment = if (hudVisible) Alignment.CenterEnd else Alignment.CenterStart,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(14.dp)
+                        .clip(CircleShape)
+                        .background(if (hudVisible) Amber else TextLow),
+                )
+            }
         }
+    }
+}
+
+/**
+ * Slides a bottom sheet in and out over [CAMERA_SHEET_ANIM_MS].
+ *
+ * `AnimatedVisibility` in a Column animates the *height* as well as the offset, so
+ * the preview above it gives up its space over the same 260ms instead of jumping by
+ * the sheet's height on the first frame. `slideInVertically` alone would slide the
+ * sheet up out of a gap that had already appeared.
+ */
+@Composable
+private fun CameraSheetSlot(visible: Boolean, content: @Composable () -> Unit) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = expandVertically(animationSpec = tween(CAMERA_SHEET_ANIM_MS)),
+        exit = shrinkVertically(animationSpec = tween(CAMERA_SHEET_ANIM_MS)),
+    ) {
+        content()
+    }
+}
+
+/** The 36×4 grab handle both sheets carry. */
+@Composable
+private fun SheetHandle() {
+    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .size(width = 36.dp, height = 4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(Color.White.copy(alpha = 0.22f)),
+        )
     }
 }
 
@@ -1178,21 +1352,6 @@ private fun CameraStyleStrip(
     }
 }
 
-/** Shared shape/padding for the top bar's controls. */
-@Composable
-private fun BarChip(onClick: () -> Unit, content: @Composable RowScope.() -> Unit) {
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(Ink700.copy(alpha = 0.9f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        content = content,
-    )
-}
-
 /**
  * Preview + touch surface + guide overlay + aspect mask + zoom readout.
  *
@@ -1242,6 +1401,18 @@ private fun CameraPreviewPane(
     onPreviewFrameNs: (Long) -> Unit,
     onPreviewFpsAvailability: (PreviewFpsAvailability) -> Unit,
     referenceLayer: @Composable BoxScope.() -> Unit,
+    /**
+     * Whether a tap anywhere on the preview should dismiss an open sheet.
+     *
+     * **Must be false when no sheet is open**, and the reason is this function's own
+     * KDoc: the dismiss layer is a `clickable` above the gesture surface, so while it
+     * exists it takes the DOWN and pinch-to-zoom and tap-to-focus stop working
+     * *together, silently*. That is correct while a sheet is up — the tap means
+     * "close it" — and it is the bug the KDoc describes at any other time. Hence a
+     * condition rather than a permanently-mounted transparent Box.
+     */
+    dismissSheetOnTap: Boolean,
+    onDismissSheet: () -> Unit,
     hud: @Composable BoxScope.() -> Unit,
 ) {
     BoxWithConstraints(modifier = modifier) {
@@ -1461,6 +1632,25 @@ private fun CameraPreviewPane(
         }
 
         hud()
+
+        // Topmost, and **transparent**. The redesign gives the filter sheet no scrim,
+        // which is not an omission: a filter is a colour (O-13), so choosing one means
+        // seeing it on the live scene, and darkening the preview to signal modality
+        // would defeat the only thing the sheet is for. So this catches the tap and
+        // tints nothing.
+        if (dismissSheetOnTap) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        // No ripple and no role: this is not a button, it is the
+                        // absence of one. A ripple here would flash over the photo.
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onDismissSheet,
+                    ),
+            )
+        }
     }
 }
 
