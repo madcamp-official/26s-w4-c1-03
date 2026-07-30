@@ -40,8 +40,26 @@ class CardRepository(
     }
 }
 
-/** A bundled card as the onboarding picker needs it: features plus its thumbnail path. */
-data class CardEntry(val feature: CardFeature, val thumbnail: String)
+/**
+ * A bundled card as the onboarding picker needs it: features, its thumbnail path, and
+ * its measured colour.
+ *
+ * [colorA] and [colorB] are the image's mean CIELAB a\* and b\* — negative a\* green, positive
+ * red; negative b\* blue, positive yellow. They are not part of [CardFeature] on purpose:
+ * `CardFeature` is `ProfileEngine`'s ranked input shape and nothing ranks on hue, so
+ * putting them there would imply they feed the recommendation. They feed the swatches
+ * on the saved-profile screen, and `ProfilePalette` documents why colour temperature
+ * could not.
+ *
+ * Null when the bundle predates the measurement; [CardRepositoryTest] requires all 16
+ * of the shipped rows to carry it.
+ */
+data class CardEntry(
+    val feature: CardFeature,
+    val thumbnail: String,
+    val colorA: Float?,
+    val colorB: Float?,
+)
 
 @Serializable
 internal data class CardJson(
@@ -76,6 +94,21 @@ internal data class CardJson(
      * requires it to be present and correct.
      */
     val measuredFrom: String = "",
+    /**
+     * Mean CIELAB a\* and b\* of the image — the colour the photograph actually is.
+     *
+     * `colorTemperature` above is not that. It is a point on the Planckian locus, an
+     * orange-to-blue line that green is not on, so a deck of forest and sky pictures
+     * collapsed to near-neutral and the onboarding swatches came out grey no matter
+     * what was picked. See `ProfilePalette` for the reproduction.
+     *
+     * Nullable rather than defaulted to `0f`, because 0 is a legitimate measurement —
+     * card_10 is black-and-white and measures a\* 0.04, b\* -0.00. A default would make
+     * "not measured yet" indistinguishable from "measured, and neutral", which is the
+     * distinction `CardRepositoryTest` has to check. Older bundles still parse.
+     */
+    val colorA: Float? = null,
+    val colorB: Float? = null,
 ) {
     fun toFeature() = CardFeature(
         id, subjectScale, subjectPosition, headroom, backgroundRatio, brightness,
@@ -98,4 +131,6 @@ internal fun decodeCards(text: String, json: Json): List<CardFeature> =
 
 /** Pure decode step for [CardRepository.loadBundledCardEntries]; see [decodeCards]. */
 internal fun decodeCardEntries(text: String, json: Json): List<CardEntry> =
-    json.decodeFromString<CardsFile>(text).cards.map { CardEntry(it.toFeature(), it.thumbnail) }
+    json.decodeFromString<CardsFile>(text).cards.map {
+        CardEntry(it.toFeature(), it.thumbnail, it.colorA, it.colorB)
+    }

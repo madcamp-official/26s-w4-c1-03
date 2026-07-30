@@ -17,7 +17,9 @@
       "grain": 0.01,
       "candidness": 0.3,
       "framing": 0.95,
-      "measuredFrom": "67f137853f3c6994"
+      "measuredFrom": "67f137853f3c6994",
+      "colorA": 17.77,
+      "colorB": 16.95
     },
     {
       "id": "card_02",
@@ -35,7 +37,9 @@
       "grain": 0.02,
       "candidness": 0.45,
       "framing": 0.6,
-      "measuredFrom": "c76844625cbbcb19"
+      "measuredFrom": "c76844625cbbcb19",
+      "colorA": 7.45,
+      "colorB": 8.09
     },
     {
       "id": "card_03",
@@ -53,7 +57,9 @@
       "grain": 0.01,
       "candidness": 0.35,
       "framing": 0.85,
-      "measuredFrom": "f0fc16ed2a75e212"
+      "measuredFrom": "f0fc16ed2a75e212",
+      "colorA": 4.31,
+      "colorB": 14.83
     },
     {
       "id": "card_04",
@@ -71,7 +77,9 @@
       "grain": 0.01,
       "candidness": 0.75,
       "framing": 0.65,
-      "measuredFrom": "d7f7441aa35e3d3f"
+      "measuredFrom": "d7f7441aa35e3d3f",
+      "colorA": 7.8,
+      "colorB": 12.48
     },
     {
       "id": "card_05",
@@ -89,7 +97,9 @@
       "grain": 0.09,
       "candidness": 0.4,
       "framing": 0.45,
-      "measuredFrom": "cb845df71caea31c"
+      "measuredFrom": "cb845df71caea31c",
+      "colorA": -16.47,
+      "colorB": 18.87
     },
     {
       "id": "card_06",
@@ -107,7 +117,9 @@
       "grain": 0.03,
       "candidness": 0.5,
       "framing": 0.5,
-      "measuredFrom": "93940e1643f1cfcd"
+      "measuredFrom": "93940e1643f1cfcd",
+      "colorA": -0.87,
+      "colorB": 11.96
     },
     {
       "id": "card_07",
@@ -125,7 +137,9 @@
       "grain": 0.05,
       "candidness": 0.8,
       "framing": 0.3,
-      "measuredFrom": "af446064968a2857"
+      "measuredFrom": "af446064968a2857",
+      "colorA": 3.4,
+      "colorB": 9.02
     },
     {
       "id": "card_08",
@@ -143,7 +157,9 @@
       "grain": 0.01,
       "candidness": 0.7,
       "framing": 0.4,
-      "measuredFrom": "669365da2944c631"
+      "measuredFrom": "669365da2944c631",
+      "colorA": 0.14,
+      "colorB": 2.21
     },
     {
       "id": "card_09",
@@ -161,7 +177,9 @@
       "grain": 0.01,
       "candidness": 0.6,
       "framing": 0.25,
-      "measuredFrom": "b8d304f18beb6279"
+      "measuredFrom": "b8d304f18beb6279",
+      "colorA": -1.13,
+      "colorB": -16.96
     },
     {
       "id": "card_10",
@@ -179,7 +197,9 @@
       "grain": 0.06,
       "candidness": 0.9,
       "framing": 0.35,
-      "measuredFrom": "0d244ac38c0ae841"
+      "measuredFrom": "0d244ac38c0ae841",
+      "colorA": 0.04,
+      "colorB": 0.0
     },
     {
       "id": "card_11",
@@ -197,7 +217,9 @@
       "grain": 0.02,
       "candidness": 0.85,
       "framing": 0.5,
-      "measuredFrom": "cf85110e598f16a2"
+      "measuredFrom": "cf85110e598f16a2",
+      "colorA": 3.08,
+      "colorB": 9.69
     },
     {
       "id": "card_12",
@@ -215,7 +237,9 @@
       "grain": 0.04,
       "candidness": 0.65,
       "framing": 0.6,
-      "measuredFrom": "a8f2b8297491e8c7"
+      "measuredFrom": "a8f2b8297491e8c7",
+      "colorA": -2.39,
+      "colorB": 16.5
     },
     {
       "id": "card_13",
@@ -233,7 +257,9 @@
       "grain": 0.02,
       "candidness": 0.3,
       "framing": 0.55,
-      "measuredFrom": "ec6f02d85d7ad451"
+      "measuredFrom": "ec6f02d85d7ad451",
+      "colorA": 0.72,
+      "colorB": 6.96
     },
     {
       "id": "card_14",
@@ -251,7 +277,9 @@
       "grain": 0.01,
       "candidness": 0.55,
       "framing": 0.5,
-      "measuredFrom": "7027691de5ce92d7"
+      "measuredFrom": "7027691de5ce92d7",
+      "colorA": 1.7,
+      "colorB": 4.0
     },
     {
       "id": "card_15",
@@ -269,7 +297,9 @@
       "grain": 0.04,
       "candidness": 0.25,
       "framing": 0.55,
-      "measuredFrom": "018d6c54fba84537"
+      "measuredFrom": "018d6c54fba84537",
+      "colorA": -0.94,
+      "colorB": 1.66
     },
     {
       "id": "card_16",
@@ -287,7 +317,9 @@
       "grain": 0.05,
       "candidness": 0.2,
       "framing": 0.1,
-      "measuredFrom": "daa3de0a9a31bd93"
+      "measuredFrom": "daa3de0a9a31bd93",
+      "colorA": -5.44,
+      "colorB": -1.02
     }
   ]
 }
