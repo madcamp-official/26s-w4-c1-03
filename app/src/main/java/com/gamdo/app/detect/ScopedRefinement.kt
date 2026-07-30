@@ -48,10 +48,7 @@ class MaskInstanceSplitter(private val minimumPartRatio: Float = .15f, private v
             val component = parts.firstOrNull().orEmpty()
             val seeds = distancePeaks(component, mask)
             if (seeds.size >= 2) {
-                val split = seeds.map { seed -> component.sortedBy { distance(it, seed, w) }.take(component.size / seeds.size + 1) }.flatten().distinct()
-                val groups = seeds.map { seed -> split.filter { pixel ->
-                    seeds.indices.minByOrNull { distance(pixel, seeds[it], w) } == seeds.indexOf(seed)
-                } }
+                val groups = seededWatershed(component, seeds, w)
                 if (groups.size >= 2 && groups.all { it.size >= minSize }) {
                     return groups.take(maxParts).map { pixels ->
                         val values = FloatArray(w * h); pixels.forEach { values[it] = mask.values[it] }; mask.copy(values = values)
@@ -73,7 +70,16 @@ class MaskInstanceSplitter(private val minimumPartRatio: Float = .15f, private v
         val inside = component.toHashSet()
         val distances = component.associateWith { pixel ->
             val x = pixel % w; val y = pixel / w
-            minOf(x, w - 1 - x, y, mask.height - 1 - y).toFloat()
+            var best = Int.MAX_VALUE
+            // Component-boundary distance transform: distance to the nearest
+            // background cell, not distance to the image edge.
+            for (dy in -8..8) for (dx in -8..8) {
+                val nx = x + dx; val ny = y + dy
+                if (nx !in 0 until w || ny !in 0 until mask.height || (ny * w + nx) !in inside) {
+                    best = minOf(best, kotlin.math.abs(dx) + kotlin.math.abs(dy))
+                }
+            }
+            best.toFloat()
         }
         return component.sortedByDescending { distances[it] ?: 0f }.filter { candidate ->
             (distances[candidate] ?: 0f) >= 3f &&
@@ -84,6 +90,19 @@ class MaskInstanceSplitter(private val minimumPartRatio: Float = .15f, private v
     private fun distance(a: Int, b: Int, width: Int): Int {
         val ax = a % width; val ay = a / width; val bx = b % width; val by = b / width
         return kotlin.math.abs(ax - bx) + kotlin.math.abs(ay - by)
+    }
+
+    /** Deterministic seeded watershed approximation on the compact mask grid.
+     * The highest-distance pixels are seeds; every foreground cell flows to
+     * the nearest seed, which is equivalent to flooding this quantized mask
+     * without introducing a heavyweight image-processing dependency. */
+    private fun seededWatershed(component: List<Int>, seeds: List<Int>, width: Int): List<List<Int>> {
+        val groups = MutableList(seeds.size) { mutableListOf<Int>() }
+        component.forEach { pixel ->
+            val owner = seeds.indices.minByOrNull { distance(pixel, seeds[it], width) } ?: return@forEach
+            groups[owner] += pixel
+        }
+        return groups
     }
 }
 
