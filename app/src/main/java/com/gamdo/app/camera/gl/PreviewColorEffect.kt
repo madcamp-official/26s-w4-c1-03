@@ -205,14 +205,47 @@ class PreviewColorEffect private constructor(
         }
 
         override fun onOutputSurface(surfaceOutput: SurfaceOutput) {
+            // This method used to kill the app on every front/rear flip: 13 of 13 on
+            // SM-G970N, and 0 of 3 when a sheet happened to be open — an open sheet
+            // resizes the preview pane, and a different size makes CameraX hand back
+            // a different native window, which sidestepped the collision. The cause
+            // is the executor on the release callback below, not anything here.
+            //
+            // The two lines that follow are belt-and-braces. In the observed order
+            // CameraX runs the previous output's release callback before this call
+            // arrives, so they are no-ops; nothing in the contract promises that
+            // order, and if it inverts the cost is the EGL_BAD_ALLOC below.
+            val retired = output
+            releaseOutput()
+            retired?.close()
             output = surfaceOutput
             outputWidth = surfaceOutput.size.width
             outputHeight = surfaceOutput.size.height
-            val surface = surfaceOutput.getSurface(Runnable::run) { _ ->
-                releaseOutput()
+            // `handler`, not `Runnable::run`, and this is the whole bug. Run inline,
+            // this callback executes on CameraX's thread, where `eglMakeCurrent`
+            // cannot unbind a context that is current on the GL thread — so the
+            // destroy only *flags* the surface, the native window stays connected,
+            // and the next `eglCreateWindowSurface` for it fails with EGL_BAD_ALLOC.
+            // Every EGL call has to land on the thread that owns the context.
+            val surface = surfaceOutput.getSurface({ handler.post(it) }) { _ ->
+                // Identity-guarded for the same reason `onInputSurface` guards its
+                // texture: this fires for whichever output CameraX has finished with,
+                // which after a rebind is no longer the one held here. Unguarded, the
+                // retired output's callback destroys the *live* EGL surface and the
+                // preview stays black until something rebinds it again.
+                if (output === surfaceOutput) releaseOutput()
                 surfaceOutput.close()
             }
-            outputEglSurface = renderer.createWindowSurface(surface)
+            // A failure here now detaches instead of crashing. `create`'s KDoc calls an
+            // uncoloured preview the good failure and `onFrame` already treats a GL
+            // throw that way; this path was the one that still reached CameraX's
+            // handler as a fatal exception.
+            outputEglSurface = runCatching { renderer.createWindowSurface(surface) }
+                .onFailure {
+                    Log.w(TAG, "preview colour output surface unavailable", it)
+                    policy.onDrawFailed()
+                }
+                .getOrNull()
         }
 
         private fun onFrame(texture: SurfaceTexture) {

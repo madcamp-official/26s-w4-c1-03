@@ -153,12 +153,28 @@ internal class GlPreviewRenderer {
             intArrayOf(EGL14.EGL_NONE),
             0,
         )
-        check(eglSurface != EGL14.EGL_NO_SURFACE) { "eglCreateWindowSurface failed" }
+        // The error code is read here rather than left to the caller because EGL
+        // clears it on the next call: without this, a failure is indistinguishable
+        // between "the window already has a surface" (BAD_ALLOC), "the window is
+        // dead" (BAD_NATIVE_WINDOW) and a config mismatch, and the fix differs for
+        // each. A crash report that only says "failed" costs a whole debugging round.
+        check(eglSurface != EGL14.EGL_NO_SURFACE) {
+            "eglCreateWindowSurface failed: ${eglErrorName(EGL14.eglGetError())}"
+        }
         return eglSurface
     }
 
     fun destroyWindowSurface(eglSurface: EGLSurface) {
         if (display != EGL14.EGL_NO_DISPLAY && eglSurface != EGL14.EGL_NO_SURFACE) {
+            // Unbind before destroying, and not as a formality. `eglDestroySurface`
+            // on a surface that is still *current* only flags it for deletion; the
+            // native window stays connected to this context until something else is
+            // made current. `drawFrame` makes the output surface current on every
+            // frame, so on a rebind the window was always still held and the next
+            // `eglCreateWindowSurface` for it failed with EGL_BAD_ALLOC — measured
+            // 10 of 10 front/rear flips on SM-G970N. Rebinding the pbuffer is what
+            // actually releases the window.
+            EGL14.eglMakeCurrent(display, pbuffer, pbuffer, context)
             EGL14.eglDestroySurface(display, eglSurface)
         }
     }
@@ -362,5 +378,28 @@ internal class GlPreviewRenderer {
          */
         @JvmStatic
         var FORCE_SETUP_FAILURE: Boolean = false
+
+        /**
+         * EGL error constants as names, because the raw values (`0x3003`) mean
+         * nothing in a crash report and the numbers are not sequential.
+         */
+        internal fun eglErrorName(code: Int): String = when (code) {
+            EGL14.EGL_SUCCESS -> "EGL_SUCCESS"
+            EGL14.EGL_NOT_INITIALIZED -> "EGL_NOT_INITIALIZED"
+            EGL14.EGL_BAD_ACCESS -> "EGL_BAD_ACCESS"
+            EGL14.EGL_BAD_ALLOC -> "EGL_BAD_ALLOC"
+            EGL14.EGL_BAD_ATTRIBUTE -> "EGL_BAD_ATTRIBUTE"
+            EGL14.EGL_BAD_CONFIG -> "EGL_BAD_CONFIG"
+            EGL14.EGL_BAD_CONTEXT -> "EGL_BAD_CONTEXT"
+            EGL14.EGL_BAD_CURRENT_SURFACE -> "EGL_BAD_CURRENT_SURFACE"
+            EGL14.EGL_BAD_DISPLAY -> "EGL_BAD_DISPLAY"
+            EGL14.EGL_BAD_MATCH -> "EGL_BAD_MATCH"
+            EGL14.EGL_BAD_NATIVE_PIXMAP -> "EGL_BAD_NATIVE_PIXMAP"
+            EGL14.EGL_BAD_NATIVE_WINDOW -> "EGL_BAD_NATIVE_WINDOW"
+            EGL14.EGL_BAD_PARAMETER -> "EGL_BAD_PARAMETER"
+            EGL14.EGL_BAD_SURFACE -> "EGL_BAD_SURFACE"
+            EGL14.EGL_CONTEXT_LOST -> "EGL_CONTEXT_LOST"
+            else -> "0x%04X".format(code)
+        }
     }
 }
