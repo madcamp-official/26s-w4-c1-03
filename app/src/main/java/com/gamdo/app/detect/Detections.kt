@@ -50,6 +50,8 @@ data class ObjectObservation(
     @Deprecated("Use detectionConfidence or classificationConfidence.")
     val confidence: Float = 0f,
     val trackingId: Int? = null,
+    /** Stable id assigned by the scene tracker; unlike spatial keys it survives box jitter. */
+    val sceneTrackId: Long? = null,
     val labels: List<String> = emptyList(),
     val classificationConfidence: Float? = null,
     val category: GuideObjectCategory = GuideObjectCategory.UNKNOWN,
@@ -66,7 +68,8 @@ data class ObjectObservation(
 ) {
     /** Stable identity for composition matching when the detector has no track id. */
     val stableObjectKey: String
-        get() = trackingId?.let { "track:$it" } ?: buildString {
+        get() = sceneTrackId?.let { "scene:$it" }
+            ?: trackingId?.let { "track:$it" } ?: buildString {
             append(category.name.lowercase())
             append(':')
             append((box.centerX * 100).toInt())

@@ -21,8 +21,8 @@ private const val TAG = "EfficientDet"
  */
 private const val GPU_UPGRADE_THREAD_NAME = "gamdo-gpu-upgrade"
 
-/** EfficientDet-Lite0's own input size, so validation runs the real tensor path. */
-private const val VALIDATION_INPUT_PX = 320
+/** Lite2 uses a 448px input tensor; the runtime performs the final resize. */
+private const val VALIDATION_INPUT_PX = 448
 
 /** Mid grey. Opaque and non-zero so nothing upstream can shortcut an empty image. */
 private const val VALIDATION_FILL = 0xFF808080.toInt()
@@ -30,7 +30,7 @@ private const val VALIDATION_FILL = 0xFF808080.toInt()
 /** Runtime knobs for the bundled mobile object detector. */
 data class EfficientDetSceneDetectorConfig(
     val enabled: Boolean = true,
-    val modelAsset: String = "models/efficientdet_lite0_coco_int8.tflite",
+    val modelAsset: String = "models/efficientdet_lite2_coco_int8.tflite",
     val minimumConfidence: Float = 0.25f,
     val maxResults: Int = 8,
     val preferGpu: Boolean = true,
@@ -71,7 +71,7 @@ class EfficientDetSceneDetector(
         fun close() = confined.close { runCatching { it.close() } }
     }
 
-    override val modelId: String = "efficientdet-lite0-coco-int8"
+    override val modelId: String = "efficientdet-lite2-coco-int8"
 
     private val appContext = context.applicationContext
 
@@ -151,6 +151,8 @@ class EfficientDetSceneDetector(
 
     private var frameCount = 0
     private var sequenceId = 0L
+    private val detectionFusion = DetectionFusion()
+    private val objectTracks = ObjectTrackManager()
 
     init {
         if (config.enabled) startGpuUpgradeIfWanted()
@@ -195,7 +197,26 @@ class EfficientDetSceneDetector(
             primary
         }
 
-        return ObjectDetectionBatch(merged, isFresh = true, sequenceId = sequenceId)
+        val fused = detectionFusion.fuse(merged.map {
+            SceneObjectCandidate(
+                box = it.box,
+                detectionConfidence = it.detectionConfidence ?: it.confidence,
+                category = it.category,
+                classificationConfidence = it.classificationConfidence,
+                source = DetectionSource.FULL_FRAME,
+                nativeTrackingId = it.trackingId,
+            )
+        })
+        val tracked = objectTracks.update(sequenceId, fused).map { track ->
+            ObjectObservation(
+                box = track.box,
+                detectionConfidence = track.confidence,
+                classificationConfidence = null,
+                category = track.category,
+                sceneTrackId = track.trackId,
+            )
+        }
+        return ObjectDetectionBatch(tracked, isFresh = true, sequenceId = sequenceId)
     }
 
     private fun empty() = ObjectDetectionBatch(emptyList(), isFresh = true, sequenceId = sequenceId)
@@ -209,6 +230,7 @@ class EfficientDetSceneDetector(
         synchronized(lock) { upgraded.also { upgraded = null } }?.close()
         detector?.close()
         detector = null
+        objectTracks.reset()
     }
 
     /**
