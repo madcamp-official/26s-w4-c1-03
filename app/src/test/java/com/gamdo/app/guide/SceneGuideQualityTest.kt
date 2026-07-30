@@ -8,6 +8,7 @@ import com.gamdo.app.detect.ObjectObservation
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -202,6 +203,36 @@ class SceneGuideQualityTest {
 
         assertEquals(GuideLayoutState.Searching, controller.layoutState.value)
         assertFalse(controller.selectManualLayout("not-a-layout"))
+    }
+
+    /**
+     * 재탐색 has to take the situation marks with it.
+     *
+     * [SceneGuideSessionController.updateSituationAndMarks] only computes marks while the
+     * field is still null, so marks that survive a rescan are not stale for a few frames —
+     * they are the session's answer from then on, whatever the camera is pointed at next.
+     * On device that is 재탐색, the frame sheet's 자동 cell and tap-to-search all appearing
+     * to leave the guide untouched.
+     */
+    @Test
+    fun `rescan clears the situation marks so a later scene can produce its own`() {
+        val controller = SceneGuideSessionController()
+        val detection = DetectionResult(
+            faces = listOf(FaceObservation(NormalizedBox(0.08f, 0.20f, 0.28f, 0.52f), null, null, 0f)),
+            pose = null,
+            objects = (0 until 3).map(::unknownObject),
+            objectsFresh = true,
+        )
+        repeat(6) { frame -> controller.updateScene(detection.copy(objectSequenceId = frame + 1L), StyleTarget()) }
+        assertTrue(controller.layoutState.value is GuideLayoutState.Fixed)
+        assertNotNull(
+            "the scene must have produced marks or this test proves nothing",
+            controller.guideMarks.value,
+        )
+
+        controller.rescan()
+
+        assertNull(controller.guideMarks.value)
     }
 
     @Test

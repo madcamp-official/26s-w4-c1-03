@@ -82,13 +82,12 @@ data class OverlayData(
  *
  * @param showDetections draws raw face boxes and the person centre dot. Debug
  *   affordance for §2-5 coordinate verification — never on in the product path.
- * @param guideMarks 상황 우선 가이드 V2's fixed marks (요구사항 §10). When present they
- *   are drawn **instead of** the template's own slots, never alongside: P2 populates
- *   `guideMarks` only while `layoutState is Fixed`, which is the same condition the
- *   slot block below draws under, so rendering both would put two vocabularies —
- *   rounded slot rectangles and dots/rings — on the same scene at the same time.
- *   Null falls back to the slot path, which is the device-verified rendering and stays
- *   the answer whenever V2 produced nothing for this frame.
+ * @param guideMarks 상황 우선 가이드 V2's fixed marks (요구사항 §10). When they are the
+ *   frame's vocabulary they are drawn **instead of** the template's own slots, never
+ *   alongside — two vocabularies on one subject is the mixed 네모/동그라미 the device
+ *   report opened with. Which of the two speaks is [GuideRenderPriority]'s call, not
+ *   `guideMarks != null`: marks outlive the state that produced them, so a manual frame
+ *   selection and a 재탐색 both used to end up under a stale mark. See that object.
  */
 @Composable
 fun CameraOverlay(
@@ -148,13 +147,16 @@ fun CameraOverlay(
 
         val data = overlay ?: return@Canvas
 
-        // 상황 우선 가이드 V2 (요구사항 §10) takes precedence — see the parameter's KDoc
-        // for why this is an either/or and not both.
+        // 상황 우선 가이드 V2 (요구사항 §10) speaks for the frames it wins — see
+        // [GuideRenderPriority] for why winning is a decision rather than nullability,
+        // and the parameter's KDoc for why this is an either/or and not both.
         //
         // Marks are already fixed targets: P2 computes them once when the scene latches
         // and holds them, which is what "P1은 매 프레임 검출 위치를 그리지 않는다" asks
         // for. Nothing here re-derives a position from a detection.
-        val marks = guideMarks?.marks
+        val marks = guideMarks?.marks?.takeIf {
+            GuideRenderPriority.drawsSituationMarks(data.layoutState, hasMarks = it.isNotEmpty())
+        }
         if (marks != null) {
             marks.forEach { mark -> drawGuideMark(mark, data, vw, vh, Color.White.copy(alpha = 0.86f)) }
         } else {
