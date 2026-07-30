@@ -273,7 +273,7 @@ onboarding-polish:
 
 - [ ] **W3.5-4. 기기 사진을 열었을 때의 보정 경로** — `conditions_json`이 없으므로 기울기를 모른다. `CaptureConditions.NONE`으로 0도 보정이 되는 것은 이미 동작하지만(§4-1 배선 시 확인), **광학 보정(자동 노출)은 여전히 걸린다.** 사용자가 고르지 않은 보정이 남의 사진에 적용되는 것이 맞는지 판단이 필요하다.
 
-- [ ] **W3.5-5. `가져오기` 잔재 처분** — `CaptureRepository.importGalleryPhoto`는 이제 프로덕션 호출자가 0이다. 이 기능이 그것을 대체하므로 L-3에 따라 삭제하거나 폐기 표시한다. **W3.5 착수 전까지는 남겨 둔다** — 새 경로가 서기 전에 지우면 되돌릴 곳이 없다.
+- [ ] **W3.5-5. `가져오기` 잔재 처분** — ~~`CaptureRepository.importGalleryPhoto`는 이제 프로덕션 호출자가 0이다. 이 기능이 그것을 대체하므로 L-3에 따라 삭제하거나 폐기 표시한다.~~ **정정(2026-07-30): `importFromGallery`는 유지한다 — 위임 수신 사진이 그것을 부른다.** QR `나 찍어줘`로 받은 사진을 `captures` 행으로 만드는 `importReceivedShootPhoto`가 `importFromGallery(uri, source = DELEGATED_SHOOT)`로 위임하므로, 이 메서드에 **첫 프로덕션 호출자가 생겼다.** 사설 복사·디코드 후 재인코드로 EXIF/GPS 탈락(D8)·회전 baking·`insertCapture`를 한 곳에서 하는 경로이므로 복제하지 않고 재사용하는 것이 맞다. 지우면 D8 위치정보 제거 규칙이 두 곳으로 갈라진다. 처분 대상으로 남는 것은 **`importGalleryPhoto`(얇은 별칭)와 그 UI 진입점뿐**이고, `importFromGallery` 본체는 아니다.
 
 - [ ] 📱 **완료 기준**: 실기기에서 권한 부여 → 기기 사진이 그리드에 보임 → 한 장 탭 → 보정 화면 정상 → 저장. API 34+ 기기가 없으므로 **부분 접근 경로는 이번 범위에서 실기기 확인 불가**이며, 그 사실을 부록 C에 기록한다.
 

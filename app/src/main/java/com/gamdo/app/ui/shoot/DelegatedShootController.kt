@@ -52,6 +52,7 @@ import kotlinx.coroutines.withContext
  */
 class DelegatedShootController(
     private val repository: ShootSessionRepository,
+    private val importer: ReceivedPhotoImporter,
     private val scope: CoroutineScope,
     policyDecision: ShootPolicyDecision,
     private val nowMs: () -> Long = System::currentTimeMillis,
@@ -92,6 +93,14 @@ class DelegatedShootController(
         val visit = gate.enter()
         token = visit
         try {
+            // Before anything else: photos a previous visit downloaded but could not
+            // file away. Their session is already claimed, so nothing else will ever
+            // come back for them.
+            //
+            // Wrapped, because this is a bonus and the poll loop is the job. A
+            // filesystem that refuses to be walked must not cost the user the screen
+            // they actually opened; the files stay put and the next visit tries again.
+            runCatching { reconcilePendingImports() }
             apply(visit, repository.refresh())
             while (true) {
                 delay(pollIntervalMs)
@@ -139,27 +148,56 @@ class DelegatedShootController(
      * this screen is still the current one: navigating on behalf of a screen the user
      * already left would yank them somewhere they did not ask to go.
      */
-    fun receive(onOpenPhotos: (List<File>) -> Unit) {
+    fun receive(onOpenCapture: (String) -> Unit) {
         if (!flow.mayReceive) return
         val session = flow.session ?: return
         val visit = token
         flow = flow.receiveStarted()
         scope.launch {
-            runCatching { repository.receiveAndClaim(session) }.fold(
-                onSuccess = { files ->
+            runCatching {
+                // Two stages, and the boundary between them is the claim. The download
+                // is all-or-nothing and retryable; the import runs after the session is
+                // already gone, so it tolerates partial failure and keeps what it could
+                // not write. See `ReceivedPhotoImport.kt`.
+                importReceivedPhotos(repository.receiveAndClaim(session), importer)
+            }.fold(
+                onSuccess = { result ->
                     if (!gate.mayApply(visit)) return@launch
                     qrBitmap = null
                     remainingMinutes = 0
-                    if (files.isEmpty()) {
+                    val opened = result.firstCaptureId
+                    if (opened == null) {
+                        // Either nothing arrived or nothing could be written. Both leave
+                        // the user with nothing to look at, and the files (if any) are
+                        // still on disk for the next visit to retry.
                         flow = flow.receivedNothing()
                     } else {
                         flow = flow.received()
-                        onOpenPhotos(files)
+                        onOpenCapture(opened)
                     }
                 },
                 onFailure = { if (gate.mayApply(visit)) flow = flow.receiveFailed() },
             )
         }
+    }
+
+    /**
+     * Finish any import a previous visit could not.
+     *
+     * The claim already happened for these files, so the server copy is gone and this is
+     * the only thing that can still rescue them. It runs on entry and **navigates
+     * nowhere**: the user just opened this screen and yanking them into a result screen
+     * for a photo they may have already seen would be a side effect they did not ask
+     * for. The photos land in the album, which is where the rest of a received batch
+     * lives anyway.
+     *
+     * Silent by design — there is no message for it, because there is nothing for the
+     * user to decide.
+     */
+    private suspend fun reconcilePendingImports() {
+        val pending = pendingReceivedPhotos(repository.receivedPhotosRoot)
+        if (pending.isEmpty()) return
+        importReceivedPhotos(pending, importer)
     }
 
     /**

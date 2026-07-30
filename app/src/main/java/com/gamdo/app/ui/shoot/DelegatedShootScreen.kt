@@ -1,7 +1,6 @@
 package com.gamdo.app.ui.shoot
 
 import android.graphics.Bitmap
-import java.io.File
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -84,7 +83,7 @@ import com.gamdo.app.ui.theme.TextMid
 fun DelegatedShootScreen(
     controller: DelegatedShootController,
     onClose: () -> Unit,
-    onOpenPhotos: (List<File>) -> Unit,
+    onOpenCapture: (String) -> Unit,
     modifier: Modifier = Modifier,
     onPickFrame: (() -> Unit)? = null,
 ) {
@@ -154,7 +153,7 @@ fun DelegatedShootScreen(
         // the stage, so there is never a second one to compete with it.
         when (stage) {
             ShootStage.Idle -> Cta(ShootCopy.CREATE) { controller.create() }
-            is ShootStage.Ready -> Cta(ShootCopy.RECEIVE) { controller.receive(onOpenPhotos) }
+            is ShootStage.Ready -> Cta(ShootCopy.RECEIVE) { controller.receive(onOpenCapture) }
             ShootStage.Expired -> Cta(ShootCopy.EXPIRED_ACTION) { controller.retry() }
             ShootStage.Failed -> Cta(ShootCopy.RETRY) { controller.retry() }
             ShootStage.NoLayout -> onPickFrame?.let { Cta(ShootCopy.PICK_FRAME, onClick = it) }

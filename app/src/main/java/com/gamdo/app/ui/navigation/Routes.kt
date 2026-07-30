@@ -1,7 +1,5 @@
 package com.gamdo.app.ui.navigation
 
-import android.net.Uri
-
 /**
  * Navigation routes. Adopting the simplified (t2) design: the camera IS the home
  * (no mood screen, no bottom bar), album is reached from the camera, and tapping
@@ -44,6 +42,10 @@ object Routes {
      * value with it — is a supported state, not a crash: the screen shows 넘길 구도가
      * 없어요 and offers to close.
      *
+     * A photo collected here becomes an ordinary `captures` row, so it is opened through
+     * [result] — there is no separate route for a received photo, because after the import
+     * there is nothing separate about it.
+     *
      * **Currently reachable from nowhere.** The entry point is an owner decision that
      * has not been taken, and the delegated web page it hands off to is not deployed
      * (`gamdo-web/dist` is absent, so the server answers `/shoot/{token}` with 503), so
@@ -51,23 +53,6 @@ object Routes {
      */
     const val SHOOT = "shoot"
 
-    /**
-     * A photo a friend sent through [SHOOT], opened in the same 보정 screen as any other.
-     *
-     * Carries the cache-file path, URL-encoded — unlike [DEVICE_PHOTO] there is no
-     * `MediaStore` id to rebuild it from, so the path *is* the identity. Encoded because
-     * an absolute path is full of `/` and would otherwise be read as extra route
-     * segments. The pair is [receivedPhoto] and `Uri.decode`, which `NavType.StringType`
-     * applies on the way out.
-     *
-     * The path, not the [java.io.File] list the download produced: a route argument
-     * survives the back stack and process death, and an in-memory list does not. Coming
-     * back to this screen has to show the photo, not an empty frame.
-     */
-    const val RECEIVED_PHOTO = "received-photo/{receivedPath}"
-    fun receivedPhoto(absolutePath: String) = "received-photo/${Uri.encode(absolutePath)}"
-
     const val ARG_CAPTURE_ID = "captureId"
     const val ARG_MEDIA_STORE_ID = "mediaStoreId"
-    const val ARG_RECEIVED_PATH = "receivedPath"
 }

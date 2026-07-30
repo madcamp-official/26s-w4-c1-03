@@ -47,7 +47,6 @@ import com.gamdo.app.ui.result.ResultTarget
 import com.gamdo.app.ui.shoot.DelegatedShootController
 import com.gamdo.app.ui.shoot.DelegatedShootScreen
 import com.gamdo.app.ui.shoot.shootPolicyFor
-import java.io.File
 import kotlinx.coroutines.launch
 
 /**
@@ -299,6 +298,21 @@ fun GamdoNavHost(
                 val controller = remember(container, pendingShootLayout) {
                     DelegatedShootController(
                         repository = container.shootSessionRepository,
+                        // The entire coupling to `CaptureRepository`. A received photo
+                        // becomes an ordinary capture — app-private copy, EXIF/GPS dropped
+                        // by the decode-and-re-encode (D8), `captures` row — so it appears
+                        // in the album and opens through the same route as any other photo.
+                        //
+                        // `conditionsJson`/`analysisJson` stay at their `{}` defaults, and
+                        // that is the honest answer rather than an omission: a friend's
+                        // phone recorded no shutter facts, so there is no tilt, no subject
+                        // rectangle and no session. Inventing neutral values would claim a
+                        // measurement that was never taken.
+                        importer = { file ->
+                            container.captureRepository
+                                .importReceivedShootPhoto(file)
+                                .id
+                        },
                         scope = shootScope,
                         policyDecision = shootPolicyFor(pendingShootLayout),
                     )
@@ -306,52 +320,21 @@ fun GamdoNavHost(
                 DelegatedShootScreen(
                     controller = controller,
                     onClose = { navController.popBackStack() },
-                    // Requirement 4: the friend's photo opens through the *same* screen an
-                    // album photo opens through — `ResultTarget.DevicePhoto` over a Uri,
-                    // which `UriEditImageSource` reads with `ContentResolver
-                    // .openInputStream` exactly as it reads a MediaStore item. No new
-                    // result path, no `captures` row minted for someone else's photo.
+                    // The friend's photo opens through `Routes.result` — byte for byte the
+                    // route an album tap uses, because after the import it *is* an album
+                    // photo. The dedicated file-path route this screen used before is gone
+                    // with it.
                     //
-                    // **Only the first photo is opened.** A friend may send up to the
-                    // server's cap (5 today) and there is no screen that shows a set of
-                    // loose cache files: the album reads `captures` rows and MediaStore,
-                    // and minting rows for someone else's photos is the duplication
-                    // W3.5-2's dedup removed. The rest stay in
-                    // `cacheDir/shoot-sessions/<sessionId>/` and are reachable once a
-                    // received-photo list exists. Raised as an open decision rather than
-                    // solved by inventing a gallery here.
-                    onOpenPhotos = { files ->
-                        files.firstOrNull()?.let { first ->
-                            navController.navigate(Routes.receivedPhoto(first.absolutePath))
-                        }
+                    // Only the first is opened, by owner decision: five result screens is
+                    // not an outcome, and opening none leaves the user with no idea what
+                    // arrived. The rest are in the album.
+                    onOpenCapture = { captureId ->
+                        navController.navigate(Routes.result(captureId))
                     },
                     // P2 asks for 기본 프레임 선택 또는 취소; the manual frame picker does
                     // not exist yet, so only 취소 is offered. This is the slot it plugs
                     // into when it lands.
                     onPickFrame = null,
-                )
-            }
-
-            composable(
-                route = Routes.RECEIVED_PHOTO,
-                arguments = listOf(navArgument(Routes.ARG_RECEIVED_PATH) { type = NavType.StringType }),
-            ) { entry ->
-                val path = entry.arguments?.getString(Routes.ARG_RECEIVED_PATH).orEmpty()
-                // Resolved from the path in the route rather than from
-                // `receivedShootPhotos`, so returning to this screen after the list has
-                // been cleared still shows the photo instead of an empty frame. An
-                // unreadable path resolves to a Uri that fails to open and the result
-                // screen says 사진을 열지 못했어요 — the same handling a missing MediaStore
-                // item already gets.
-                val uri = remember(path) { Uri.fromFile(File(path)) }
-                ResultScreen(
-                    container = container,
-                    target = ResultTarget.DevicePhoto(uri),
-                    onBack = { navController.popBackStack() },
-                    activeReferenceStyle = activeReferenceStyle,
-                    activeReferenceImageUri = activeReferenceImageUri,
-                    onCreateReference = onCreateReference,
-                    onDeleteReference = onDeleteReference,
                 )
             }
 
