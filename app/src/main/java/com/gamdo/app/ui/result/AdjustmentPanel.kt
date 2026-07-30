@@ -33,13 +33,11 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.gamdo.app.edit.EditTool
 import com.gamdo.app.edit.FilterEngine
+import com.gamdo.app.ui.theme.GamdoType
 import com.gamdo.app.ui.theme.Ink700
 import com.gamdo.app.ui.theme.Ink900
-import com.gamdo.app.ui.theme.TextHi
-import com.gamdo.app.ui.theme.TextMid
 import com.gamdo.app.ui.theme.TextLow
 import com.gamdo.app.ui.theme.Outline
 import com.gamdo.app.ui.theme.Amber
@@ -117,10 +115,15 @@ fun AdjustmentPanel(
             modifier = Modifier.padding(top = 16.dp),
         )
 
+        // 시안 08's own hint line, verbatim. It names all three gestures the sheet
+        // actually has — the horizontal drag on the ruler, the double-tap reset below,
+        // and the drag-down close that [ToolSheet] owns — and it replaces
+        // "좌우로 밀어서 ${selected.label} 조절", which named only one of them and
+        // repeated the tool label already printed under the held dial.
         Text(
-            text = "좌우로 밀어서 ${selected.label} 조절",
+            text = "밀어서 조절 · 두 번 탭하면 필터값으로 · 아래로 내리면 닫힘",
             color = TextLow,
-            fontSize = 11.sp,
+            style = GamdoType.Micro,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
         )
@@ -130,9 +133,14 @@ fun AdjustmentPanel(
 /**
  * One adjustment as a filled arc with its value in the middle.
  *
- * The arc sweeps clockwise from 12 o'clock across the control's whole range, so a
- * bipolar control at zero reads as a half-filled dial and a one-sided control at
- * zero reads as empty — which is what each of those means.
+ * The arc sweeps clockwise from 12 o'clock and grows with **how far the control is from
+ * its default**, so rest is an empty ring for every control, bipolar or not. It used to
+ * sweep the value's position inside its own range instead, which drew a bipolar control's
+ * default as a half-filled dial — see [AdjustmentVisuals.arcSweepDegrees] for why that
+ * made the row unreadable and what it costs to fix.
+ *
+ * Every colour, weight and angle below comes from [AdjustmentVisuals], where it is under
+ * test. Nothing here decides anything.
  */
 @Composable
 private fun ToolDial(
@@ -141,8 +149,7 @@ private fun ToolDial(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    val active = value != 0
-    val fraction = tool.fraction(value)
+    val valueColor = AdjustmentVisuals.valueColor(value)
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(5.dp),
@@ -152,9 +159,9 @@ private fun ToolDial(
             Canvas(modifier = Modifier.size(46.dp)) {
                 drawArc(color = Ink700, startAngle = -90f, sweepAngle = 360f, useCenter = true)
                 drawArc(
-                    color = if (active) Amber else Outline,
+                    color = valueColor,
                     startAngle = -90f,
-                    sweepAngle = 360f * fraction,
+                    sweepAngle = AdjustmentVisuals.arcSweepDegrees(value),
                     useCenter = true,
                 )
             }
@@ -164,17 +171,17 @@ private fun ToolDial(
             ) {
                 Text(
                     text = formatValue(tool, value),
-                    color = if (active) Amber else TextLow,
-                    fontSize = 11.sp,
-                    fontWeight = if (active) FontWeight.ExtraBold else FontWeight.Bold,
+                    color = valueColor,
+                    style = GamdoType.Micro,
+                    fontWeight = FontWeight.ExtraBold,
                 )
             }
         }
         Text(
             text = tool.label,
-            color = if (selected) TextHi else TextMid,
-            fontSize = 10.5.sp,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            color = AdjustmentVisuals.labelColor(selected),
+            style = GamdoType.Micro,
+            fontWeight = AdjustmentVisuals.labelWeight(selected),
         )
     }
 }
