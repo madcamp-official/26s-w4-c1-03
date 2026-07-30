@@ -1,5 +1,6 @@
 package com.gamdo.app.ui.result
 
+import com.gamdo.app.data.FilterRenderState
 import com.gamdo.app.data.ResultFilterItem
 import com.gamdo.app.data.ResultFilterKind
 import com.gamdo.app.data.ResultFilterState
@@ -276,6 +277,61 @@ fun stripLabelFor(item: ResultFilterItem): String = when (item.kind) {
 /** Whether the catalogue is currently offering the `내 감도` slot. */
 fun hasReferenceSlot(state: ResultFilterState): Boolean =
     state.items.any { it.kind == ResultFilterKind.REFERENCE }
+
+/**
+ * The word the badge over the photo puts on the look **that is actually on the
+ * pixels being displayed** — P1-B3's "활성 감도 이름 … 을 표시해 무엇이 적용됐는지 알
+ * 수 있게 한다".
+ *
+ * [stripLabelFor] answers a different question: what the *selected* item is called.
+ * For the strip that is the right question — the highlighted thumb is a control, and
+ * a control names itself. For the badge it is not, because the badge is a claim about
+ * the photograph, and the selection and the photograph can disagree:
+ *
+ *  - A preset's colour is applied by `QuickFilterEditor` in `ResultScreen`'s preview
+ *    loop. When that pass throws, the loop publishes null, the screen falls back to
+ *    the untouched `source` bitmap, and the strip deliberately keeps all seven items
+ *    (P1-B2: "렌더 실패 시 현재 사진의 원본을 표시하고 필터 목록은 유지한다"). So the
+ *    user is looking at an un-styled photo with 밤거리 written across it. The strip is
+ *    right — 밤거리 is still what a tap would select — and the badge is lying.
+ *  - The reference slot is the opposite case and must not be swept up in the same
+ *    rule. Its colour is folded into `LocalEditor`'s plan and rendered into `source`;
+ *    the strip recipe for it is `ORIGINAL`, an identity pass. That pass failing takes
+ *    nothing off the photo, so the badge keeps saying 내 감도. What *would* remove it
+ *    is the plan itself failing, which `ResultScreen` reports as [referenceColorLanded].
+ *
+ * The fallback word is 원본, which is not a new string and not a euphemism: it is the
+ * strip item that means "no look", and on an app capture it already denotes a photo
+ * that has been levelled and exposed but given no colour (see [correctionPassesFor],
+ * where `APP_CAPTURE` runs geometry and optical under every pick). That is exactly the
+ * state a failed style pass leaves behind.
+ *
+ * @param referenceColorLanded whether `LocalEditor`'s style stage produced a plan.
+ *   Only consulted for the reference slot; presets never route their colour through it.
+ */
+fun appliedStyleLabel(state: ResultFilterState, referenceColorLanded: Boolean): String {
+    val item = state.items.firstOrNull { it.id == state.selectedId }
+        ?: return LocalFilter.ORIGINAL.label
+    val applied = when (item.kind) {
+        ResultFilterKind.REFERENCE -> referenceColorLanded
+        ResultFilterKind.PRESET -> !renderFailedForSelection(state)
+        // 원본 is the absence of a look, so there is nothing a failed pass could
+        // have removed — it reads 원본 either way.
+        ResultFilterKind.ORIGINAL -> true
+    }
+    return if (applied) stripLabelFor(item) else LocalFilter.ORIGINAL.label
+}
+
+/**
+ * Whether the strip's own render is known to have failed *for what is selected now*.
+ *
+ * Keyed on the id rather than on `is Failed` alone because the holder keeps one
+ * render field for the whole catalogue: a failure recorded while 밤거리 was selected
+ * says nothing about 필름, and treating it as though it did would put 원본 on a photo
+ * that has 필름 correctly rendered onto it.
+ */
+private fun renderFailedForSelection(state: ResultFilterState): Boolean =
+    (state.renderState as? FilterRenderState.Failed)?.filterId == state.selectedId
 
 /** What `capture_edit_stack.paramsJson` records as the filter, for a strip id. */
 fun editRecordFilterName(filterId: String): String =
