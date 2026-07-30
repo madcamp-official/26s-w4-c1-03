@@ -59,6 +59,8 @@ class EfficientDetSceneDetector(
     context: Context,
     private val config: EfficientDetSceneDetectorConfig = EfficientDetSceneDetectorConfig(),
 ) : CustomSceneDetector, AcceleratorReporting {
+    val scopeStore = SceneSearchScopeStore()
+    private val scopedTracks = ObjectTrackManager()
     /** Result of an explicit lasso refinement. It is intentionally separate
      * from the live full-frame batch so callers cannot accidentally count a
      * refinement twice as ordinary frame evidence. */
@@ -206,6 +208,19 @@ class EfficientDetSceneDetector(
             primary
         }
 
+        val scope = scopeStore.current()
+        if (scope is DetectionSearchScope.Polygon) {
+            val refined = detectPolygon(frame, scope.region, scope.revision)
+            if (refined.ran && refined.scopeRevision == scope.revision) {
+                val scoped = refined.objects.map { observation ->
+                    SceneObjectCandidate(observation.box, observation.detectionConfidence ?: 0f, observation.category, observation.classificationConfidence, DetectionSource.SCOPE_CROP)
+                }
+                val trackedScoped = scopedTracks.update(scope.revision, scoped)
+                    .filter { scope.region.accepts(it.box, .50f) }.take(4)
+                val scopedObservations = trackedScoped.map { ObjectObservation(it.box, detectionConfidence = it.confidence, category = it.category, sceneTrackId = it.trackId) }
+                return ObjectDetectionBatch(scopedObservations, true, sequenceId)
+            }
+        }
         val fused = detectionFusion.fuse(merged.map {
             SceneObjectCandidate(
                 box = it.box,

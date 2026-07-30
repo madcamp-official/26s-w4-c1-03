@@ -79,6 +79,26 @@ class StableSceneTracker(
         window += Sample(objects, people, batch.sequenceId)
         while (window.size > config.windowSize) window.removeFirst()
 
+        // A polygon is an explicit user scope, not an anchor neighborhood.
+        // Every independently tracked object inside it gets its own 3/5 vote;
+        // objects outside the lasso can never be pulled in as companions.
+        if (polygonRegion != null) {
+            val all = window.asReversed().flatMap { it.objects + it.people }
+                .groupBy { it.stableObjectKey }
+                .mapNotNull { (_, observations) ->
+                    val representative = observations.maxByOrNull(::rankingScore) ?: return@mapNotNull null
+                    val sightings = window.count { sample ->
+                        sample.objects.any { sameSubject(it, representative) } ||
+                            sample.people.any { sameSubject(it, representative) }
+                    }
+                    representative.takeIf { sightings >= config.confirmationsRequired }
+                }
+                .sortedByDescending(::rankingScore)
+            if (window.size < config.windowSize) { lastStable = emptyList(); return lastStable }
+            lastStable = limitWithPersonPriority(all).map { it.copy(semanticConfirmed = semanticConfirmed(it)) }
+            return lastStable
+        }
+
         val anchor = chooseAnchor(window.lastOrNull()?.objects.orEmpty())
         val anchorSightings = anchor?.let { selected ->
             window.count { sample -> sample.objects.any { sameSubject(it, selected) } }

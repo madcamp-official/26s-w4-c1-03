@@ -350,6 +350,7 @@ class SceneDetector(
     private val subjectSegmenter: SubjectSceneSegmenter? = null,
     private val customObjectDetector: CustomSceneDetector? = null,
     private val stageSink: ((DetectStageTimings) -> Unit)? = null,
+    val scopeStore: SceneSearchScopeStore = SceneSearchScopeStore(),
 ) {
     fun setObjectDetectionPaused(paused: Boolean) {
         (customObjectDetector as? PausableObjectSceneDetector)?.setObjectDetectionPaused(paused)
@@ -392,6 +393,10 @@ class SceneDetector(
         // never survive an empty scene either.
         val hasForegroundSeed = faces.isNotEmpty() || objectBatch.objects.isNotEmpty()
         val segmentation = if (hasForegroundSeed) subjectSegmenter?.detect(frame) else null
+        val scopedInstances = if (scopeStore.current() is DetectionSearchScope.Polygon) {
+            (subjectSegmenter as? MlKitSubjectSegmenter)?.detectInstances(frame).orEmpty()
+        } else emptyList()
+        val fusedObjects = fuseScopedInstances(objectBatch.objects, scopedInstances)
         val t4 = System.nanoTime()
 
         stageSink?.let { sink ->
@@ -420,7 +425,7 @@ class SceneDetector(
         return DetectionResult(
             faces = faces,
             pose = pose,
-            objects = objectBatch.objects,
+            objects = fusedObjects,
             segmentation = segmentation,
             objectsFresh = objectBatch.isFresh,
             objectSequenceId = objectBatch.sequenceId,
@@ -436,4 +441,30 @@ class SceneDetector(
     }
 
     fun reset() = Unit
+
+    private fun fuseScopedInstances(
+        objects: List<ObjectObservation>,
+        instances: List<InstanceMaskObservation>,
+    ): List<ObjectObservation> {
+        if (instances.isEmpty()) return objects
+        val result = objects.toMutableList()
+        instances.forEach { instance ->
+            val alreadyRepresented = result.any { overlap(it.box, instance.bounds) >= .20f }
+            if (!alreadyRepresented) {
+                result += ObjectObservation(
+                    box = instance.bounds,
+                    detectionConfidence = instance.confidence,
+                    category = GuideObjectCategory.UNKNOWN,
+                )
+            }
+        }
+        return result
+    }
+
+    private fun overlap(a: NormalizedBox, b: NormalizedBox): Float {
+        val left = maxOf(a.left, b.left); val top = maxOf(a.top, b.top)
+        val right = minOf(a.right, b.right); val bottom = minOf(a.bottom, b.bottom)
+        val intersection = (right - left).coerceAtLeast(0f) * (bottom - top).coerceAtLeast(0f)
+        return intersection / (a.width * a.height + b.width * b.height - intersection).coerceAtLeast(.0001f)
+    }
 }

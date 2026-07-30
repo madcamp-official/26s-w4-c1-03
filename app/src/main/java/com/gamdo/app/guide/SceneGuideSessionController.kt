@@ -16,8 +16,9 @@ import kotlinx.coroutines.flow.asStateFlow
 class SceneGuideSessionController(
     private val coordinator: SceneGuideCoordinator = SceneGuideCoordinator(),
     private val tracker: StableSceneTracker = StableSceneTracker(),
-    private val scopeStore: SceneSearchScopeStore? = null,
+    initialScopeStore: SceneSearchScopeStore? = null,
 ) {
+    private var scopeStore: SceneSearchScopeStore? = initialScopeStore
     private val _layoutState = MutableStateFlow<GuideLayoutState>(GuideLayoutState.Searching)
     val layoutState: StateFlow<GuideLayoutState> = _layoutState.asStateFlow()
 
@@ -25,6 +26,8 @@ class SceneGuideSessionController(
     val searchScope: StateFlow<SceneSearchScope> = _searchScope.asStateFlow()
 
     val availableManualLayouts: List<LayoutTemplateSummary> = LayoutTemplateCatalog.manualSummaries
+
+    fun attachScopeStore(store: SceneSearchScopeStore) { scopeStore = store }
 
     fun updateScene(
         batch: ObjectDetectionBatch,
