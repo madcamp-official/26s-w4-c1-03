@@ -17,6 +17,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -139,16 +140,22 @@ fun CameraOverlay(
         // Fixed-layout mode is intentionally independent from detections: the
         // slots stay on screen while the user moves the camera or the objects.
         data.layoutGuide?.fixedLayout?.let { fixed ->
+            // **Every** slot the template carries, each in its own kind's style.
+            //
+            // Both halves are requirements (§3.3): "인물 1명과 물체가 함께 선택되면
+            // 전달된 모든 슬롯을 렌더" — the `forEach` — and the per-slot style, which
+            // this used to drop on the floor by drawing one shape for all five kinds.
             fixed.template.slots.forEach { slot ->
                 // Template slots are authored as screen positions, not detections.
                 val slotRect = mapRect(slot.bounds, data, vw, vh, OverlayMapping.Space.COMPOSITION)
+                val style = SlotRenderStyle.of(slot.visualKind)
                 drawRoundRect(
                     color = Color.White.copy(alpha = fixed.template.opacity * 0.32f),
                     topLeft = Offset(slotRect.left, slotRect.top),
                     size = Size(slotRect.width, slotRect.height),
                     cornerRadius = CornerRadius(18.dp.toPx(), 18.dp.toPx()),
                 )
-                drawLayoutSlotBracket(slotRect, Color.White.copy(alpha = 0.86f))
+                drawSlotForStyle(slotRect, style, Color.White.copy(alpha = 0.86f))
             }
         }
 
@@ -252,6 +259,94 @@ fun CameraOverlay(
             )
         }
     }
+}
+
+/**
+ * Draws one fixed-layout slot in the style its [SlotVisualKind] asked for.
+ *
+ * The three cases differ by **how much they claim to know**, which is the distinction
+ * 담당 B encodes and this renderer used to erase:
+ *
+ *  - a silhouette states a body's shape and where the feet go;
+ *  - a person bracket states a region and that a person belongs in it;
+ *  - an object bracket states a region and nothing else.
+ *
+ * Every mark is a stroke, and there is no text, no arrow, no gauge and no occupancy
+ * colour anywhere in here — a slot's appearance depends on its *kind*, never on
+ * whether it has been filled (D2-1, and `CameraOverlayD2Test`'s `SlotMatchStatus` ban).
+ */
+private fun DrawScope.drawSlotForStyle(frame: RectN, style: SlotRenderStyle, color: Color) {
+    when (style) {
+        SlotRenderStyle.PERSON_SILHOUETTE -> {
+            drawPersonSilhouette(frame, color)
+            // The same symmetric capsule the preset guide uses — flat on purpose, so it
+            // states a position and cannot be read as a direction (D2-1 방향 화살표).
+            drawFootMarker(frame, color)
+        }
+        SlotRenderStyle.PERSON_BRACKET -> {
+            drawLayoutSlotBracket(frame, color)
+            drawHeadMarker(frame, color)
+        }
+        SlotRenderStyle.OBJECT_BRACKET -> drawLayoutSlotBracket(frame, color)
+    }
+}
+
+/**
+ * A body outline: head, shoulders, and a torso that runs to the slot's base.
+ *
+ * Deliberately crude — two arcs and two lines. It has to read as "a person stands
+ * here" at a glance over live camera image, and a more detailed figure would start
+ * looking like a pose to match rather than a region to stand in. It is an **outline**
+ * for the same reason: a filled shape would hide the subject it is guiding.
+ *
+ * Proportions are fractions of the slot, not fixed dp, so the same drawing works for
+ * `person_upper` (a head-and-shoulders slot) and `person_full_center` (a whole body).
+ * The head is sized off the slot's **width**, because a head that scaled with height
+ * would become a balloon on a tall slot.
+ */
+private fun DrawScope.drawPersonSilhouette(frame: RectN, color: Color) {
+    val stroke = 1.5.dp.toPx()
+    val headRadius = (frame.width * 0.17f).coerceAtMost(frame.height * 0.13f)
+    val centerX = (frame.left + frame.right) / 2f
+    val headCenterY = frame.top + headRadius * 1.25f
+    drawCircle(
+        color = color,
+        radius = headRadius,
+        center = Offset(centerX, headCenterY),
+        style = Stroke(width = stroke),
+    )
+    // Shoulders: a shallow curve springing from just below the head out to the slot's
+    // sides. Drawn as a quadratic through a control point above the ends so the line
+    // bows the way a shoulder line does rather than forming a V.
+    val shoulderY = headCenterY + headRadius * 1.9f
+    val shoulderHalf = frame.width * 0.42f
+    val torsoBottom = frame.bottom
+    val body = Path().apply {
+        moveTo(centerX - shoulderHalf, torsoBottom)
+        lineTo(centerX - shoulderHalf, shoulderY)
+        quadraticTo(centerX, shoulderY - headRadius * 1.1f, centerX + shoulderHalf, shoulderY)
+        lineTo(centerX + shoulderHalf, torsoBottom)
+    }
+    drawPath(path = body, color = color, style = Stroke(width = stroke, cap = StrokeCap.Round))
+}
+
+/**
+ * A head-position mark for [SlotRenderStyle.PERSON_BRACKET]: an open circle at the top
+ * centre of the slot.
+ *
+ * The whole difference between this and an object bracket, and it is enough — a circle
+ * where a head goes is the least a mark can say while still saying "person". A full
+ * silhouette here would contradict P2, which chose `PERSON_BRACKET` precisely for the
+ * templates where it does not want to claim a body shape.
+ */
+private fun DrawScope.drawHeadMarker(frame: RectN, color: Color) {
+    val radius = (frame.width * 0.13f).coerceAtMost(frame.height * 0.10f)
+    drawCircle(
+        color = color,
+        radius = radius,
+        center = Offset((frame.left + frame.right) / 2f, frame.top + radius * 1.6f),
+        style = Stroke(width = 1.5.dp.toPx()),
+    )
 }
 
 /** Thin open corners read as a composition target rather than a filled checklist box. */
