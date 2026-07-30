@@ -78,6 +78,24 @@ suspend fun PointerInputScope.detectLassoDrags(
  * one the scene-search spinner appears as the path goes, so the two outcomes differ by
  * what follows rather than by any text (R7-1/R7-2 ban both the vocabulary and the
  * instruction).
+ *
+ * ## An accepted and a rejected region look nearly the same, and that is decided
+ *
+ * Both fade over [AREA_SELECT_SETTLE_MS]; the only difference is that an accepted one is
+ * followed by the search spinner and a rejected one by nothing, with the pencil left
+ * armed. That is a weak signal for "your region was too small or too large", it was
+ * raised as such, and the **owner chose to keep it** (2026-07-30).
+ *
+ * The reason is that there is no signal left to give. Amber is reserved for *active*
+ * state — it is what the pencil button itself is using while this path is on screen —
+ * so an amber flash here would say "armed" twice and mean neither. Red is spoken for:
+ * `HorizonRed` is the one approved chromatic exception on this screen and it means
+ * horizon deviation. And copy is banned outright — §4 P2-1 says "행동 지시 문구는
+ * 띠우지 않고", R7-1 bans the vocabulary and R7-2 bans the instruction.
+ *
+ * **So this is not a missing feature.** If you are here because the rejected path looks
+ * like nothing happened: that is the decision, and the fix is not a new colour. Adding
+ * one needs an owner reversal, not a judgement call — the same standing rule D2 has.
  */
 @Composable
 fun AreaSelectPathOverlay(
