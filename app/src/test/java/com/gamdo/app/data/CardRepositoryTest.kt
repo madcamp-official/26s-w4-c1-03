@@ -1,9 +1,12 @@
 package com.gamdo.app.data
 
+import com.gamdo.app.ui.onboarding.CardTone
+import com.gamdo.app.ui.onboarding.ProfilePalette
 import java.io.File
 import java.security.MessageDigest
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -218,6 +221,90 @@ class CardRepositoryTest {
         assertEquals(cards().map { it.id }, entries.map { it.feature.id })
         entries.forEach { entry ->
             assertEquals("cards/${entry.feature.id}.jpg", entry.thumbnail)
+        }
+    }
+
+    /**
+     * Every card must declare the colour it actually is.
+     *
+     * `colorTemperature` is not that: it is a point on the Planckian locus, an
+     * orange-to-blue line, and a forest photograph has no meaningful position on it.
+     * Building the onboarding swatches from it meant a user who picked green
+     * photographs was shown grey (owner report, 2026-07-30). `colorA`/`colorB` are the
+     * measured CIELAB opponent coordinates that replaced it.
+     *
+     * Nullable in the model so an older bundle parses; required here so a shipped one
+     * cannot omit it. The values themselves are tied to the image bytes by
+     * `measuredFrom`, checked above.
+     */
+    @Test
+    fun `every card declares a measured opponent colour`() {
+        decodeCardEntries(cardsJsonText, json).forEach { entry ->
+            val a = entry.colorA
+            val b = entry.colorB
+            assertTrue(
+                "${entry.feature.id} has no measured colour — the swatches cannot " +
+                    "describe a photograph whose colour was never recorded",
+                a != null && b != null,
+            )
+            assertTrue("${entry.feature.id}.colorA out of CIELAB range: $a", a!! in -128f..127f)
+            assertTrue("${entry.feature.id}.colorB out of CIELAB range: $b", b!! in -128f..127f)
+        }
+    }
+
+    /**
+     * The deck must contain disagreement on both opponent axes.
+     *
+     * This is the deck-side half of the reachability guard in `ProfilePaletteTest`.
+     * The palette can render any hue, but that is worth nothing if every bundled
+     * photograph leans the same way: the onboarding would be asking a question whose
+     * answer is fixed by the asset choice rather than by the user. A future curation
+     * pass that quietly replaces the green and blue cards with sixteen warm interiors
+     * fails here.
+     */
+    @Test
+    fun `the deck spans both opponent axes, so a preference can be expressed`() {
+        val entries = decodeCardEntries(cardsJsonText, json)
+        val a = entries.mapNotNull { it.colorA }
+        val b = entries.mapNotNull { it.colorB }
+        assertTrue("no green card: min a* is ${a.min()}", a.min() <= -4f)
+        assertTrue("no warm card: max a* is ${a.max()}", a.max() >= 4f)
+        assertTrue("no blue card: min b* is ${b.min()}", b.min() <= -4f)
+        assertTrue("no yellow card: max b* is ${b.max()}", b.max() >= 4f)
+    }
+
+    /**
+     * End to end, through the real asset: two tastes must produce two palettes, and
+     * the green one must be green.
+     *
+     * `ProfilePaletteTest` pins the same property against measurements typed into the
+     * test. This one reads `cards.json`, so it also fails if the deck's numbers are
+     * edited into agreement — the failure mode the unit test cannot see.
+     */
+    @Test
+    fun `a green selection and a warm selection produce different palettes from the bundle`() {
+        val entries = decodeCardEntries(cardsJsonText, json)
+            .filter { it.colorA != null && it.colorB != null }
+        fun tones(ids: List<String>) = entries.filter { it.feature.id in ids }
+            .map { CardTone(it.feature.brightness, it.colorA!!, it.colorB!!) }
+
+        val byGreen = entries.sortedBy { it.colorA }
+        val greenest = tones(byGreen.take(3).map { it.feature.id })
+        val warmest = tones(byGreen.takeLast(3).map { it.feature.id })
+
+        val greenPalette = ProfilePalette.swatches(greenest)
+        val warmPalette = ProfilePalette.swatches(warmest)
+
+        assertNotEquals(greenPalette, warmPalette)
+        greenPalette.forEach { c ->
+            val r = (c shr 16) and 0xFF
+            val g = (c shr 8) and 0xFF
+            val b = c and 0xFF
+            assertTrue(
+                "the three greenest cards in the bundle still produce " +
+                    "#%02X%02X%02X, which is not green".format(r, g, b),
+                g > r && g > b,
+            )
         }
     }
 

@@ -1,92 +1,190 @@
 package com.gamdo.app.ui.onboarding
 
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.pow
+import kotlin.math.roundToInt
+import kotlin.math.sin
+
+/**
+ * One bundled card's measured tone, as the palette needs it.
+ *
+ * @param brightness mean L\* / 100 of the image, 0..1 — the same number `cards.json`
+ *   already carries as `brightness`.
+ * @param colorA mean CIELAB a\* of the image: negative green, positive red.
+ * @param colorB mean CIELAB b\* of the image: negative blue, positive yellow.
+ */
+data class CardTone(val brightness: Float, val colorA: Float, val colorB: Float)
 
 /**
  * The three swatches shown under "당신의 감도를 저장했어요" (§6-2), derived from the
- * profile the user's picks actually produced.
+ * colour the user's picks actually contain.
  *
- * They used to be three hard-coded colours. Under a heading that says *your*
- * palette, that is a claim the screen cannot support — every user saw the same
- * sage/beige/cream no matter which photos they chose, which is the sort of thing
- * AGENTS.md §7-6 rules out and the sort of thing a demo gets asked about.
+ * ## Why this is not built from colour temperature
  *
- * Pure Kotlin (`android.*` import 0) so the mapping is JVM-testable; the screen
- * wraps the packed ARGB values in Compose `Color`.
+ * It used to be. `swatches()` took `colorTemperatureK` and ran it through a Planckian
+ * (black-body) approximation, which traces a curve from orange through white to blue —
+ * **one axis.** Green is not on it. Sweeping the whole domain, 1500 K to 12000 K, the
+ * best the tint could do was `max(G − max(R, B)) = 0.0000`, at 6400 K, where green
+ * merely ties red. No temperature could make a green swatch, so no selection could
+ * either.
+ *
+ * The owner reported it on 2026-07-30: picked the blue-green photographs, got grey.
+ * Reproduced exactly — cards 05, 09 and 16 average to 6040 K and produced
+ * `#62605A / #8A887F / #B3B1A5`. Three greys, as reported.
+ *
+ * The deeper error is that **colour temperature is not the colour of a photograph.**
+ * A forest has no meaningful CCT; the measurement pushes anything off the Planckian
+ * locus toward neutral, and averaging several such numbers pushes it further. So the
+ * axis carried almost no signal and could not have expressed it if it had.
+ *
+ * ## What it is built from instead
+ *
+ * Each card now carries its own measured colour in CIELAB opponent coordinates
+ * (`cards.json` `colorA`/`colorB`; see `docs/감도_카드_에셋_라이선스_기록.md` for the
+ * measurement definition). The selection is averaged **in that opponent space**, which
+ * gives the honest behaviour for free:
+ *
+ * - agree on a hue → the average keeps it, and the swatch is saturated;
+ * - pick green *and* red → a\* cancels and the swatch goes neutral. That grey is a
+ *   true statement about the selection, unlike the old one.
+ *
+ * Cards are weighted by their own chroma when averaging. A black-and-white photograph
+ * (card_10 measures C\* = 0.04) expresses no hue preference, and averaging it in as
+ * "grey" would record no opinion as an opinion. Cancellation survives the weighting
+ * intact: two equally colourful opposites still sum to zero.
+ *
+ * Pure Kotlin (`android.*` import 0) so the mapping is JVM-testable; the screen wraps
+ * the packed ARGB values in Compose `Color`.
  */
 object ProfilePalette {
 
+    /** Swatches for a selection of cards, darkest first. */
+    fun swatches(tones: List<CardTone>): List<Int> = swatches(average(tones))
+
     /**
-     * Swatches for a profile, darkest first.
+     * Swatches for one already-averaged tone, darkest first.
      *
-     * @param brightness profile brightness, 0..1.
-     * @param colorTemperatureK profile colour temperature in Kelvin.
-     * @param saturation profile saturation, 0..1 — how far the swatches sit from
-     *   neutral grey. A user who picked uniformly desaturated photos gets a grey
-     *   palette, which is the honest answer rather than a decorative one.
+     * Lightness is a band anchored on the profile but kept inside a readable window:
+     * these are drawn on charcoal, and a genuinely dark selection would otherwise
+     * produce three swatches nobody can see, which communicates less than a wrong
+     * colour would.
      */
-    fun swatches(brightness: Float, colorTemperatureK: Float, saturation: Float): List<Int> {
-        val tint = kelvinTint(colorTemperatureK)
-        val sat = saturation.coerceIn(0f, 1f)
-        // Lightness band. Anchored on the profile but kept inside a readable
-        // window: these are drawn on charcoal, and a genuinely dark profile would
-        // otherwise produce three swatches nobody can see — which communicates
-        // less than a wrong colour would.
-        val centre = (0.42f + brightness.coerceIn(0f, 1f) * 0.40f)
-        return listOf(centre - 0.16f, centre, centre + 0.16f).map { level ->
-            pack(tint, level.coerceIn(0.14f, 0.96f), sat)
+    fun swatches(tone: CardTone): List<Int> {
+        val centre = L_BASE + tone.brightness.coerceIn(0f, 1f) * L_SPAN
+        val chroma = (hypot(tone.colorA, tone.colorB) * CHROMA_GAIN).coerceAtMost(CHROMA_CAP)
+        val hue = atan2(tone.colorB, tone.colorA)
+        return listOf(-L_STEP, 0f, L_STEP).map { offset ->
+            pack((centre + offset).coerceIn(L_MIN, L_MAX), chroma, hue)
         }
     }
 
     /**
-     * Normalized RGB for a Planckian radiator at [kelvin], via Tanner Helland's
-     * widely-used approximation. Scaled so the largest channel is 1, because only
-     * the *hue* is wanted here — the lightness comes from the profile.
+     * The selection's tone: brightness averaged plainly, hue averaged in opponent space
+     * with each card weighted by its own chroma.
+     *
+     * The weighted mean is bounded by the largest chroma in the selection (|a| ≤ C for
+     * every card), so it can dilute or cancel but never invent colour that no picked
+     * photograph contained.
      */
-    private fun kelvinTint(kelvin: Float): Triple<Float, Float, Float> {
-        val k = kelvin.coerceIn(1500f, 12000f) / 100f
-        val r = if (k <= 66f) 1f else (329.698727446f * (k - 60f).pow(-0.1332047592f) / 255f)
-        val g = if (k <= 66f) {
-            (99.4708025861f * kotlin.math.ln(k.toDouble()).toFloat() - 161.1195681661f) / 255f
-        } else {
-            288.1221695283f * (k - 60f).pow(-0.0755148492f) / 255f
+    fun average(tones: List<CardTone>): CardTone {
+        if (tones.isEmpty()) return CardTone(NEUTRAL_BRIGHTNESS, 0f, 0f)
+        val brightness = tones.map { it.brightness.toDouble() }.average().toFloat()
+        var weightedA = 0f
+        var weightedB = 0f
+        var totalWeight = 0f
+        for (tone in tones) {
+            val weight = hypot(tone.colorA, tone.colorB)
+            weightedA += tone.colorA * weight
+            weightedB += tone.colorB * weight
+            totalWeight += weight
         }
-        val b = when {
-            k >= 66f -> 1f
-            k <= 19f -> 0f
-            else -> (138.5177312231f * kotlin.math.ln((k - 10f).toDouble()).toFloat() - 305.0447927307f) / 255f
-        }
-        val rc = r.coerceIn(0f, 1f)
-        val gc = g.coerceIn(0f, 1f)
-        val bc = b.coerceIn(0f, 1f)
-        val peak = maxOf(rc, gc, bc).coerceAtLeast(1e-3f)
-        var nr = rc / peak
-        var ng = gc / peak
-        var nb = bc / peak
-
-        // Chroma gain. A Planckian tint at daylight is (1.00, 0.93, 0.86) — nearly
-        // neutral — so a physically faithful swatch set reads as three greys and
-        // tells the user nothing about their own choices. Pushing each channel away
-        // from the tint's own mean exaggerates the hue without changing its
-        // direction, so warm still reads warmer than cool and the ordering the
-        // profile expresses survives. This is a display decision, not a measurement:
-        // the numbers behind the recommendation are untouched.
-        val mean = (nr + ng + nb) / 3f
-        nr = (mean + (nr - mean) * CHROMA_GAIN).coerceIn(0f, 1f)
-        ng = (mean + (ng - mean) * CHROMA_GAIN).coerceIn(0f, 1f)
-        nb = (mean + (nb - mean) * CHROMA_GAIN).coerceIn(0f, 1f)
-        return Triple(nr, ng, nb)
+        // Every pick was colourless. Dividing here would be 0/0; a grey palette is
+        // also the right answer, so say it directly.
+        if (totalWeight < CHROMA_EPSILON) return CardTone(brightness, 0f, 0f)
+        return CardTone(brightness, weightedA / totalWeight, weightedB / totalWeight)
     }
 
-    private const val CHROMA_GAIN = 4f
+    // A faithful rendering of a photograph's average colour is very close to grey —
+    // most pixels in most photographs are. Scaling chroma exaggerates how colourful
+    // the swatch is without moving its hue, so the direction the selection expresses
+    // survives and the ordering between selections is unchanged. This is a display
+    // decision, not a measurement: the numbers behind the recommendation are untouched.
+    private const val CHROMA_GAIN = 2.2f
 
-    /** Packs a tint at a given lightness and saturation into 0xAARRGGBB. */
-    private fun pack(tint: Triple<Float, Float, Float>, level: Float, saturation: Float): Int {
-        fun ch(v: Float): Int {
-            // Mix toward neutral by (1 - saturation), then scale to the level.
-            val mixed = v * saturation + (1f - saturation)
-            return (mixed * level * 255f).toInt().coerceIn(0, 255)
+    // Past this, gamut mapping starts doing the work instead of the measurement, and
+    // the swatches read as poster paint rather than as a photograph's colour.
+    private const val CHROMA_CAP = 38f
+
+    private const val L_BASE = 36f
+    private const val L_SPAN = 38f
+    private const val L_STEP = 14f
+    private const val L_MIN = 24f
+    private const val L_MAX = 88f
+
+    private const val NEUTRAL_BRIGHTNESS = 0.5f
+    private const val CHROMA_EPSILON = 1e-3f
+
+    /**
+     * Packs a CIELAB colour into 0xAARRGGBB, reducing chroma until it fits sRGB.
+     *
+     * Clamping the channels instead would be shorter and would shift the hue: an
+     * out-of-gamut green clips its red channel up to 0 and comes back yellower than
+     * the photographs it came from. Scaling chroma along a fixed hue angle keeps the
+     * direction and only gives up saturation, which is the part the user cannot check.
+     */
+    private fun pack(lightness: Float, chroma: Float, hue: Float): Int {
+        val cosH = cos(hue)
+        val sinH = sin(hue)
+        var scale = 1f
+        if (!inGamut(labToRgb(lightness, chroma * cosH, chroma * sinH))) {
+            var low = 0f
+            var high = 1f
+            repeat(GAMUT_STEPS) {
+                val mid = (low + high) / 2f
+                if (inGamut(labToRgb(lightness, mid * chroma * cosH, mid * chroma * sinH))) {
+                    low = mid
+                } else {
+                    high = mid
+                }
+            }
+            scale = low
         }
-        return (0xFF shl 24) or (ch(tint.first) shl 16) or (ch(tint.second) shl 8) or ch(tint.third)
+        val rgb = labToRgb(lightness, scale * chroma * cosH, scale * chroma * sinH)
+        return (0xFF shl 24) or (channel(rgb[0]) shl 16) or (channel(rgb[1]) shl 8) or channel(rgb[2])
     }
+
+    private const val GAMUT_STEPS = 20
+    private const val GAMUT_SLACK = 5e-4f
+
+    private fun inGamut(rgb: FloatArray): Boolean =
+        rgb.all { it >= -GAMUT_SLACK && it <= 1f + GAMUT_SLACK }
+
+    private fun channel(v: Float): Int = (v * 255f).roundToInt().coerceIn(0, 255)
+
+    /** CIELAB (D65) to non-linear sRGB, un-clamped so [inGamut] can see the overshoot. */
+    private fun labToRgb(lightness: Float, a: Float, b: Float): FloatArray {
+        val fy = (lightness + 16f) / 116f
+        val fx = fy + a / 500f
+        val fz = fy - b / 200f
+        val x = fInverse(fx) * D65_X
+        val y = fInverse(fy)
+        val z = fInverse(fz) * D65_Z
+        return floatArrayOf(
+            gamma(3.2404542f * x - 1.5371385f * y - 0.4985314f * z),
+            gamma(-0.9692660f * x + 1.8760108f * y + 0.0415560f * z),
+            gamma(0.0556434f * x - 0.2040259f * y + 1.0572252f * z),
+        )
+    }
+
+    private const val D65_X = 0.95047f
+    private const val D65_Z = 1.08883f
+    private const val LAB_DELTA = 6f / 29f
+
+    private fun fInverse(t: Float): Float =
+        if (t > LAB_DELTA) t * t * t else 3f * LAB_DELTA * LAB_DELTA * (t - 4f / 29f)
+
+    private fun gamma(v: Float): Float =
+        if (v <= 0.0031308f) 12.92f * v else 1.055f * v.coerceAtLeast(0f).pow(1f / 2.4f) - 0.055f
 }

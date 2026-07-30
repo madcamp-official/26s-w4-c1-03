@@ -101,6 +101,27 @@ fun OnboardingScreen(container: AppContainer, onFinished: () -> Unit) {
         }
     }
 
+    // The swatches come from the measured colour of the photographs themselves, not
+    // from the profile: `colorTemperature` is a point on the orange-to-blue Planckian
+    // locus, so a selection of green photographs could only ever average to grey.
+    // Reported by the owner on 2026-07-30 and reproduced; see [ProfilePalette].
+    //
+    // Derived from the saved ids for the same reason `profile` is — a configuration
+    // change must not empty the palette on a screen headed "당신의 감도를 저장했어요".
+    val palette = remember(selectedIds, cards) {
+        cards.asSequence()
+            .filter { it.feature.id in selectedIds }
+            .mapNotNull { entry ->
+                val a = entry.colorA ?: return@mapNotNull null
+                val b = entry.colorB ?: return@mapNotNull null
+                CardTone(brightness = entry.feature.brightness, colorA = a, colorB = b)
+            }
+            .toList()
+            .takeIf { it.isNotEmpty() }
+            ?.let { tones -> ProfilePalette.swatches(tones).map { Color(it) } }
+            .orEmpty()
+    }
+
     when {
         // A parse failure used to leave an empty grid whose button never enables —
         // and onboarding gates the whole app, so that is a permanent dead end on a
@@ -124,15 +145,9 @@ fun OnboardingScreen(container: AppContainer, onFinished: () -> Unit) {
 
         else -> SavedStep(
             summary = profile?.summary,
-            // §6-2: the palette has to come from the profile the picks produced.
+            // §6-2: the palette has to come from what the picks actually contained.
             // Three constants under "당신의 감도" is a claim the screen cannot back.
-            palette = profile?.color?.let { c ->
-                ProfilePalette.swatches(
-                    brightness = c["brightness"]?.mean ?: 0.5f,
-                    colorTemperatureK = c["colorTemperature"]?.mean ?: 5500f,
-                    saturation = c["saturation"]?.mean ?: 0.4f,
-                ).map { Color(it) }
-            }.orEmpty(),
+            palette = palette,
             recommendations = profile?.recommendedPresetIds.orEmpty().map { presetNames[it] ?: it },
             onStart = {
                 scope.launch {
