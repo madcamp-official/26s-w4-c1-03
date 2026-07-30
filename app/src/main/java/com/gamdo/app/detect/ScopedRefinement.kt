@@ -113,8 +113,19 @@ class ScopedRefinementWorker(
     private val scopeStore: SceneSearchScopeStore,
     private val tracks: ObjectTrackManager,
 ) {
+    private var lastRevision: Long? = null
+    private var fixedRevision: Long? = null
+    private var fixedResult: List<TrackedSceneObject> = emptyList()
+
     fun refine(frame: AnalysisFrame): List<TrackedSceneObject> {
         val scope = scopeStore.current() as? DetectionSearchScope.Polygon ?: return emptyList()
+        if (lastRevision != scope.revision) {
+            tracks.reset()
+            lastRevision = scope.revision
+            fixedRevision = null
+            fixedResult = emptyList()
+        }
+        if (fixedRevision == scope.revision) return fixedResult
         val result = detector.detectPolygon(frame, scope.region, scope.revision)
         if (!result.ran || result.scopeRevision != scope.revision) return emptyList()
         val candidates = result.objects.map { observation ->
@@ -126,8 +137,18 @@ class ScopedRefinementWorker(
                 source = DetectionSource.SCOPE_CROP,
             )
         }
-        return tracks.update(result.scopeRevision, candidates)
+        val selected = tracks.update(result.scopeRevision, candidates)
             .filter { scope.region.accepts(it.box, minimumBoxOverlap = .50f) }
             .take(4)
+        // A polygon search is a finite refinement session. Once every selected
+        // object has three fresh hits, stop invoking the ROI detector; the guide
+        // controller owns the subsequent fixed layout. This prevents the old
+        // full-frame + ROI + segmentation loop from continuing behind a fixed
+        // lasso result.
+        if (selected.isNotEmpty() && selected.all { it.hitCount >= 3 }) {
+            fixedRevision = scope.revision
+            fixedResult = selected
+        }
+        return selected
     }
 }

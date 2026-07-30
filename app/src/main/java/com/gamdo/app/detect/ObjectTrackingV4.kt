@@ -66,21 +66,35 @@ class ObjectTrackManager(private val config: V4ObjectTrackConfig = V4ObjectTrack
     fun reset() { tracks.clear() }
     fun update(sequenceId: Long, candidates: List<SceneObjectCandidate>): List<TrackedSceneObject> {
         val remaining = candidates.take(12).toMutableList()
-        val matched = mutableSetOf<Long>()
-        tracks.values.forEach { track ->
-            val index = remaining.indices.maxByOrNull { score(track, remaining[it]) }
-            if (index != null && canMatch(track, remaining[index])) {
-                val candidate = remaining.removeAt(index)
-                track.box = smooth(track.box, candidate.box)
-                track.category = if (candidate.detectionConfidence >= track.confidence) candidate.category else track.category
-                track.confidence = track.confidence * .7f + candidate.detectionConfidence * .3f
-                track.hits++; track.misses = 0; track.mask = candidate.instanceMask; track.sources += candidate.source
-                matched += track.id
-            } else track.misses++
+        val active = tracks.values.toList()
+        val costs = Array(active.size) { index ->
+            FloatArray(remaining.size) { candidateIndex ->
+                val track = active[index]
+                val candidate = remaining[candidateIndex]
+                if (canMatch(track, candidate)) matchCost(track, candidate) else 10f
+            }
         }
-        remaining.forEach { c -> tracks[nextId] = MutableTrack(nextId++, c.box, c.category, c.detectionConfidence, 1, 0, c.instanceMask, mutableSetOf(c.source)) }
+        val assignments = MinimumCostMatcher.match(costs)
+        val matchedTracks = assignments.map { active[it.left].id }.toSet()
+        val matchedCandidates = assignments.map { it.right }.toSet()
+
+        assignments.forEach { assignment ->
+            val track = active[assignment.left]
+            val candidate = remaining[assignment.right]
+            track.box = smooth(track.box, candidate.box)
+            track.category = if (candidate.detectionConfidence >= track.confidence) candidate.category else track.category
+            track.confidence = track.confidence * .7f + candidate.detectionConfidence * .3f
+            track.hits++
+            track.misses = 0
+            track.mask = candidate.instanceMask
+            track.sources += candidate.source
+        }
+        active.filter { it.id !in matchedTracks }.forEach { it.misses++ }
+        remaining.filterIndexed { index, _ -> index !in matchedCandidates }.forEach { c ->
+            tracks[nextId] = MutableTrack(nextId++, c.box, c.category, c.detectionConfidence, 1, 0, c.instanceMask, mutableSetOf(c.source))
+        }
         tracks.entries.removeIf { it.value.misses > config.maxMissedFrames }
-        return tracks.values.filter { it.id in matched || it.hits > 0 }.map {
+        return tracks.values.filter { it.hits > 0 }.map {
             TrackedSceneObject(it.id, it.box, it.category, it.confidence, it.mask, it.hits, it.misses, it.sources.toSet())
         }
     }
@@ -89,15 +103,40 @@ class ObjectTrackManager(private val config: V4ObjectTrackConfig = V4ObjectTrack
         val ratio = area(c.box) / area(t.box).coerceAtLeast(.0001f)
         return iou >= config.minimumMatchIou || (d <= config.maximumMatchCenterDistance && ratio in config.minimumAreaScale..config.maximumAreaScale)
     }
-    private fun score(t: MutableTrack, c: SceneObjectCandidate): Float {
-        val ar = abs(ln(area(c.box).coerceAtLeast(.0001f) / area(t.box).coerceAtLeast(.0001f)))
-        return (1f-iou(t.box,c.box))*.4f + hypot(t.box.centerX-c.box.centerX,t.box.centerY-c.box.centerY)*.25f + ar*.15f
+    private fun matchCost(t: MutableTrack, c: SceneObjectCandidate): Float {
+        val boxIou = iou(t.box, c.box)
+        val center = hypot(t.box.centerX - c.box.centerX, t.box.centerY - c.box.centerY)
+        val areaRatio = abs(ln(area(c.box).coerceAtLeast(.0001f) / area(t.box).coerceAtLeast(.0001f)))
+        val aspect = abs((c.box.width / c.box.height.coerceAtLeast(.0001f)) - (t.box.width / t.box.height.coerceAtLeast(.0001f)))
+            .coerceAtMost(2f) / 2f
+        val maskCost = t.mask?.let { previous ->
+            c.instanceMask?.let { current -> 1f - maskIou(previous, current) }
+        } ?: .5f
+        val semanticCost = if (
+            t.category != GuideObjectCategory.UNKNOWN &&
+            c.category != GuideObjectCategory.UNKNOWN &&
+            t.category != c.category
+        ) 1f else 0f
+        return (1f - boxIou) * .40f + center * .25f + areaRatio.coerceAtMost(2f) / 2f * .15f +
+            aspect * .10f + maskCost * .10f + semanticCost * .10f
     }
     private fun smooth(a: NormalizedBox,b:NormalizedBox)=NormalizedBox(
         lerp(a.left,b.left),lerp(a.top,b.top),lerp(a.right,b.right),lerp(a.bottom,b.bottom))
     private fun lerp(a:Float,b:Float)=a*(1-config.boxSmoothingAlpha)+b*config.boxSmoothingAlpha
     private fun area(b:NormalizedBox)=b.width*b.height
     private fun iou(a:NormalizedBox,b:NormalizedBox):Float { val x=(minOf(a.right,b.right)-maxOf(a.left,b.left)).coerceAtLeast(0f); val y=(minOf(a.bottom,b.bottom)-maxOf(a.top,b.top)).coerceAtLeast(0f); val inter=x*y; return inter/(area(a)+area(b)-inter).coerceAtLeast(.0001f) }
+    private fun maskIou(a: CompactConfidenceMask, b: CompactConfidenceMask): Float {
+        if (a.width != b.width || a.height != b.height) return 0f
+        var intersection = 0
+        var union = 0
+        for (index in a.values.indices) {
+            val left = a.values[index] >= .55f
+            val right = b.values[index] >= .55f
+            if (left && right) intersection++
+            if (left || right) union++
+        }
+        return if (union == 0) 0f else intersection.toFloat() / union
+    }
 }
 
 class DetectionFusion {

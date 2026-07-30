@@ -48,11 +48,6 @@ data class ObjectDetectionBatch(
     val sequenceId: Long,
 )
 
-interface SubjectSceneSegmenter {
-    fun detect(frame: AnalysisFrame): SegmentationObservation?
-    fun close()
-}
-
 /**
  * Keeps the heavier object detector off the critical path on every frame. Face
  * and pose can continue at the camera analysis cadence while objects are refreshed
@@ -203,11 +198,10 @@ class ThrottledFaceDetector(
  * corrupt asset.
  *
  * **A null result clears the cache.** This is the deliberate difference from
- * [ThrottledSubjectSceneSegmenter], which writes `?.let { lastResult = it }` and
- * therefore never forgets — once a subject has been seen it keeps being reported
- * after they leave (review_report #15). A pose cache behaving that way would hold
- * a person silhouette over an empty wall. Between refreshes the *last decision* is
- * reused, including a decision of "nobody there".
+ * The retired subject-segmentation cache had the same stale-result risk. A pose
+ * cache behaving that way would hold a person silhouette over an empty wall.
+ * Between refreshes the *last decision* is reused, including a decision of
+ * "nobody there".
  *
  * ## [phaseOffset] — why pose runs on the frames face does not
  *
@@ -259,50 +253,6 @@ class ThrottledPoseDetector(
     }
 }
 
-class ThrottledSubjectSceneSegmenter(
-    private val delegate: SubjectSceneSegmenter,
-    // Segmentation is the expensive generic-object fallback. Refresh it less
-    // often than face/object detection and reuse the last mask between runs.
-    private val refreshEveryFrames: Int = 12,
-) : SubjectSceneSegmenter {
-    init {
-        require(refreshEveryFrames >= 1)
-    }
-
-    private var frameCount = 0
-    private var lastResult: SegmentationObservation? = null
-
-    override fun detect(frame: AnalysisFrame): SegmentationObservation? {
-        frameCount++
-        if (frameCount == 1 || frameCount % refreshEveryFrames == 0) {
-            // Assign unconditionally. This used to be `?.let { lastResult = it }`,
-            // so a null never cleared the cache and the last mask survived for the
-            // rest of the session (review_report #15).
-            //
-            // Null is not an exotic case here. `SegmentationMaskReducer` returns it
-            // when the foreground covers too few cells — which is literally the
-            // subject leaving the frame — and `subjectBox` in the proposal engine
-            // prefers `segmented?.bounds` over live detection, so a stale mask
-            // outranks the truth. Panning from a person to a blank wall kept
-            // drawing an outline over nothing and kept reporting a confident
-            // subject.
-            //
-            // Between refreshes the last *decision* is still reused, including a
-            // decision of "nothing there" — that is the throttle working, not the
-            // cache going stale.
-            lastResult = delegate.detect(frame)
-        }
-        return lastResult
-    }
-
-    override fun close() = delegate.close()
-
-    fun reset() {
-        frameCount = 0
-        lastResult = null
-    }
-}
-
 /**
  * Wall time of each stage inside one [SceneDetector.detect] call, in milliseconds.
  *
@@ -318,9 +268,8 @@ class ThrottledSubjectSceneSegmenter(
  * magnitude; a reader must be able to separate them.
  *
  * The cadences are asset values, not constants — `objectRefreshEveryFrames`,
- * `segmentationRefreshEveryFrames` and `faceRefreshEveryFrames` in
- * `guide_config.json`. This KDoc used to name them ("every 12th … every 3rd") and
- * went stale the moment objects moved to config and became 1/1. Read the asset.
+ * `faceRefreshEveryFrames` in `guide_config.json`. Subject segmentation is no
+ * longer part of this live timing contract.
  *
  * [faceMs] and [poseMs] have no `fresh` companion. That is a gap rather than a
  * statement that they always run: both are throttled now, so their means mix
@@ -360,7 +309,6 @@ class SceneDetector(
     private val faceDetector: FaceDetector,
     private val poseDetector: PoseDetector = NoPoseDetector,
     private val objectDetector: ObjectSceneDetector? = null,
-    private val subjectSegmenter: SubjectSceneSegmenter? = null,
     private val customObjectDetector: CustomSceneDetector? = null,
     private val stageSink: ((DetectStageTimings) -> Unit)? = null,
     val scopeStore: SceneSearchScopeStore = SceneSearchScopeStore(),
@@ -394,13 +342,22 @@ class SceneDetector(
         // detection pipeline.
         val pose: PoseObservation? = null
         val t2 = t1
-        val detectedBatch = when {
-            customObjectDetector != null -> customObjectDetector.detectBatch(frame)
-            objectDetector != null -> objectDetector.detectBatch(frame)
-            else -> ObjectDetectionBatch(emptyList(), isFresh = true, sequenceId = 0L)
-        }
         val scopedDetector = (customObjectDetector as? ScopedObjectRefinement)
             ?: (objectDetector as? ScopedObjectRefinement)
+        val polygonScope = scopeStore.current() as? DetectionSearchScope.Polygon
+        // A polygon search is an explicit, user-scoped refinement. Do not pay
+        // for a full-frame detector and then run the ROI detector on the same
+        // CameraX frame. The ROI worker owns the three fresh observations used
+        // for polygon confirmation.
+        val detectedBatch = if (polygonScope != null && scopedDetector != null) {
+            ObjectDetectionBatch(emptyList(), isFresh = false, sequenceId = 0L)
+        } else {
+            when {
+                customObjectDetector != null -> customObjectDetector.detectBatch(frame)
+                objectDetector != null -> objectDetector.detectBatch(frame)
+                else -> ObjectDetectionBatch(emptyList(), isFresh = true, sequenceId = 0L)
+            }
+        }
         val objectBatch = if (scopeStore.current() is DetectionSearchScope.Polygon && scopedDetector != null) {
             val worker = scopedRefinementWorker ?: ScopedRefinementWorker(
                 scopedDetector,
@@ -415,17 +372,15 @@ class SceneDetector(
             )
         } else detectedBatch
         val t3 = System.nanoTime()
-        // Segmentation only refines a foreground already found by a cheaper
-        // detector. Running it on an empty wall cannot create a valid object
-        // candidate (D12), but did cost ~600ms on the CPU fallback device every
-        // twelfth frame. Return null while there is no seed so a previous mask can
-        // never survive an empty scene either.
-        val hasForegroundSeed = faces.isNotEmpty() || objectBatch.objects.isNotEmpty()
-        val segmentation = if (hasForegroundSeed) subjectSegmenter?.detect(frame) else null
-        val scopedInstances = if (scopeStore.current() is DetectionSearchScope.Polygon) {
-            (subjectSegmenter as? MlKitSubjectSegmenter)?.detectInstances(frame).orEmpty()
-        } else emptyList()
-        val polygon = (scopeStore.current() as? DetectionSearchScope.Polygon)?.region
+        // Subject Segmentation is deliberately disabled in the live path. The
+        // ML Kit API is a beta static-image API and its optional native module
+        // produced SIGSEGV on SM-S928N when invoked with CameraX frames. Keep
+        // the result contract for existing guide consumers, but do not create or
+        // call a segmenter here. Instance refinement is a separate copied-Bitmap
+        // one-shot path and must never run on ImageProxy memory.
+        val segmentation: SegmentationObservation? = null
+        val scopedInstances = emptyList<InstanceMaskObservation>()
+        val polygon = polygonScope?.region
         val fusedObjects = fuseScopedInstances(objectBatch.objects, scopedInstances, polygon)
         val t4 = System.nanoTime()
 
@@ -445,7 +400,7 @@ class SceneDetector(
                     // zero rather than wonder where it went.
                     postMs = 0.0,
                     totalMs = ms(t0, t4),
-                    segRefreshed = hasForegroundSeed && ms(t3, t4) > 1.0,
+                    segRefreshed = false,
                     objectsFresh = objectBatch.isFresh,
                     segNonNull = segmentation != null,
                 ),
@@ -466,7 +421,6 @@ class SceneDetector(
         faceDetector.close()
         poseDetector.close()
         objectDetector?.close()
-        subjectSegmenter?.close()
         customObjectDetector?.close()
     }
 
