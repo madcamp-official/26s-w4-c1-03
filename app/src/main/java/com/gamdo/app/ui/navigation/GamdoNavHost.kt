@@ -43,6 +43,7 @@ import com.gamdo.app.ui.reference.MAX_REFINE_PHOTOS
 import com.gamdo.app.ui.reference.ProfileRefineState
 import com.gamdo.app.ui.reference.ReferenceCreateSheet
 import com.gamdo.app.ui.reference.ReferenceDetailSheet
+import com.gamdo.app.ui.reference.ReferenceOverlayAlphaControl
 import com.gamdo.app.ui.reference.ReferenceOverlayLayer
 import com.gamdo.app.ui.reference.canRefine
 import com.gamdo.app.ui.reference.clampReferenceOverlayAlpha
@@ -269,23 +270,49 @@ fun GamdoNavHost(
             }
 
             composable(Routes.CAMERA) {
+                // §5-2: the *active* reference's photo, translucent, over the live
+                // preview — never the sheet's transient pick (device bug,
+                // 2026-07-29; see this function's KDoc). Gated on
+                // `shouldShowReferenceOverlay` explicitly rather than trusting
+                // `activeReferenceImageUri == null` alone — the two are kept in
+                // sync by construction, but the gate is the tested, enforced
+                // invariant and the null-check is only a consequence of it.
+                //
+                // **One gate, read twice.** The photo and its 투명도 slider are
+                // now two composables in two different places on the camera
+                // screen (the slider left the preview box — see
+                // `ReferenceOverlayAlphaControl`), and the one thing they must
+                // never do is disagree about whether the overlay is on. So the
+                // decision is made here, once, and both slots read this lambda.
+                // `referenceSelected` is the camera's own strip state and can only
+                // arrive through the slot.
+                val referenceOverlayImage: (Boolean) -> Uri? = { referenceSelected ->
+                    activeReferenceImageUri.takeIf {
+                        shouldShowReferenceOverlay(
+                            state = referenceState,
+                            hasActiveReference = activeReferenceStyle != null,
+                            referenceSelected = referenceSelected,
+                        )
+                    }
+                }
                 CameraScreen(
                     container = container,
                     onOpenAlbum = { navController.navigate(Routes.ALBUM) },
                     onOpenDelegatedShoot = onOpenDelegatedShoot,
-                    // §5-2: the *active* reference's photo, translucent, over the
-                    // live preview — never the sheet's transient pick (device
-                    // bug, 2026-07-29; see this function's KDoc). Gated on
-                    // `shouldShowReferenceOverlay` explicitly rather than trusting
-                    // `activeReferenceImageUri == null` alone — the two are kept
-                    // in sync by construction, but the gate is the tested,
-                    // enforced invariant and the null-check is only a consequence
-                    // of it.
-                    referenceLayer = {
+                    referenceLayer = { referenceSelected ->
                         ReferenceOverlayLayer(
-                            imageUri = activeReferenceImageUri.takeIf {
-                                shouldShowReferenceOverlay(referenceState, activeReferenceStyle != null)
-                            },
+                            imageUri = referenceOverlayImage(referenceSelected),
+                            alpha = overlayAlpha,
+                        )
+                    },
+                    // The slider, mounted outside the preview box. `overlayAlpha` is
+                    // the single value both halves read (P2 §2), and this callback is
+                    // the **only** write to it anywhere in the app — hiding the
+                    // overlay must not reset it, so returning to 내 감도 finds the
+                    // 투명도 the user set. `ReferenceOverlayAlphaTest` holds that.
+                    referenceOverlayControl = { referenceSelected ->
+                        ReferenceOverlayAlphaControl(
+                            imageUri = referenceOverlayImage(referenceSelected),
                             alpha = overlayAlpha,
                             onAlphaChange = { overlayAlpha = clampReferenceOverlayAlpha(it) },
                         )

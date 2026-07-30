@@ -125,6 +125,7 @@ import com.gamdo.app.ui.reference.CreateReferenceThumb
 import com.gamdo.app.ui.reference.MyReferenceThumb
 import com.gamdo.app.ui.reference.StripEntry
 import com.gamdo.app.ui.reference.buildFilterStrip
+import com.gamdo.app.ui.reference.shouldAutoSelectReference
 import com.gamdo.app.ui.theme.Ink700
 import com.gamdo.app.ui.theme.Ink800
 import com.gamdo.app.ui.theme.Ink950
@@ -324,9 +325,20 @@ private class SceneDetectorLease(
  * for other verticals; both default to empty so the host stands alone.
  *
  * @param referenceLayer drawn inside the preview box, above the camera preview
- *   and below the guide overlay — the reference translucent overlay (§5-2)
+ *   and below the guide overlay — the reference translucent *photo* (§5-2)
  *   mounts here. Receives [BoxScope] so it can size and align itself against the
- *   preview.
+ *   preview, and the current value of `referenceSelected` so the host can gate
+ *   the overlay on 내 감도 actually being the chosen style (see that state's own
+ *   comment, and `shouldShowReferenceOverlay`).
+ * @param referenceOverlayControl the 투명도 slider for [referenceLayer], mounted
+ *   **between the preview pane and the sheet slot** as a sibling in this screen's
+ *   Column — not inside the preview box, which is where it used to be and where
+ *   two layers above it made it unusable. `ReferenceOverlayAlphaControl` carries
+ *   the whole account; the short version is that the sheet-dismiss layer takes
+ *   every touch inside the preview while a sheet is open, and the aspect mask is
+ *   opaque and drawn above the reference layer. Receives the same
+ *   `referenceSelected` flag as [referenceLayer] so both halves of the overlay
+ *   answer to one gate. Renders nothing (zero height) when there is no overlay.
  * @param referenceEntry leading element of the top bar's trailing zone. Left
  *   empty by [GamdoNavHost] as of O-10 (2026-07-29): the owner moved the AI 2
  *   entry point from here into the bottom filter strip (see
@@ -358,7 +370,8 @@ fun CameraScreen(
     container: AppContainer,
     onOpenAlbum: () -> Unit,
     modifier: Modifier = Modifier,
-    referenceLayer: @Composable BoxScope.() -> Unit = {},
+    referenceLayer: @Composable BoxScope.(referenceSelected: Boolean) -> Unit = {},
+    referenceOverlayControl: @Composable (referenceSelected: Boolean) -> Unit = {},
     referenceEntry: @Composable () -> Unit = {},
     demoControls: @Composable () -> Unit = {},
     onCreateReference: () -> Unit = {},
@@ -461,6 +474,39 @@ fun CameraScreen(
     // preset below clears this; it is not itself in `presetIds`/`sessionStyleId`
     // because a reference is not a StylePreset.
     var referenceSelected by rememberSaveable { mutableStateOf(false) }
+    // Which applied 감도 this screen has already auto-selected, so it does so once
+    // per 감도 and not once per composition. `rememberSaveable`, because the thing
+    // it must not do is re-fire after the composition is rebuilt — a trip to the
+    // album and back, or a rotation — and a plain `remember` is exactly the state
+    // that is gone by then.
+    var autoSelectedReferenceKey by rememberSaveable { mutableStateOf<String?>(null) }
+    // Making a 감도 selects it. Required by the 2026-07-31 owner fix and not merely
+    // pleasant: the overlay now follows *this* flag rather than the mere existence
+    // of a reference (see [shouldShowReferenceOverlay]), so without this the sheet
+    // would say 적용됐어요 while the strip highlighted a preset, the guide kept the
+    // neutral target, the mood dot stayed out and no overlay appeared. "적용" has to
+    // mean applied.
+    //
+    // Keyed on [activeReferenceImageUri] and not on [activeReferenceStyle], because
+    // only the URI distinguishes the two ways a reference becomes active. The host
+    // sets it at the instant `apply()` succeeds and nowhere else, so it is non-null
+    // exactly for a reference applied *in this session*; the style is also restored
+    // from Room on launch, and auto-selecting on that would override the onboarding
+    // style the user actually chose (§6-2) with a 감도 they made days ago and did not
+    // ask for today.
+    //
+    // The decision itself is [shouldAutoSelectReference] rather than an `if` written
+    // here, because what it has to get right is subtle enough to be worth a JVM test:
+    // selecting once must not become selecting on every recomposition, or switching
+    // to 깔끔한 소셜 would be undone by the next frame and the owner's "다른 필터로
+    // 바꾸면 없어져야 해" would never hold at all.
+    LaunchedEffect(activeReferenceImageUri) {
+        val appliedKey = activeReferenceImageUri?.toString()
+        if (shouldAutoSelectReference(appliedKey, autoSelectedReferenceKey)) {
+            autoSelectedReferenceKey = appliedKey
+            referenceSelected = true
+        }
+    }
     // Both id lists below are derived from the *reordered* `presets`, which is what
     // keeps the selection on the same style across a reorder. See
     // `StyleSelectionTest.재정렬해도 선택된 스타일은 그대로 선택되어 있다`.
@@ -870,7 +916,11 @@ fun CameraScreen(
             onPaneRatio = { paneRatioWtoH = it },
             onPreviewFrameNs = viewModel::onPreviewFrame,
             onPreviewFpsAvailability = viewModel::onPreviewFpsAvailability,
-            referenceLayer = referenceLayer,
+            // The pane's own slot takes no argument — it does not know what a style
+            // selection is and should not learn. The flag is applied here, where it
+            // lives, so the host's gate sees it without the pane's signature growing
+            // a parameter it would only forward.
+            referenceLayer = { referenceLayer(referenceSelected) },
             // "버튼 바깥 탭 또는 버튼 재탭으로 닫는다". The layer that receives that
             // tap only exists while a sheet is up — see the parameter's KDoc for why
             // that condition is load-bearing rather than tidiness.
@@ -925,6 +975,26 @@ fun CameraScreen(
                 }
             },
         )
+
+        // 내 감도 투명도. **Above the sheet slot and outside the preview box**, and
+        // both halves of that position are the fix for the 2026-07-31 사용 불가
+        // report rather than styling.
+        //
+        // Outside the preview box, because inside it the control cannot be
+        // touched: while any sheet is open the pane's topmost child is a
+        // transparent full-size `clickable(onDismissSheet)` (see
+        // `dismissSheetOnTap` below), Compose stops the hit test at the first
+        // pointer-input node, and so a drag on the slider's thumb closed the sheet
+        // instead of moving the slider. The opaque letterbox bars are drawn above
+        // the reference layer too, which hid it outright at 4:5.
+        //
+        // Above the sheet, because that is the same structural argument the sheet
+        // slot itself makes below: a sibling earlier in this Column cannot be
+        // covered by one later in it, whatever height either turns out to have.
+        //
+        // Zero height while 내 감도 is not the selected style — see
+        // `ReferenceOverlayAlphaControl`, which renders nothing without an image.
+        referenceOverlayControl(referenceSelected)
 
         // The sheet slot. A **sibling** of the shutter row in this Column, never a
         // layer over it — that is why "시트가 열린 상태에서도 셔터는 계속 쓸 수 있다"

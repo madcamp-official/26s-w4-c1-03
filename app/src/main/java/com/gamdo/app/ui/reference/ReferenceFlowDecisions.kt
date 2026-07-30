@@ -147,7 +147,7 @@ fun <T> buildFilterStrip(
  *
  * Deliberately takes [state] and ignores it in the body — the parameter exists
  * so a test can pin the property that matters: no sheet state changes the
- * answer, only [hasActiveReference] does.
+ * answer, only [hasActiveReference] and [referenceSelected] do.
  *
  * This guards a real bug: the overlay used to be keyed on "was a photo ever
  * picked this session" (a `Uri` held next to the controller), which a flow that
@@ -173,9 +173,71 @@ fun <T> buildFilterStrip(
  * active), this correctly keeps showing the *old* active reference — there is
  * something to frame against right up until the new one replaces it, never the
  * unconfirmed candidate.
+ *
+ * ## [referenceSelected] — the second half of the gate (owner report 2026-07-31)
+ *
+ * Owning a 감도 and *shooting with* it are different things, and the overlay
+ * belongs to the second. The strip is one-style-at-a-time (see
+ * `CameraScreen`'s `referenceSelected`): picking 깔끔한 소셜 or any other preset
+ * takes 내 감도 off, the guide target goes back to neutral and the filter
+ * button's mood dot goes out — but the translucent photo and its slider stayed
+ * on screen anyway, because this gate only asked whether a reference *existed*.
+ * The owner's words for it: "필터를 내 감도가 아닌 다른 것으로 바꾸면 반투명
+ * 슬라이드바와 레퍼런스 가이드도 당연히 없어져야 해."
+ *
+ * So the overlay now follows the *selected* style, not the stored one. Both
+ * halves of the overlay — the photo and the 투명도 slider — read this one
+ * answer, which is why they cannot come apart: `ReferenceOverlayLayer` and
+ * `ReferenceOverlayAlphaControl` both render nothing for a null image.
+ *
+ * **Hiding is not resetting.** P2's §2 requirement is explicit — "필터 선택
+ * 상태나 시트 닫힘으로 값을 다시 초기화하지 않는다" — and the shape of this
+ * function is what keeps the two apart: it decides *visibility* and has no
+ * access to the alpha at all, so no amount of filter switching can move the
+ * value. Coming back to 내 감도 finds the user's own 투명도 where they left it.
+ * `ReferenceOverlayAlphaTest` holds the other end of that: exactly one line in
+ * the whole app writes `overlayAlpha`, and it is the slider's callback.
  */
-fun shouldShowReferenceOverlay(state: ReferenceCreateState, hasActiveReference: Boolean): Boolean =
-    hasActiveReference
+fun shouldShowReferenceOverlay(
+    state: ReferenceCreateState,
+    hasActiveReference: Boolean,
+    referenceSelected: Boolean,
+): Boolean = hasActiveReference && referenceSelected
+
+/**
+ * Whether finishing 내 감도 만들기 should make that 감도 the camera's selected
+ * style — the companion to [shouldShowReferenceOverlay]'s `referenceSelected`.
+ *
+ * Gating the overlay on the *selection* creates a hole at the one moment the
+ * user most expects to see it: the strip's 내 감도 slot appears unselected the
+ * instant it is created, so the sheet would close on 적용됐어요 with a preset
+ * still highlighted, the neutral guide target still published, the filter
+ * button's mood dot still out, and no overlay. "적용" has to mean applied, so
+ * applying selects.
+ *
+ * @param appliedKey identifies the 감도 that is active *because this session
+ *   applied it* — in practice `activeReferenceImageUri.toString()`, which
+ *   `GamdoNavHost` sets at the instant `apply()` succeeds and nowhere else.
+ *   Null means either no reference or one merely restored from Room on launch,
+ *   and a restored one must **not** be selected: that would silently override
+ *   the onboarding style the user chose (§6-2) with a 감도 they made days ago.
+ * @param lastAutoSelectedKey what this screen has already auto-selected. Held in
+ *   `rememberSaveable` state by the caller, and it is the whole reason this is a
+ *   function rather than a null-check: "select it once" and "select it on every
+ *   recomposition" differ only here, and the second one makes the owner's
+ *   "필터를 내 감도가 아닌 다른 것으로 바꾸면 없어져야 해" impossible — every
+ *   attempt to pick a preset would be undone on the next frame. It must also
+ *   survive a rebuilt composition (album round trip, rotation), or coming back
+ *   to the camera would re-select a 감도 the user had deliberately switched off.
+ *
+ * Known and accepted: re-picking the *same* photo while that photo's 감도 is
+ * already the applied one does not re-select it, because the key has not
+ * changed. It is a replace that replaces nothing, and paying for it would mean
+ * carrying a per-apply counter through the host for a case the user cannot tell
+ * apart from having done nothing.
+ */
+fun shouldAutoSelectReference(appliedKey: String?, lastAutoSelectedKey: String?): Boolean =
+    appliedKey != null && appliedKey != lastAutoSelectedKey
 
 // ---- what each ReferenceCreateState renders ---------------------------------
 
