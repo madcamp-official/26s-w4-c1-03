@@ -35,6 +35,34 @@ import kotlinx.coroutines.coroutineScope
  * 512-sample tone curve, and the hue tables. That is under a millisecond against a
  * pass measured in tens, so it is paid rather than engineered around; keeping
  * [FilterEngine.apply] self-contained is worth more than the last few percent.
+ *
+ * ## Measure this in a non-debuggable build, or do not measure it
+ *
+ * On SM-G970N, one 1053×1315 preview pass (2026-07-30, 8 slices):
+ *
+ * | build | first render | warm |
+ * |---|---|---|
+ * | `debuggable = true` | 940ms | **~1000ms** |
+ * | `debuggable = false` | 150ms | **29–55ms** |
+ *
+ * Nothing but the `debuggable` flag differs. ART restricts its optimising JIT for
+ * debuggable apps, and this is a scalar per-pixel Kotlin loop, so it takes that
+ * penalty at full strength — roughly **30×**. The identity filter costs the same as
+ * `night_street`, which is the tell: the cost is the loop being interpreted, not
+ * anything a recipe does.
+ *
+ * Two consequences, both easy to get wrong:
+ *
+ *  1. **A slow filter in a debug build is not evidence of a slow filter.** This was
+ *     investigated once as a regression (owner report, 2026-07-30, "보정이 다시
+ *     느려졌어") and the answer was the build type. Reproduce with
+ *     `isDebuggable = false` in the debug block before changing any code here.
+ *  2. **The Canvas path is immune and this one is not.** `LocalEditor.render`
+ *     measured 159ms on the *same* debuggable build, because its work happens in
+ *     Skia rather than in Kotlin. That is not an argument for moving the filters
+ *     onto `ColorMatrix` — `PreviewColorMatrixTest` shows an affine matrix cannot
+ *     follow these presets (up to 89 levels off on `clean_social`) — but it does
+ *     explain why the two pipelines look so different under a debugger.
  */
 suspend fun applyFilterInParallel(
     pixels: IntArray,
