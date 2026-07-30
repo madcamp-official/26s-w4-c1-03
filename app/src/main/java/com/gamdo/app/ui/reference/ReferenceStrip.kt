@@ -102,7 +102,7 @@ fun CreateReferenceThumb(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    StripThumb(label = "감도 만들기", shape = shape, size = size, selected = false, onClick = onClick, modifier = modifier) {
+    StripThumb(label = ReferenceLabels.CREATE, shape = shape, size = size, selected = false, onClick = onClick, modifier = modifier) {
         Text(
             text = "+",
             color = Sage,
@@ -158,16 +158,11 @@ fun MyReferenceThumb(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // `내 감도`, not `내 레퍼런스`: this is the slot the user's own 감도 occupies, and
-    // 레퍼런스 is our word for it, not theirs. `ResultFilterStateHolder` already names
-    // its reference entry `내 감도`, so a screen that takes its labels from the holder
-    // and a strip that hard-codes a different word would disagree about one thing.
-    // See [CreateReferenceThumb] for the other half of the same decision.
-    StripThumb(label = "내 감도", shape = shape, size = size, selected = selected, onClick = onSelect, modifier = modifier) {
+    StripThumb(label = ReferenceLabels.ACTIVE, shape = shape, size = size, selected = selected, onClick = onSelect, modifier = modifier) {
         if (imageUri != null) {
             AsyncImage(
                 model = imageUri,
-                contentDescription = "내 감도",
+                contentDescription = ReferenceLabels.ACTIVE,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
