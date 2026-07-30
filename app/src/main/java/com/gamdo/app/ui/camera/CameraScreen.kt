@@ -188,6 +188,13 @@ private val SHEET_CORNER = 20.dp
  */
 private val IconInactive = TextHi.copy(alpha = 0.85f)
 
+/**
+ * `background:rgba(10,10,11,0.45)` — the redesign's rule for a control that sits **on**
+ * the photo: [Ink950] at 45%, the bottom of the spec's 45-62% band. Ghost or scrim
+ * only; never an amber fill.
+ */
+private val OnPhotoScrim = Ink950.copy(alpha = 0.45f)
+
 /** `background:rgba(255,255,255,0.08)` — the shutter row's ghost discs. */
 private val OverPhotoDisc = Color.White.copy(alpha = 0.08f)
 
@@ -2441,7 +2448,10 @@ private fun ZoomStops(
                 modifier = Modifier
                     .size(if (isActive) 34.dp else 30.dp)
                     .clip(CircleShape)
-                    .background(Color(0x99141614))
+                    // Same over-photo rule as [RescanButton]; same stale green-tinted
+                    // charcoal replaced. These two sit on the same row, so leaving one
+                    // tinted next to a corrected one would be more visible than either.
+                    .background(OnPhotoScrim)
                     .then(if (isActive) Modifier.border(1.8.dp, Amber, CircleShape) else Modifier)
                     .clickable { onSelect(stop) },
                 contentAlignment = Alignment.Center,
@@ -2474,11 +2484,13 @@ private fun formatZoomStop(stop: Float): String =
  * stops stay centred, so this reads as a sibling affordance rather than a fourth
  * stop — sharing a row with them but never sitting between them.
  *
- * The glyph is a miniature of the app's own target bracket, drawn rather than
- * typed. A refresh arrow would be the conventional choice, but D2 bans direction
- * arrows from this screen and the four corner marks say "composition" in the same
- * vocabulary the overlay already uses. Drawing it also means it cannot fail to
- * render on a device whose font lacks the codepoint.
+ * The glyph **is** the circular arrow now (owner's redesign, 2026-07-30). It used to be
+ * a miniature of the app's own target bracket, on the reasoning that "D2 bans direction
+ * arrows from this screen"; the ban is on arrows that tell the user which way to *move*,
+ * and a refresh arrow is not one. The design draws this shape and the design is final.
+ *
+ * It also stops competing with the 가이드 icon, which is now four corner brackets — two
+ * controls with the same glyph and different jobs was the worse problem.
  */
 @Composable
 private fun RescanButton(modifier: Modifier, onClick: () -> Unit) {
@@ -2486,24 +2498,22 @@ private fun RescanButton(modifier: Modifier, onClick: () -> Unit) {
         modifier = modifier
             .size(34.dp)
             .clip(CircleShape)
-            .background(Color(0x99141614))
+            // The redesign's rule for a control sitting **on** the photo: Ink950 at
+            // 45%, the bottom of the spec's 45-62% band. Was `Color(0x99141614)`, a
+            // green-tinted charcoal from before the token replacement — the one hue
+            // besides the accent that the new palette is supposed to have removed.
+            .background(OnPhotoScrim)
+            .semantics { contentDescription = "재탐색" }
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(modifier = Modifier.size(15.dp)) {
-            val stroke = 1.6.dp.toPx()
-            val arm = size.minDimension * 0.34f
-            for (right in listOf(false, true)) {
-                for (bottom in listOf(false, true)) {
-                    val x = if (right) size.width else 0f
-                    val y = if (bottom) size.height else 0f
-                    val dx = if (right) -arm else arm
-                    val dy = if (bottom) -arm else arm
-                    drawLine(TextMid, Offset(x, y), Offset(x + dx, y), stroke, StrokeCap.Round)
-                    drawLine(TextMid, Offset(x, y), Offset(x, y + dy), stroke, StrokeCap.Round)
-                }
-            }
-        }
+        StrokeIcon(
+            pathData = CameraIconPaths.RESCAN,
+            viewBox = 15f,
+            size = 15.dp,
+            strokeWidth = 1.5f,
+            color = IconInactive,
+        )
     }
 }
 
