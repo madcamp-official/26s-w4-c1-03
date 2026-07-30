@@ -2,6 +2,7 @@ package com.gamdo.app.detect
 
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -107,7 +108,7 @@ class ObjectDetectorWiringTest {
      * parameters — one added parameter would quietly hollow this out.
      */
     @Test
-    fun `the ML Kit face and pose detectors are still wired`() {
+    fun `the ML Kit face detector is wired and pose is not`() {
         fun constructedAnywhere(name: String): Boolean = mainSources.any { file ->
             codeOf(file).lines().any { line ->
                 line.contains("$name(") &&
@@ -116,6 +117,6 @@ class ObjectDetectorWiringTest {
         }
 
         assertTrue("face detection must stay wired", constructedAnywhere("MlKitFaceDetector"))
-        assertTrue("pose detection must stay wired", constructedAnywhere("MlKitPoseDetector"))
+        assertFalse("pose detection must not be wired in V3.1", constructedAnywhere("MlKitPoseDetector"))
     }
 }

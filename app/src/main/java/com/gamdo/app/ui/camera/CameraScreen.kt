@@ -1592,12 +1592,10 @@ private inline fun <T> traceColdStart(label: String, block: () -> T): T {
 
 private fun logDetection(result: DetectionResult) {
     val faceN = result.faces.size
-    val poseN = result.pose?.landmarks?.size ?: 0
     val f = result.faces.firstOrNull()
     Log.d(
         TAG,
-        "faces=$faceN pose=$poseN " +
-            "poseConf=%.2f ".format(result.pose?.averageInFrameLikelihood ?: 0f) +
+        "faces=$faceN " +
             if (f != null) {
                 "face0 box=(%.2f,%.2f,%.2f,%.2f) eyeL=%s eyeR=%s rollZ=%.1f".format(
                     f.box.left, f.box.top, f.box.right, f.box.bottom,

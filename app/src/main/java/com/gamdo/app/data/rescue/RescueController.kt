@@ -56,7 +56,19 @@ class RescueController(private val repository: RescueRepository) {
     suspend fun submit(image: File, captureId: String?, captureRef: String, operation: JsonObject, style: JsonObject = JsonObject(emptyMap())) {
         android.util.Log.d("RescueController", "editJobSubmitted capture=${captureId != null} operation=${operation["type"]}")
         mutableState.value = RescueState.Submitting
-        runCatching { repository.submitAndPoll(image, captureId, captureRef, operation, style) }
+        runCatching {
+            repository.submitAndPoll(
+                image = image,
+                captureId = captureId,
+                captureRef = captureRef,
+                operation = operation,
+                style = style,
+                onPolling = {
+                    android.util.Log.d("RescueController", "editJobPolling")
+                    mutableState.value = RescueState.Polling
+                },
+            )
+        }
             .onSuccess {
                 android.util.Log.d("RescueController", "editJobCompleted job=${it.jobId} candidates=${it.downloaded.size}")
                 mutableState.value = RescueState.Candidates(it.jobId, it.results, it.downloaded)

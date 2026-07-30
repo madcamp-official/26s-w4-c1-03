@@ -56,9 +56,14 @@ class RescueRepository(
         captureRef: String,
         operation: JsonObject,
         style: JsonObject,
+        onPolling: () -> Unit = {},
     ): RescueRunResult = withContext(Dispatchers.IO) {
         val jobId = "job_${Ulid.generate()}"
         api.createEditJob(jobId, captureRef, kotlinx.serialization.json.JsonArray(listOf(operation)), style, 2, image)
+        // The upload has been accepted. From this point onward the UI must not
+        // remain in the short-lived `Submitting` state: the server job is now
+        // being polled and the cancel/progress UI needs to reflect that fact.
+        onPolling()
         val started = System.currentTimeMillis()
         var status: EditJobStatus
         while (true) {

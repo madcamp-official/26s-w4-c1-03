@@ -23,7 +23,7 @@ class FrameFeatureCalculatorTest {
     }
 
     @Test
-    fun `pose landmarks create a clamped person box`() {
+    fun `pose landmarks are ignored without a face or person box`() {
         val pose = PoseObservation(
             landmarks = listOf(
                 PoseLandmarkPoint(0, 0.2f, 0.25f, 0.9f),
@@ -34,12 +34,12 @@ class FrameFeatureCalculatorTest {
         )
         val result = calculator.calculate(FrameFeatureInput(DetectionResult(emptyList(), pose)))
 
-        assertEquals(NormalizedBox(0.2f, 0f, 1f, 0.75f), result.personBox)
-        assertEquals(0.8f * 0.75f, result.personAreaRatio, 0.0001f)
+        assertNull(result.personBox)
+        assertEquals(0f, result.poseConfidence, 0.0001f)
     }
 
     @Test
-    fun `low likelihood landmarks are excluded from person box`() {
+    fun `pose likelihood does not create a person box`() {
         val pose = PoseObservation(
             landmarks = listOf(
                 PoseLandmarkPoint(0, 0.1f, 0.1f, 0.2f),
@@ -49,7 +49,7 @@ class FrameFeatureCalculatorTest {
         )
         val result = calculator.calculate(FrameFeatureInput(DetectionResult(emptyList(), pose)))
 
-        assertEquals(NormalizedBox(0.4f, 0.4f, 0.4f, 0.4f), result.personBox)
+        assertNull(result.personBox)
     }
 
     @Test
@@ -126,7 +126,7 @@ class FrameFeatureCalculatorTest {
     }
 
     @Test
-    fun `sensor values and pose confidence are forwarded`() {
+    fun `sensor values are forwarded without pose confidence`() {
         val pose = PoseObservation(emptyList(), 1.4f)
         val result = calculator.calculate(
             FrameFeatureInput(
@@ -139,7 +139,7 @@ class FrameFeatureCalculatorTest {
 
         assertEquals(-4.5f, result.tiltDeg, 0.0001f)
         assertEquals(7.25f, result.pitchDeg, 0.0001f)
-        assertEquals(1f, result.poseConfidence, 0.0001f)
+        assertEquals(0f, result.poseConfidence, 0.0001f)
         assertEquals(0f, result.shake, 0.0001f)
     }
 
