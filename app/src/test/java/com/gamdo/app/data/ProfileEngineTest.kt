@@ -35,7 +35,12 @@ class ProfileEngineTest {
         )
         val film = ProfileEngine.build(listOf(card("film", .35f, .7f, 5100f)), presets)
         assertNotEquals(bright.recommendedPresetIds, film.recommendedPresetIds)
-        assertTrue(bright.summary.contains("밝은"))
+        // Was `contains("밝은")`, which pinned one phrasing rather than the fact.
+        // The light line now also carries the colour temperature, so a bright card
+        // at 6200K reads "밝고 서늘한 빛" — still bright, and the assertion that
+        // broke was the wording, not the behaviour.
+        assertTrue("bright picks must read as bright, was: ${bright.summary}", bright.summary.startsWith("밝"))
+        assertTrue("dim picks must not read as bright, was: ${film.summary}", !film.summary.startsWith("밝"))
     }
 
     @Test fun `confidence drops when selected cards conflict`() {

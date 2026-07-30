@@ -128,10 +128,75 @@ object ProfileEngine {
         values[key] = current.copy(mean = current.mean + ALPHA * delta)
     }
 
-    private fun summary(composition: Map<String, ProfileDimension>, color: Map<String, ProfileDimension>): String {
-        val light = if ((color["brightness"]?.mean ?: 0.5f) >= 0.5f) "밝은 자연광" else "차분한 빛"
-        val framing = if ((composition["backgroundRatio"]?.mean ?: 0.5f) >= 0.5f) "넓은 배경" else "피사체 중심"
-        return "$light, $framing, 자연스러운 인물 배치"
+    /**
+     * The three lines under 당신의 감도를 저장했어요, split on `", "` by the screen.
+     *
+     * ## Every line has to move
+     *
+     * The previous version could produce four summaries in total: two states of
+     * brightness crossed with two of background, and then a **literal constant**,
+     * `"자연스러운 인물 배치"`, which appeared no matter what the user picked —
+     * including for someone who chose five photographs with no person in them.
+     * Under a heading that says *your* 감도, a line that is the same for everybody
+     * is the same defect `ProfilePalette` was written to remove from the swatches
+     * (AGENTS.md §7-6).
+     *
+     * So each line now reads a different axis, and no axis is read twice: light
+     * from brightness × temperature, shape from how much frame the background
+     * takes, colour from saturation × contrast. Picking dark cafés and picking
+     * bright windows cannot land on the same sentence.
+     *
+     * These are descriptions, not measurements — the numbers the recommendation
+     * runs on are untouched. The thresholds are chosen so the bands are reachable
+     * with the bundled deck rather than being evenly spaced: `CardRepositoryTest`
+     * pins that the darkest five and the brightest five summarise differently.
+     */
+    private fun summary(composition: Map<String, ProfileDimension>, color: Map<String, ProfileDimension>): String =
+        listOf(
+            lightPhrase(color["brightness"]?.mean ?: 0.5f, color["colorTemperature"]?.mean ?: 5500f),
+            framingPhrase(composition["backgroundRatio"]?.mean ?: 0.5f),
+            colorPhrase(color["saturation"]?.mean ?: 0.5f, color["contrast"]?.mean ?: 0.5f),
+        ).joinToString(", ")
+
+    /**
+     * Brightness names the phrase, temperature qualifies it.
+     *
+     * Warm and cool are deliberately asymmetric at the dark end: an unlit room and
+     * a night street are both dark, and what separates them for a photographer is
+     * the colour of what little light there is.
+     */
+    private fun lightPhrase(brightness: Float, kelvin: Float): String {
+        val warm = kelvin < 4800f
+        val cool = kelvin > 6000f
+        return when {
+            brightness >= 0.50f -> if (warm) "밝고 따뜻한 빛" else if (cool) "밝고 서늘한 빛" else "밝은 자연광"
+            brightness >= 0.28f -> if (warm) "차분하고 따뜻한 빛" else if (cool) "차분하고 서늘한 빛" else "차분한 빛"
+            else -> if (warm) "어둡고 따뜻한 조명" else if (cool) "어둡고 푸른 밤빛" else "어두운 빛"
+        }
+    }
+
+    /** How much of the frame is *not* the subject — the one composition axis a viewer names unprompted. */
+    private fun framingPhrase(backgroundRatio: Float): String = when {
+        backgroundRatio >= 0.62f -> "여백이 넓은 구도"
+        backgroundRatio >= 0.40f -> "균형 잡힌 구도"
+        else -> "피사체 중심"
+    }
+
+    /**
+     * Saturation decides the noun, contrast sharpens it.
+     *
+     * Near-zero saturation gets its own phrase rather than being folded into
+     * "차분한": someone who picked black-and-white photographs has said something
+     * specific, and calling it "subdued colour" would be describing a different
+     * choice back to them.
+     */
+    private fun colorPhrase(saturation: Float, contrast: Float): String {
+        val crisp = contrast >= 0.75f
+        return when {
+            saturation < 0.15f -> if (crisp) "또렷한 무채색" else "거의 무채색"
+            saturation >= 0.45f -> if (crisp) "진하고 또렷한 색" else "진한 색감"
+            else -> if (crisp) "또렷한 색감" else "차분한 색감"
+        }
     }
 }
 
