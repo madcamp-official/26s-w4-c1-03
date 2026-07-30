@@ -1056,20 +1056,25 @@ fun CameraScreen(
                             // Geometry evidence line, DEBUG only. **Measurement, not
                             // behaviour** — nothing reads this back.
                             //
-                            // It settled the full-bleed question from a single photo:
-                            // `saved.width == buffer.width` means CameraX's viewport
-                            // is not cropping the width and the preview shows less
-                            // than the file holds. Measured 2026-07-30 on SM-G970N —
-                            // 3024×3780 rear, 2736×3420 front, both exactly 4:5 at the
-                            // sensor's full width, so there is no viewport width crop.
+                            // `saved.width` against `pane` says whether CameraX's
+                            // viewport is cropping the width. **It has answered both
+                            // ways on the same device**, 2026-07-30 on SM-G970N, at
+                            // 4:5:
                             //
-                            // That measurement is what retired `SubjectProjection`'s
-                            // two-ratio inference (2026-07-30): it had written its own
-                            // prediction up as evidence, and was misplacing the
-                            // editor's subject box by up to 6.3% of the frame at the
-                            // edges. It reads `captured.geometry` now — the crop that
-                            // ran — so `pane` below is measurement only and nothing
-                            // reads it back.
+                            //   before the redesign merges  3024×3780  full sensor
+                            //   after them (5 shots)        2610×3263  = 4032 × 0.6475
+                            //
+                            // 2610 is the pane's aspect exactly, so the preview mask
+                            // being opaque bars over a pane-filling PreviewView is what
+                            // decides it. Do not treat either number as settled without
+                            // re-reading this line on the build in hand.
+                            //
+                            // That instability is what retired `SubjectProjection`'s
+                            // two-ratio inference: it was exact in the second state and
+                            // out by up to 0.084 of the frame in the first, with no test
+                            // able to say which was live. It reads `captured.geometry`
+                            // now — the crop that ran — so `pane` below is measurement
+                            // only and nothing reads it back.
                             if (BuildConfig.DEBUG) {
                                 Log.d(
                                     LATENCY_TAG,

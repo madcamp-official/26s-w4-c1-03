@@ -55,6 +55,13 @@ class SubjectProjectionTest {
     private val bufH = 3024
     private val rot = 90
 
+    /**
+     * The viewport rect the current build produces, in **buffer** coordinates. Under
+     * the 90° turn an upright column is a buffer row, so the pane's 2610-wide upright
+     * window is `y ∈ [207, 2817)` here, centred: (3024 − 2610) / 2 = 207.
+     */
+    private val PANE_CROP = CropRect(0, 207, bufW, 2817)
+
     private fun devicePlan(
         targetRatioWtoH: Float?,
         mirror: Boolean = false,
@@ -108,18 +115,45 @@ class SubjectProjectionTest {
     // ------------------------------------------------------------------- the fix
 
     /**
-     * The defect, at the two points it was measured at.
+     * The viewport as the device produces it **today**: 2610 of the upright frame's
+     * 3024, which is 4032 × the pane's 0.6475. Measured five times on SM-G970N,
+     * 2026-07-30, cold start and warm, `saved=2610x3263`.
      *
-     * The viewport takes no width on this device, so a subject's x must come through
-     * **untouched**. The old two-crop inference moved it: 0.75 → 0.790 and
-     * 0.90 → 0.963, an error of 4.0% and 6.3% of the frame. y is a single centre crop
-     * of 126px each end, so 0.30 → 0.2867 and 0.15 → 0.1270 (the inference said
-     * 0.253 and 0.068).
-     *
-     * If a pane-aspect term is ever reintroduced, x moves and this fails.
+     * `captureGeometryFor` must reproduce those exact dimensions from this rect, and
+     * the projection must follow it — 0.75 → 0.7896, 0.30 → 0.2530. In this state the
+     * retired two-ratio inference gives the same answers to within 0.00027, so this
+     * test is **not** the one that shows the difference. It is here so the plan the
+     * shutter is actually building stays pinned to a number somebody measured.
      */
     @Test
-    fun `a 4 by 5 capture keeps x exactly, because no viewport crop happened`() {
+    fun `the plan the device builds today is the pane-cropped one`() {
+        val plan = devicePlan(0.8f, crop = PANE_CROP)
+        assertEquals(2610, plan.outWidth)
+        assertEquals(3263, plan.outHeight)
+
+        val out = SubjectProjection.project(pointBox(0.75f, 0.30f), plan, bufW, bufH)!!
+        assertEquals(0.7896f, out.centerX, 1e-3f)
+        assertEquals(0.2530f, out.centerY, 1e-3f)
+    }
+
+    /**
+     * The **other** viewport state this device has been observed in, and the one the
+     * inference was wrong in: builds before the redesign merges saved `3024x3780` at
+     * 4:5 — the full sensor width, no viewport crop at all.
+     *
+     * Here x must come through untouched. The two-ratio inference moved it anyway,
+     * because it derived the crop from the pane rather than reading it: 0.75 → 0.790
+     * and 0.90 → 0.963, and up to 0.084 at the frame corner. y is a single centre crop
+     * of 126px each end, so 0.30 → 0.2867 and 0.15 → 0.1270 (the inference said 0.253
+     * and 0.068 — which are, not coincidentally, this file's *other* expected values,
+     * the ones that are correct when the viewport really does crop).
+     *
+     * That is the whole point: the same two ratios cannot be right in both states, and
+     * the plan is right in both. If a pane-aspect term is ever reintroduced, x moves
+     * here and this fails.
+     */
+    @Test
+    fun `the same subject in the no-viewport-crop state keeps x exactly`() {
         val plan = devicePlan(0.8f)
         assertEquals("the plan must be the measured one", 3024, plan.outWidth)
         assertEquals(3780, plan.outHeight)
@@ -148,15 +182,19 @@ class SubjectProjectionTest {
     }
 
     /**
-     * 16:9 **does** crop the width — 0.5625 is narrower than the sensor's 0.75, so
-     * the aspect crop takes 378px off each side and x moves. That is not a
-     * contradiction of the test above: the difference comes from the plan, which is
-     * the entire change. It also explains why 16:9 was the wrong ratio to try to see
-     * the old defect with — the phantom pane crop was masked by a real, larger one,
-     * and 16:9 measured 0% error while 4:5 measured 6.3%.
+     * 16:9 **does** crop the width even with no viewport rect — 0.5625 is narrower
+     * than the sensor's 0.75, so the aspect crop takes 378px off each side and x
+     * moves. That is not a contradiction of the test above: the difference comes from
+     * the plan, which is the entire change.
+     *
+     * It is also why 16:9 could not be used to see the old defect. The aspect crop
+     * always binds at 0.5625, so the viewport term is masked whether it is real or
+     * phantom — 16:9 measures **0 difference between the two models in both viewport
+     * states**, while 4:5 separates them by 0.084. Device confirmation: `saved=2268x4032`
+     * appeared identically before and after the viewport behaviour changed.
      */
     @Test
-    fun `16 by 9 moves x and 4 by 5 does not, both read off the plan`() {
+    fun `16 by 9 moves x with no viewport rect at all, read off the plan`() {
         val wide = devicePlan(0.5625f)
         assertEquals(2268, wide.outWidth)
         assertEquals(4032, wide.outHeight)

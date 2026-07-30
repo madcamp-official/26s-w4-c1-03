@@ -21,36 +21,42 @@ import com.gamdo.app.edit.SubjectBox
  * real term. The KDoc even carried a device measurement for it: "sensor 3024×4032,
  * pane 1080×1500, saved file **2904×3630** … Exact."
  *
- * That number was never measured. It was the model's own prediction written up as
- * evidence, and the real measurement disagrees. From `CameraScreen`'s
- * `CaptureLatency geometry` line on SM-G970N, 2026-07-30: **3024×3780** rear and
- * **2736×3420** front — both exactly 4:5 at the sensor's *full width*. The viewport
- * crop takes no width at all on this device, so the projection was applying two
- * centre crops where the pixels went through one.
+ * That number was never measured; it was the model's own prediction written up as
+ * evidence. What retired the inference, though, is not that one figure being wrong.
+ * It is that **the thing it was inferring changed underneath it, on one device,
+ * within one day, and nothing noticed.**
  *
- * The error was quantified before this was changed (owner decision 2026-07-30):
+ * Two readings of `CameraScreen`'s `CaptureLatency geometry` line, SM-G970N,
+ * 2026-07-30, at 4:5:
  *
- * | 비율 | subject | inferred x,y | actual x,y | error |
- * |---|---|---|---|---|
- * | 4:5 | centre | 0.500, 0.500 | 0.500, 0.500 | 0%, 0% |
- * | 4:5 | upper right | 0.790, 0.253 | 0.750, 0.287 | 4.0%, 3.4% |
- * | 4:5 | at the edge | 0.963, 0.068 | 0.900, 0.127 | 6.3%, 5.9% |
- * | 1:1 | at the edge | 0.963, **−0.041** | 0.900, 0.033 | 6.3%, 7.4% |
- * | 16:9 | anywhere | — | — | 0% |
+ * | build | saved | what the viewport did |
+ * |---|---|---|
+ * | before the redesign merges | **3024×3780** (and 2736×3420 front) | took no width — full sensor |
+ * | after them, 5 shots, cold and warm | **2610×3263** | took the pane's 0.6475 |
  *
- * Zero at the centre, worst at the edges, and at 1:1 the inferred box left the
- * frame entirely. 16:9 shows nothing because 0.5625 is *narrower* than the pane's
- * 0.6475, so the aspect crop always binds and the phantom pane crop is masked —
- * which is why 16:9 was the wrong ratio to try to see this with, and 4:5 the right
- * one.
+ * 2610 is 4032 × 0.6475 exactly, so in the second state the pane aspect *is* the
+ * viewport crop and the old inference is right — measured max error across the whole
+ * frame **0.00027**, which is integer rounding. In the first state it was wrong by
+ * up to **0.084** at 4:5 and **0.105** at 1:1, both at the frame corner, and at 1:1
+ * it put the box outside the photograph (y = −0.041 at a sampled edge point).
+ * Nothing downstream rejects a negative normalized coordinate; §4-1 would have
+ * centred a crop on it.
+ *
+ * Neither state is exotic and both came from this repository. A model that is exact
+ * in one and 10% out in the other, with no test able to tell which one is live, is
+ * the defect — the 6% was only the symptom.
+ *
+ * 16:9 shows **0% in both states**, because 0.5625 is narrower than the pane's
+ * 0.6475, so the aspect crop always binds and the viewport term is masked whether it
+ * is real or phantom. That is why 16:9 was the wrong ratio to try to see any of this
+ * with, and 4:5 the right one.
  *
  * So the inference is gone. [captureGeometryFor][com.gamdo.app.camera.captureGeometryFor]
  * already computes the exact rectangle the shutter reads — it has to, the pixels
  * come from it — and `CameraController.capture` now hands that plan back with the
  * bitmap. This function reads the crop that *happened* instead of predicting the
- * crop that would. It is therefore right on a device whose viewport does narrow the
- * width too, which neither the old model nor "pass the pane ratio as a no-op" would
- * have been.
+ * crop that would, so it is right in both states above and in the one after them,
+ * which is the property the old signature could not have.
  *
  * ## Coordinate spaces
  *
