@@ -7,6 +7,13 @@ import android.os.Looper
 import android.util.Log
 import android.widget.Toast
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -14,6 +21,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -21,7 +29,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -55,6 +63,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -63,10 +72,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.LifecycleOwner
@@ -95,6 +106,7 @@ import com.gamdo.app.data.preset.StylePreset
 import com.gamdo.app.detect.DetectionResult
 import com.gamdo.app.guide.toSceneObservation
 import com.gamdo.app.detect.toAnalysisFrame
+import com.gamdo.app.guide.SceneSearchScope
 import com.gamdo.app.guide.StyleTarget
 import com.gamdo.app.guide.toStyleTarget
 import com.gamdo.app.ui.components.moodBrush
@@ -103,11 +115,11 @@ import com.gamdo.app.ui.reference.MyReferenceThumb
 import com.gamdo.app.ui.reference.StripEntry
 import com.gamdo.app.ui.reference.buildFilterStrip
 import com.gamdo.app.ui.theme.Ink700
+import com.gamdo.app.ui.theme.Ink800
 import com.gamdo.app.ui.theme.Ink950
 import com.gamdo.app.ui.theme.TextHi
 import com.gamdo.app.ui.theme.TextMid
 import com.gamdo.app.ui.theme.TextLow
-import com.gamdo.app.ui.theme.OnAmber
 import com.gamdo.app.ui.theme.Amber
 import kotlin.math.abs
 import kotlinx.coroutines.CancellationException
@@ -141,12 +153,85 @@ private const val LATENCY_TAG = "CaptureLatency"
 /** 52dp thumbnail + 4dp gap + label, fixed so the preview pane is laid out once. */
 private val STYLE_STRIP_HEIGHT = 78.dp
 
+// ---- redesign dimensions (owner's final UI redesign, 2026-07-30) ---------------
+//
+// Every value here is the mock's, and they are named rather than inlined so a diff
+// against `감도 리디자인.dc.html` is a list of numbers in one place. The redesign is
+// explicit that the horizontal margin is 20dp everywhere **except the strip**, which
+// is 18 — that one-off is real and is why there are two constants.
+
+/** `height:50px` on the top bar. */
+private val TOP_BAR_HEIGHT = 50.dp
+
+/** `padding:0 20px` — the screen's horizontal margin. */
+private val SCREEN_H_PADDING = 20.dp
+
+/** `padding:0 18px` — the filter strip only. */
+private val STRIP_H_PADDING = 18.dp
+
+/** `gap:24px` between the top bar's right-hand icons. */
+private val TOP_BAR_ICON_GAP = 24.dp
+
+/** The redesign's floor for anything pressable; the glyphs inside are 19-21dp. */
+private val MIN_TOUCH_TARGET = 44.dp
+
+/** `border-radius:20px 20px 0 0` on both bottom sheets. */
+private val SHEET_CORNER = 20.dp
+
+/**
+ * `rgba(244,241,234,0.85)` — the stroke every inactive glyph uses.
+ *
+ * [TextHi] at 85%, not [TextLow]. The redesign has one signal for state and it is
+ * amber; dimming an inactive icon as well would give it two, and a 가이드 icon that
+ * is both grey *and* not-amber reads as disabled rather than off. No new colour
+ * constant (D11-5) — this is a token at an alpha.
+ */
+private val IconInactive = TextHi.copy(alpha = 0.85f)
+
+/** `background:rgba(255,255,255,0.08)` — the shutter row's ghost discs. */
+private val OverPhotoDisc = Color.White.copy(alpha = 0.08f)
+
+/** `border:1px rgba(255,255,255,0.16)` — the album tile's hairline. */
+private val AlbumTileBorder = Color.White.copy(alpha = 0.16f)
+
+/**
+ * `background:rgba(232,195,139,0.16)` — the filter button while its sheet is up.
+ *
+ * The only amber *fill* the redesign allows besides the shutter, and it is allowed
+ * because 16% of an accent is not a filled surface — the icon over it is still what
+ * carries the state. "한 화면에 채워진 앰버 면은 1개까지" is about the shutter-sized
+ * ones.
+ */
+private val FilterButtonActive = Amber.copy(alpha = 0.16f)
+
+/** `gap:14px` between the filter strip's thumbnails. */
+private val STRIP_ITEM_GAP = 14.dp
+
+/** `gap:16px` between the filter and lens buttons. */
+private val SHUTTER_ROW_GAP = 16.dp
+
+/** 42×42 — album, filter and lens. The shutter is 74. */
+private val BOTTOM_CONTROL_SIZE = 42.dp
+
 /** How much later than the deadline [scheduleTeardownWatchdog] pokes. See there. */
 private const val TEARDOWN_WATCHDOG_SLACK_MS = 50L
 
 enum class CaptureAspect(val label: String, val ratioWtoH: Float) {
     RATIO_4_5("4:5", 4f / 5f),
     RATIO_1_1("1:1", 1f),
+    ;
+
+    /**
+     * The next ratio — the redesign's top bar is a single label that toggles rather
+     * than the two-cell segmented control it replaces.
+     *
+     * Written as `entries` arithmetic rather than `if (this == RATIO_4_5) RATIO_1_1`
+     * so that D9-1 stays enforced by the type: with exactly two members this is a
+     * toggle, and adding a third (16:9, 3:4, full — all banned) would silently turn
+     * the control into a three-way cycle instead of quietly doing the wrong thing.
+     * `CaptureAspectTest` pins the count.
+     */
+    fun toggled(): CaptureAspect = entries[(ordinal + 1) % entries.size]
 }
 
 /**
@@ -341,6 +426,46 @@ fun CameraScreen(
     // explicit act for now.)
     val hudAvailable = DebugHudGate.availableIn(BuildConfig.DEBUG)
     var showHud by rememberSaveable { mutableStateOf(DebugHudGate.initialVisible(BuildConfig.DEBUG)) }
+
+    // Which sheet is up / whether the lasso is armed — exactly one of them, by
+    // construction. See [CameraPanels]: every open/close rule the redesign states
+    // lives there as a pure function, because a decision written inside a
+    // @Composable cannot be tested on the JVM and "picking a filter closes the
+    // sheet" is a one-character regression.
+    //
+    // Read back through `resolve` rather than trusted as stored: this survives
+    // process death, so a bundle written by a debug build must not raise the
+    // debug-only 설정 sheet in a build that has none.
+    var storedMode by rememberSaveable { mutableStateOf(CameraOverlayMode.NONE) }
+    val overlayMode = CameraPanels.resolve(storedMode, BuildConfig.DEBUG)
+
+    // ---- 연필 (영역 선택) ------------------------------------------------------
+    //
+    // Pane-pixel points, deliberately **not** `rememberSaveable`: a half-drawn lasso is
+    // not worth restoring across process death, and the pane it was measured against
+    // may come back a different size.
+    var lassoPath by remember { mutableStateOf<List<Pair<Float, Float>>>(emptyList()) }
+    // True from the finger lifting until the path has faded away. Both outcomes fade:
+    // an accepted region hands over to the scene-search spinner, a rejected one leaves
+    // the pencil armed with nothing started — §4 P2-1 forbids saying more than that
+    // ("행동 지시 문구는 띄우지 않고").
+    var lassoSettling by remember { mutableStateOf(false) }
+    val lassoAlpha by animateFloatAsState(
+        targetValue = if (lassoSettling) 0f else 1f,
+        animationSpec = tween(AREA_SELECT_SETTLE_MS),
+        // The path is cleared by the animation *finishing*, not by a timer. A `delay()`
+        // here would be the only wait on this screen, and `CameraRedesignGuardTest` bans
+        // one outright so that a capture countdown (D2-1) cannot arrive disguised as
+        // something else.
+        finishedListener = { value ->
+            if (value == 0f) {
+                lassoPath = emptyList()
+                lassoSettling = false
+            }
+        },
+        label = "lassoSettle",
+    )
+    val searchScope by viewModel.searchScope.collectAsState()
 
     // O-13 (1): **a preset is colour. It does not reach the guide.**
     //
@@ -559,9 +684,30 @@ fun CameraScreen(
             guideVisible = guideVisible,
             onToggleGuide = { guideVisible = !guideVisible },
             aspect = aspect,
-            onSelectAspect = { aspect = it },
-            hudToggleEnabled = hudAvailable,
-            onToggleHud = { showHud = !showHud },
+            onToggleAspect = { aspect = aspect.toggled() },
+            settingsAvailable = CameraPanels.settingsSheetAvailable(BuildConfig.DEBUG),
+            onToggleSettings = {
+                storedMode = CameraPanels.toggled(overlayMode, CameraOverlayMode.SETTINGS_SHEET)
+            },
+            areaSelectArmed = CameraPanels.areaSelectArmed(overlayMode),
+            onToggleAreaSelect = {
+                val next = CameraPanels.toggled(overlayMode, CameraOverlayMode.AREA_SELECT)
+                // Leaving the mode by re-tapping the button is the screen's one cancel
+                // gesture (see CameraPanels). What it owes the guide depends on whether a
+                // lasso search was ever accepted: `cancelPolygonLayoutSearch` resets the
+                // alignment engine and the stabilizer, so calling it unconditionally
+                // would destroy the layout of a user who armed the pencil, drew nothing
+                // and changed their mind.
+                if (next != CameraOverlayMode.AREA_SELECT) {
+                    val exit = AreaSelectExit.forExit(searchScope is SceneSearchScope.Polygon)
+                    if (exit == AreaSelectExit.CANCEL_POLYGON_SEARCH) {
+                        viewModel.cancelPolygonLayoutSearch()
+                    }
+                    lassoPath = emptyList()
+                    lassoSettling = false
+                }
+                storedMode = next
+            },
             referenceEntry = referenceEntry,
             demoControls = demoControls,
         )
@@ -595,6 +741,44 @@ fun CameraScreen(
             onPreviewFrameNs = viewModel::onPreviewFrame,
             onPreviewFpsAvailability = viewModel::onPreviewFpsAvailability,
             referenceLayer = referenceLayer,
+            // "버튼 바깥 탭 또는 버튼 재탭으로 닫는다". The layer that receives that
+            // tap only exists while a sheet is up — see the parameter's KDoc for why
+            // that condition is load-bearing rather than tidiness.
+            dismissSheetOnTap = CameraPanels.sheetVisible(overlayMode),
+            onDismissSheet = { storedMode = CameraPanels.scrimTapped(overlayMode) },
+            areaSelectArmed = CameraPanels.areaSelectArmed(overlayMode),
+            lassoPath = lassoPath,
+            lassoAlpha = lassoAlpha,
+            onLassoStart = {
+                // A new stroke replaces the previous one outright — "다시 그리기는 …
+                // 새 경로를 그리는 방식"이고, 두 경로를 동시에 들고 있을 이유가 없다.
+                lassoSettling = false
+                lassoPath = emptyList()
+            },
+            onLassoPoint = { x, y, minStepPx ->
+                lassoPath = AreaSelectPath.appended(lassoPath, x, y, minStepPx)
+            },
+            onLassoFinish = { paneWidthPx, paneHeightPx ->
+                // The analysis frame's dimensions come from the overlay state, which is
+                // the only place they are published. Zero until the first frame lands,
+                // and `submitLassoRegion` treats that as "nothing to search" rather than
+                // building a PreviewGeometry whose `require` would throw.
+                val accepted = submitLassoRegion(
+                    points = lassoPath,
+                    paneWidthPx = paneWidthPx,
+                    paneHeightPx = paneHeightPx,
+                    analysisWidth = overlay?.frameWidth ?: 0,
+                    analysisHeight = overlay?.frameHeight ?: 0,
+                    mirror = isFront,
+                    submit = viewModel::rescanLayoutInPolygon,
+                )
+                // Both outcomes fade the path. Accepted also leaves the mode, because
+                // §4 P2-1 puts redrawing behind re-arming the button ("다시 그리기는
+                // 영역 선택 버튼을 다시 활성화한 뒤"); rejected keeps the pencil armed
+                // so the next attempt costs no extra tap.
+                lassoSettling = true
+                if (accepted) storedMode = CameraOverlayMode.NONE
+            },
             hud = {
                 if (DebugHudGate.visible(BuildConfig.DEBUG, showHud)) {
                     CameraHud(
@@ -612,36 +796,69 @@ fun CameraScreen(
             },
         )
 
-        // 2c: the style strip is a permanent row between the preview and the
-        // shutter, not something you open. Choosing a look is the screen's primary
-        // job, so it costs no taps and its state is always readable.
-        CameraStyleStrip(
-            presets = presets,
-            selectedIndex = styleIndex,
-            // Session-only: this never reaches SettingsRepository (TEAM.md §8) —
-            // that key is the D4 personalisation profile, so a relaunch returns to
-            // the onboarding style.
-            onSelect = { index ->
-                sessionStyleId = presetIds.getOrNull(index)
-                referenceSelected = false
-            },
-            onCreateReference = onCreateReference,
-            hasActiveReference = hasActiveReference,
-            referenceSelected = referenceSelected,
-            activeReferenceImageUri = activeReferenceImageUri,
-            onSelectReference = { referenceSelected = true },
-            onDeleteReference = {
-                referenceSelected = false
-                onDeleteReference()
-            },
-            modifier = Modifier.padding(top = 12.dp),
-        )
+        // The sheet slot. A **sibling** of the shutter row in this Column, never a
+        // layer over it — that is why "시트가 열린 상태에서도 셔터는 계속 쓸 수 있다"
+        // holds structurally instead of depending on where the sheet's top edge
+        // happens to land. The preview (`weight(1f)`) is what gives up the space.
+        CameraSheetSlot(visible = overlayMode == CameraOverlayMode.SETTINGS_SHEET) {
+            CameraSettingsSheet(
+                hudVisible = DebugHudGate.visible(BuildConfig.DEBUG, showHud),
+                onToggleHud = { showHud = !showHud },
+            )
+        }
+
+        // The strip is **in the sheet now**, not on screen. O-13 made a preset a
+        // colour, and six colour swatches permanently occupying the bottom of a camera
+        // is the "기능을 모두 펼쳐놓는" arrangement the redesign undoes: the preview is
+        // what the screen is for.
+        //
+        // Picking one does not close it — see [CameraPanels.filterPicked]. That is why
+        // choosing between two looks still costs one tap each rather than three.
+        CameraSheetSlot(visible = overlayMode == CameraOverlayMode.FILTER_SHEET) {
+            CameraFilterSheet(
+                presets = presets,
+                selectedIndex = styleIndex,
+                // Session-only: this never reaches SettingsRepository (TEAM.md §8) —
+                // that key is the D4 personalisation profile, so a relaunch returns to
+                // the onboarding style.
+                onSelect = { index ->
+                    sessionStyleId = presetIds.getOrNull(index)
+                    referenceSelected = false
+                    storedMode = CameraPanels.filterPicked(overlayMode)
+                },
+                onCreateReference = onCreateReference,
+                hasActiveReference = hasActiveReference,
+                referenceSelected = referenceSelected,
+                activeReferenceImageUri = activeReferenceImageUri,
+                onSelectReference = {
+                    referenceSelected = true
+                    storedMode = CameraPanels.filterPicked(overlayMode)
+                },
+                onDeleteReference = {
+                    referenceSelected = false
+                    onDeleteReference()
+                },
+            )
+        }
 
         CameraBottomBar(
             lastThumb = lastThumb,
             capturing = capturing,
+            // The shutter turns amber on exactly the condition the bracket does —
+            // one predicate, two consumers. Passing `overlay?.guide?.aligned` straight
+            // through would light the shutter while the bracket was off screen (guide
+            // toggled off, still searching, or a manual layout in charge).
+            aligned = AlignmentAmber.isOn(overlay, guideShown = guideVisible),
             isFront = isFront,
+            filterSheetOpen = overlayMode == CameraOverlayMode.FILTER_SHEET,
+            // "적용 중", so the *active* style being a reference — not the mere existence
+            // of one. Hidden while the sheet is open because the button is already amber
+            // then (시안 05 draws no dot).
+            showMoodDot = referenceSelected && overlayMode != CameraOverlayMode.FILTER_SHEET,
             onOpenAlbum = onOpenAlbum,
+            onToggleFilterSheet = {
+                storedMode = CameraPanels.toggled(overlayMode, CameraOverlayMode.FILTER_SHEET)
+            },
             onFlipLens = {
                 controller.toggleLens()
                 isFront = controller.isFront
@@ -745,10 +962,11 @@ fun CameraScreen(
                             // 3024×3780 rear, 2736×3420 front, both exactly 4:5 at the
                             // sensor's full width, so there is no viewport width crop.
                             //
-                            // ⚠️ `SubjectProjection`'s KDoc still predicts 2904×3630
-                            // from a 1080×1500 pane and has not been corrected — that
-                            // file is out of scope here. Believe this line, not that
-                            // one, until someone owns the fix.
+                            // `SubjectProjection`'s KDoc has been corrected to say so
+                            // (2026-07-30) — it had written that prediction up as a
+                            // measurement. Its `project()` arithmetic is unchanged and
+                            // may now be placing the editor's subject box wrong on this
+                            // device; that is open and recorded there.
                             if (BuildConfig.DEBUG) {
                                 Log.d(
                                     LATENCY_TAG,
@@ -923,151 +1141,303 @@ private fun scheduleTeardownWatchdog() {
 }
 
 /**
- * Top bar, per **2c** of `감도 화면 디자인.dc.html`: one centred pill saying the
- * personalisation is on, and nothing else competing with it.
+ * Top bar, per the owner's final redesign (시안 03): **four ghost icons and nothing
+ * else** — 설정 on the left, 비율 · 직접 지정 · 가이드 grouped on the right.
  *
- * The design's bar is *only* that pill — style selection lives in the permanent
- * strip above the shutter ([CameraStyleStrip]), so the top of the screen has no job
- * beyond telling you the app is doing something on your behalf.
+ * ```
+ * height 50dp · padding horizontal 20dp · space-between · right group gap 24dp
+ * ```
  *
- * Two controls the design does not draw are kept, in its own chip language, on
- * owner instruction: the guide on/off toggle (§3-2 requires it) and the 4:5 / 1:1
- * selector (D9 allows exactly those two ratios and §1-5 requires the choice).
- * Dropping them would make plan items unreachable rather than merely unstyled.
+ * Two things left, and the design says where each went:
  *
- * Zones are a [Row] with the centre weighted, never a [Box] with alignments: a Box
- * lets the centre chip overlap the sides, and that overlap steals input as well as
- * being silent — with `부드러운 필름` (6 glyphs) the old style chip covered the
- * debug HUD chip on SM-G970N and ate its taps, while `밝은 리뷰` (4) left it alone.
+ *  - the `내 감도 적용 중` **pill is gone**. Mood state is now the dot on the filter
+ *    button (see [CameraBottomBar]) — a pill saying the app is doing something on
+ *    your behalf costs a quarter of the bar to say what a 6px dot says.
+ *  - the `HUD` chip **moved into the 설정 sheet**. It is the sheet's only content,
+ *    which is why [CameraPanels.settingsSheetAvailable] delegates to the HUD's own
+ *    gate: in a demo build the sheet has nothing to hold, so the bar drops to three
+ *    icons rather than opening an empty sheet.
+ *
+ * **No element here has a background.** The bar's controls are ghost — stroke only.
+ * The `White 8%` discs belong to the shutter row, which sits over the photo; this bar
+ * does not. Every glyph is [StrokeIcon] over the mock's own path data.
+ *
+ * Amber is used for exactly one thing: **active**. `#E8C38B` stroke on 가이드 when
+ * the guide is on, `TextHi` at 85% for everything else including the ratio label —
+ * the design does not highlight the selected ratio, so neither does this.
+ *
+ * @param referenceEntry kept, and empty at every call site since O-10 — see
+ *   [CameraScreen]'s KDoc. An occupant would make this bar five icons, which the
+ *   redesign does not draw; it stays only because deleting a public parameter costs
+ *   a whole-tree grep.
+ * @param demoControls §7-3's demo toggle, deliberately outside the design.
  */
 @Composable
 private fun CameraTopBar(
     guideVisible: Boolean,
     onToggleGuide: () -> Unit,
     aspect: CaptureAspect,
-    onSelectAspect: (CaptureAspect) -> Unit,
-    hudToggleEnabled: Boolean,
-    onToggleHud: () -> Unit,
+    onToggleAspect: () -> Unit,
+    settingsAvailable: Boolean,
+    onToggleSettings: () -> Unit,
+    areaSelectArmed: Boolean,
+    onToggleAreaSelect: () -> Unit,
     referenceEntry: @Composable () -> Unit,
     demoControls: @Composable () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = 10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(TOP_BAR_HEIGHT)
+            .padding(horizontal = SCREEN_H_PADDING),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            BarChip(onClick = onToggleGuide) {
-                Box(
-                    modifier = Modifier
-                        .size(7.dp)
-                        .clip(CircleShape)
-                        .background(if (guideVisible) Amber else TextLow),
+        // Double-gated like CameraHud: BuildConfig.DEBUG is a compile-time constant,
+        // so this control does not exist in a release build whatever the caller says.
+        if (BuildConfig.DEBUG && settingsAvailable) {
+            BarIconButton(onClick = onToggleSettings, contentDescription = "설정") {
+                StrokeIcon(
+                    pathData = CameraIconPaths.SETTINGS,
+                    viewBox = 22f,
+                    size = 21.dp,
+                    strokeWidth = 1.6f,
+                    color = IconInactive,
+                    // The knobs are filled with the surface behind them, which is what
+                    // makes each rail read as a slider track passing under its knob.
+                    dots = CameraIconPaths.settingsKnobs(background = Ink950),
                 )
-                Text(
-                    text = "가이드",
-                    color = if (guideVisible) TextHi else TextLow,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            // Double-gated like CameraHud: BuildConfig.DEBUG is a compile-time
-            // constant, so this chip does not exist in a release build no matter
-            // what the caller passes.
-            if (BuildConfig.DEBUG && hudToggleEnabled) {
-                BarChip(onClick = onToggleHud) {
-                    Text("HUD", color = TextMid, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                }
             }
         }
 
-        Box(
-            modifier = Modifier.weight(1f).padding(horizontal = 3.dp),
-            contentAlignment = Alignment.Center,
+        Spacer(modifier = Modifier.weight(1f))
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(TOP_BAR_ICON_GAP),
         ) {
-            Row(
+            // 4:5 / 1:1 only (D9-1). One label that toggles, not a segmented pair;
+            // the design draws no selected/unselected distinction on it at all.
+            Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Ink700.copy(alpha = 0.9f))
-                    .padding(horizontal = 11.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    .size(MIN_TOUCH_TARGET)
+                    .clickable(onClick = onToggleAspect),
+                contentAlignment = Alignment.Center,
             ) {
-                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Amber))
                 Text(
-                    text = "내 감도 적용 중",
-                    color = TextHi,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    text = aspect.label,
+                    color = IconInactive,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.03.em,
                 )
             }
-        }
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            AspectChip(selected = aspect, onSelect = onSelectAspect)
-            // 재탐색은 프리뷰 우측 하단 버튼 하나로 일원화했다(오너 지정 위치,
-            // 2026-07-28). 같은 동작을 상단 드롭다운에도 두면 두 곳이 갈라진다.
-            //
-            // ⚠️ 그 드롭다운이 D13의 **수동 레이아웃 선택**도 담고 있었으므로
-            // 지금은 그 기능이 없다. `CameraViewModel.selectManualLayout`과
-            // `availableManualLayouts`는 완성된 채 호출자 0으로 남아 있다 —
-            // D13 미충족 상태이며 remain_plan 부록 C에 기록한다.
+            // 직접 지정 — arms the lasso. Amber stroke while armed and **no
+            // background**: the top bar has no element with one, and adding a fill for
+            // this one control would be the second filled amber surface on the screen.
+            BarIconButton(onClick = onToggleAreaSelect, contentDescription = "직접 지정") {
+                StrokeIcon(
+                    pathData = CameraIconPaths.PENCIL,
+                    viewBox = 24f,
+                    size = 19.dp,
+                    strokeWidth = 1.7f,
+                    color = if (areaSelectArmed) Amber else IconInactive,
+                )
+            }
+
+            BarIconButton(onClick = onToggleGuide, contentDescription = "가이드") {
+                StrokeIcon(
+                    pathData = CameraIconPaths.GUIDE,
+                    viewBox = 22f,
+                    size = 21.dp,
+                    strokeWidth = 1.7f,
+                    color = if (guideVisible) Amber else IconInactive,
+                    dots = CameraIconPaths.guideCentreDot(
+                        color = if (guideVisible) Amber else IconInactive,
+                    ),
+                )
+            }
+
+            // 재탐색 stays where the owner put it (2026-07-28) — the preview's
+            // bottom-right. It is not in this bar.
             referenceEntry()
             demoControls()
         }
     }
 }
 
-/** 4:5 / 1:1 only (D9), as a segmented chip in the top bar's language. */
+/**
+ * Shared hit target for the bar's ghost icons: 44dp of touch around a 19-21dp glyph.
+ *
+ * The padding *is* the touch target — the design's icons are too small to press
+ * reliably and it gives no button box for them, so the box exists only for the
+ * finger and never draws.
+ */
 @Composable
-private fun AspectChip(selected: CaptureAspect, onSelect: (CaptureAspect) -> Unit) {
-    Row(
+private fun BarIconButton(
+    onClick: () -> Unit,
+    contentDescription: String,
+    content: @Composable () -> Unit,
+) {
+    Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(Ink700.copy(alpha = 0.9f))
-            .padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+            .size(MIN_TOUCH_TARGET)
+            .semantics { this.contentDescription = contentDescription }
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
     ) {
-        CaptureAspect.entries.forEach { option ->
-            val isSelected = option == selected
-            Text(
-                text = option.label,
-                color = if (isSelected) OnAmber else TextMid,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
+        content()
+    }
+}
+
+/**
+ * 설정 — debug only, and its whole content is the HUD toggle.
+ *
+ * A sheet holding one row is the honest shape of it. The alternative considered was
+ * filling it out with preview-colour and analysis-rate switches, which do not exist
+ * as product features; inventing controls to justify a container is a mistake this
+ * project has made before.
+ */
+@Composable
+private fun CameraSettingsSheet(
+    hudVisible: Boolean,
+    onToggleHud: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(topStart = SHEET_CORNER, topEnd = SHEET_CORNER))
+            .background(Ink800)
+            .padding(top = 8.dp, bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(11.dp),
+    ) {
+        SheetHandle()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = STRIP_H_PADDING)
+                .clickable(onClick = onToggleHud)
+                .padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text("디버그 HUD", color = TextHi, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(if (isSelected) Amber else Color.Transparent)
-                    .clickable { onSelect(option) }
-                    .padding(horizontal = 7.dp, vertical = 4.dp),
-            )
+                    .size(width = 34.dp, height = 20.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (hudVisible) Amber.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.08f))
+                    .padding(3.dp),
+                contentAlignment = if (hudVisible) Alignment.CenterEnd else Alignment.CenterStart,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(14.dp)
+                        .clip(CircleShape)
+                        .background(if (hudVisible) Amber else TextLow),
+                )
+            }
         }
     }
 }
 
 /**
- * The permanent style strip, per 2c: a circular thumbnail per preset with its name
- * underneath, the active one ringed in sage.
+ * Slides a bottom sheet in and out over [CAMERA_SHEET_ANIM_MS].
  *
- * Round rather than square, and always on screen rather than behind a picker,
- * because choosing a look is the job this screen exists for. The thumbnails are the
- * presets’ own bundled images, so the strip shows what each look *is* rather than
- * only what it is called — which matters for `자연스러운 피드` and `밤거리`, whose
- * bracket geometry is identical and whose names are the only thing separating them.
- *
- * O-10 (2026-07-29) wraps this same row with the AI 2 entry point: a leading `+`
- * and, once a reference is active, a trailing `내 레퍼런스` slot — built by
- * [buildFilterStrip] and rendered with the shared thumb composables in
- * `ui/reference/ReferenceStrip.kt` so this screen and the result screen stay
- * pixel-consistent without duplicating the thumb shape twice.
+ * `AnimatedVisibility` in a Column animates the *height* as well as the offset, so
+ * the preview above it gives up its space over the same 260ms instead of jumping by
+ * the sheet's height on the first frame. `slideInVertically` alone would slide the
+ * sheet up out of a gap that had already appeared.
  */
+@Composable
+private fun CameraSheetSlot(visible: Boolean, content: @Composable () -> Unit) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = expandVertically(animationSpec = tween(CAMERA_SHEET_ANIM_MS)),
+        exit = shrinkVertically(animationSpec = tween(CAMERA_SHEET_ANIM_MS)),
+    ) {
+        content()
+    }
+}
+
+/** The 36×4 grab handle both sheets carry. */
+@Composable
+private fun SheetHandle() {
+    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .size(width = 36.dp, height = 4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(Color.White.copy(alpha = 0.22f)),
+        )
+    }
+}
+
+/**
+ * 시안 05 — the filter sheet: `Ink800`, 20dp top corners, a grab handle, and the strip.
+ *
+ * ```
+ * background #1A1A1D · radius 20 20 0 0 · padding 8 0 12 · gap 11
+ * handle 36×4 r2 White 22%    strip gap 14 · padding 0 18 · thumb 52 circle
+ * ```
+ *
+ * **Opaque `Ink800`, and no scrim over the preview.** Both are the design's, and both
+ * follow from what the sheet is for: a preset is a colour (O-13), so choosing one means
+ * comparing it against the live scene. A translucent sheet would tint its own swatches
+ * and a scrim would tint the scene, and either makes the comparison the sheet exists
+ * for impossible.
+ *
+ * A **sibling** of the shutter row rather than a layer over it (see the call site),
+ * which is how "시트가 열린 상태에서도 셔터는 계속 쓸 수 있다" holds structurally.
+ *
+ * Round thumbnails showing the presets' own bundled images, so the strip shows what
+ * each look *is* rather than only what it is called — which matters for
+ * `자연스러운 피드` and `밤거리`, whose names are the only thing separating them.
+ *
+ * O-10's AI 2 entry points ride the same row: a leading `+` and, once a reference is
+ * active, a trailing `내 레퍼런스` slot — ordered by [buildFilterStrip] and drawn with
+ * the shared thumbs in `ui/reference/ReferenceStrip.kt` so this sheet and the result
+ * screen stay pixel-consistent. 시안 05 shows the strip mid-scroll with the `+` pushed
+ * off the left edge; that is a scroll position, not a different order.
+ */
+@Composable
+private fun CameraFilterSheet(
+    presets: List<StylePreset>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    onCreateReference: () -> Unit,
+    hasActiveReference: Boolean,
+    referenceSelected: Boolean,
+    activeReferenceImageUri: Uri?,
+    onSelectReference: () -> Unit,
+    onDeleteReference: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(topStart = SHEET_CORNER, topEnd = SHEET_CORNER))
+            .background(Ink800)
+            .padding(top = 8.dp, bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(11.dp),
+    ) {
+        SheetHandle()
+        CameraStyleStrip(
+            presets = presets,
+            selectedIndex = selectedIndex,
+            onSelect = onSelect,
+            onCreateReference = onCreateReference,
+            hasActiveReference = hasActiveReference,
+            referenceSelected = referenceSelected,
+            activeReferenceImageUri = activeReferenceImageUri,
+            onSelectReference = onSelectReference,
+            onDeleteReference = onDeleteReference,
+        )
+    }
+}
+
+/** The strip itself. Its container is [CameraFilterSheet]. */
 @Composable
 private fun CameraStyleStrip(
     presets: List<StylePreset>,
@@ -1081,13 +1451,11 @@ private fun CameraStyleStrip(
     onDeleteReference: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Reserve the row even with nothing to put in it: `presets` arrives from disk a
-    // frame or two after first composition, and a strip that appears late makes the
-    // preview visibly jump. (It no longer *breaks* anything — the preview spill that
-    // used to follow a pane resize was an unclipped interop view, fixed at the
-    // AndroidView — but a fixed height is still the right shape for a row whose
-    // contents are async.) The `+`/`내 레퍼런스` slots wait for the same frame as
-    // the presets rather than appearing first and shifting everything right.
+    // Reserve the row even with nothing to put in it. `presets` arrives from disk, and a
+    // sheet that opens at one height and grows to another 60ms later is a visible
+    // stutter on top of the 260ms slide — the two animations would fight. Empty is also
+    // the honest state when the read failed (AGENTS §7-6), which is why this is a blank
+    // row rather than a placeholder thumbnail.
     if (presets.isEmpty()) {
         Box(modifier = modifier.fillMaxWidth().height(STYLE_STRIP_HEIGHT))
         return
@@ -1116,9 +1484,11 @@ private fun CameraStyleStrip(
     LazyRow(
         modifier = modifier.fillMaxWidth().height(STYLE_STRIP_HEIGHT),
         state = listState,
-        contentPadding = PaddingValues(horizontal = 18.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        contentPadding = PaddingValues(horizontal = STRIP_H_PADDING),
+        horizontalArrangement = Arrangement.spacedBy(STRIP_ITEM_GAP),
+        // `align-items:flex-start` — the labels hang below their thumbnails and a
+        // two-line label must not push its thumbnail up out of line with the others.
+        verticalAlignment = Alignment.Top,
     ) {
         itemsIndexed(strip) { _, entry ->
             when (entry) {
@@ -1178,21 +1548,6 @@ private fun CameraStyleStrip(
     }
 }
 
-/** Shared shape/padding for the top bar's controls. */
-@Composable
-private fun BarChip(onClick: () -> Unit, content: @Composable RowScope.() -> Unit) {
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(Ink700.copy(alpha = 0.9f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        content = content,
-    )
-}
-
 /**
  * Preview + touch surface + guide overlay + aspect mask + zoom readout.
  *
@@ -1242,6 +1597,28 @@ private fun CameraPreviewPane(
     onPreviewFrameNs: (Long) -> Unit,
     onPreviewFpsAvailability: (PreviewFpsAvailability) -> Unit,
     referenceLayer: @Composable BoxScope.() -> Unit,
+    /**
+     * Whether a tap anywhere on the preview should dismiss an open sheet.
+     *
+     * **Must be false when no sheet is open**, and the reason is this function's own
+     * KDoc: the dismiss layer is a `clickable` above the gesture surface, so while it
+     * exists it takes the DOWN and pinch-to-zoom and tap-to-focus stop working
+     * *together, silently*. That is correct while a sheet is up — the tap means
+     * "close it" — and it is the bug the KDoc describes at any other time. Hence a
+     * condition rather than a permanently-mounted transparent Box.
+     */
+    dismissSheetOnTap: Boolean,
+    onDismissSheet: () -> Unit,
+    /** 연필 armed. While true the preview collects a path instead of framing gestures. */
+    areaSelectArmed: Boolean,
+    /** The path so far, in pane pixels, already clamped and thinned. */
+    lassoPath: List<Pair<Float, Float>>,
+    /** 0..1 settle-out for [lassoPath]; 1 while drawing. */
+    lassoAlpha: Float,
+    onLassoStart: () -> Unit,
+    onLassoPoint: (Float, Float, Float) -> Unit,
+    /** Finger lifted. Receives the pane's pixel size, which only this scope knows. */
+    onLassoFinish: (Float, Float) -> Unit,
     hud: @Composable BoxScope.() -> Unit,
 ) {
     BoxWithConstraints(modifier = modifier) {
@@ -1271,6 +1648,9 @@ private fun CameraPreviewPane(
         // switch was dropped, 3/3 in both directions, while the steady state was
         // 3/3 fine. This keeps the value fresh without restarting anything.
         val currentAspect by rememberUpdatedState(aspect)
+        // Same reason as `currentAspect`: toggling the pencil must not restart the
+        // gesture handler, because a restart drops the gesture that follows it.
+        val currentAreaSelectArmed by rememberUpdatedState(areaSelectArmed)
 
         AndroidView(
             // clipToBounds, and it is load-bearing.
@@ -1413,6 +1793,31 @@ private fun CameraPreviewPane(
                                 }
                             }
                         },
+                        // 연필. Reads `armed` through the updated state rather than being
+                        // keyed on it — a key change restarts this whole handler and the
+                        // restart eats one gesture, which here would be the first stroke
+                        // of every lasso.
+                        lasso = {
+                            val minStepPx = AreaSelectPath.MIN_STEP_DP.dp.toPx()
+                            detectLassoDrags(
+                                armed = { currentAreaSelectArmed },
+                                onStart = onLassoStart,
+                                onPoint = { x, y ->
+                                    // Clamped, not rejected: a stroke that strays into the
+                                    // letterbox must ride the boundary, because dropping
+                                    // its middle would splice the path across the subject.
+                                    clampedLassoPoint(
+                                        position = Offset(x, y),
+                                        paneWidth = size.width.toFloat(),
+                                        paneHeight = size.height.toFloat(),
+                                        ratioWtoH = currentAspect.ratioWtoH,
+                                    )?.let { (cx, cy) -> onLassoPoint(cx, cy, minStepPx) }
+                                },
+                                onFinish = {
+                                    onLassoFinish(size.width.toFloat(), size.height.toFloat())
+                                },
+                            )
+                        },
                     )
                 },
         )
@@ -1440,6 +1845,15 @@ private fun CameraPreviewPane(
             )
         }
 
+        // Above the guide, below the aspect mask — the path is the user's own mark and
+        // must not be hidden by the bracket, but it must still be clipped off the
+        // letterbox like everything else in this pane.
+        AreaSelectPathOverlay(
+            points = lassoPath,
+            alpha = lassoAlpha,
+            modifier = Modifier.fillMaxSize(),
+        )
+
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Ink950))
             Box(modifier = Modifier.fillMaxWidth().height(windowHeight)) {
@@ -1461,76 +1875,248 @@ private fun CameraPreviewPane(
         }
 
         hud()
+
+        // Topmost, and **transparent**. The redesign gives the filter sheet no scrim,
+        // which is not an omission: a filter is a colour (O-13), so choosing one means
+        // seeing it on the live scene, and darkening the preview to signal modality
+        // would defeat the only thing the sheet is for. So this catches the tap and
+        // tints nothing.
+        if (dismissSheetOnTap) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        // No ripple and no role: this is not a button, it is the
+                        // absence of one. A ripple here would flash over the photo.
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onDismissSheet,
+                    ),
+            )
+        }
     }
 }
 
-/** Bottom bar: album / shutter / flip. */
+/**
+ * Shutter row, per the redesign: `album | shutter | filter · lens`.
+ *
+ * ```
+ * grid-template-columns:1fr auto 1fr · padding:0 34px 18px
+ * album 42 r13 border White 16% (justify-self:start)
+ * shutter 74 ring 3 · disc 58          filter/lens 42 circle, gap 16 (justify-self:end)
+ * ```
+ *
+ * The `1fr auto 1fr` is what centres the shutter regardless of how wide the two side
+ * groups are, and it is a real requirement rather than CSS trivia: the right group has
+ * two controls and the left has one, so `SpaceBetween` would put the shutter visibly
+ * off-centre. Hence the two weighted boxes.
+ *
+ * The **filter button is the mood indicator**. The `내 감도 적용 중` pill that used to
+ * say this in the top bar is gone; a 6dp amber dot on this button's corner says it
+ * instead. See [showMoodDot] for what "mood" means here and why the dot goes away
+ * while the sheet is open.
+ */
 @Composable
 private fun CameraBottomBar(
     lastThumb: android.graphics.Bitmap?,
     capturing: Boolean,
+    /**
+     * Whether the composition matches — from [AlignmentAmber.isOn], the same predicate
+     * the target bracket turns amber on. Never a score (D2-5).
+     */
+    aligned: Boolean,
     isFront: Boolean,
+    filterSheetOpen: Boolean,
+    /**
+     * Whether a reference (`내 감도`) is the active style **right now** — not merely
+     * whether one exists. A preset is always selected, so a dot meaning "something is
+     * selected" would never go out and would say nothing.
+     *
+     * False while [filterSheetOpen], because then the whole button is amber and the dot
+     * would be saying it twice. 시안 03 has the dot; 시안 05 does not.
+     */
+    showMoodDot: Boolean,
     onOpenAlbum: () -> Unit,
+    onToggleFilterSheet: () -> Unit,
     onFlipLens: () -> Unit,
     onShutter: () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 34.dp, vertical = 14.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 34.dp, end = 34.dp, bottom = 18.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
+        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .size(BOTTOM_CONTROL_SIZE)
+                    .clip(RoundedCornerShape(13.dp))
+                    // Kept from before the redesign, deliberately. The mock's album tile
+                    // contains a photo, so it does not say what an empty one looks like
+                    // — and on first launch there is no photo. Without a fill this is a
+                    // 1px hairline on near-black, i.e. an invisible control. Preserving
+                    // the existing answer to a question the design does not address is
+                    // not the same as inventing one.
                     .background(moodBrush(2))
-                    .border(1.5.dp, Color(0x40FFFFFF), RoundedCornerShape(12.dp))
+                    .border(1.dp, AlbumTileBorder, RoundedCornerShape(13.dp))
+                    .semantics { contentDescription = "앨범" }
                     .clickable(onClick = onOpenAlbum),
-                contentAlignment = Alignment.Center,
             ) {
                 if (lastThumb != null) {
                     Image(
                         bitmap = lastThumb.asImageBitmap(),
                         contentDescription = "최근 촬영",
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)),
+                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(13.dp)),
                     )
                 }
             }
-            Text("앨범", color = TextMid, fontSize = 10.sp)
         }
 
-        // D2: the shutter is manual only — capture is reachable from this
-        // clickable lambda and nowhere else.
+        // D2-4: the shutter is manual only — `takePicture` is reachable from this
+        // clickable lambda and nowhere else. No countdown, no auto-capture.
+        CameraShutter(capturing = capturing, aligned = aligned, onShutter = onShutter)
+
+        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(SHUTTER_ROW_GAP),
+            ) {
+                FilterButton(
+                    open = filterSheetOpen,
+                    showMoodDot = showMoodDot,
+                    onClick = onToggleFilterSheet,
+                )
+                Box(
+                    modifier = Modifier
+                        .size(BOTTOM_CONTROL_SIZE)
+                        .clip(CircleShape)
+                        .background(OverPhotoDisc)
+                        .semantics { contentDescription = "렌즈 전환" }
+                        .clickable(onClick = onFlipLens),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    StrokeIcon(
+                        pathData = CameraIconPaths.FLIP_LENS,
+                        viewBox = 24f,
+                        size = 19.dp,
+                        strokeWidth = 1.8f,
+                        // The front lens is a state, and amber means active — the same
+                        // rule the top bar's 가이드 icon follows.
+                        color = if (isFront) Amber else IconInactive,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The shutter and its three appearances (redesign 시안 03 / 04).
+ *
+ * ```
+ * 74 · ring 3px White 92% · disc 58 #F4F1EA
+ * 구도 일치 → Amber, faded over 200ms      촬영 중 → disc contracts to 78%
+ * ```
+ *
+ * Which appearance applies is [ShutterVisual]'s answer, not this composable's: colour
+ * follows alignment and scale follows capture, **independently**, so pressing the
+ * shutter on a matched composition does not flash the disc back to white for the
+ * length of the capture. See that file for why the redesign's three-state wording
+ * needs two decisions rather than one.
+ *
+ * Everything here is animated and nothing blinks. D2-3 allows exactly one success
+ * signal — a colour change — so there is no haptic, no sound, no toast and no
+ * scale pulse on alignment; the only scale change in the whole control belongs to the
+ * capture.
+ *
+ * `LinearOutSlowInEasing` is CSS `ease-out`: fast at the start, settling at the end.
+ * `FastOutSlowInEasing` would be `ease-in-out` and is the wrong curve for a state that
+ * should announce itself immediately and then stop moving.
+ */
+@Composable
+private fun CameraShutter(capturing: Boolean, aligned: Boolean, onShutter: () -> Unit) {
+    val amber = ShutterVisual.alignedAmber(aligned = aligned, capturing = capturing)
+    val target = if (amber) Amber else Color.White.copy(alpha = ShutterVisual.IDLE_ALPHA)
+    val ringColor by animateColorAsState(
+        targetValue = target,
+        animationSpec = tween(CAMERA_ALIGN_FADE_MS, easing = LinearOutSlowInEasing),
+        label = "shutterRing",
+    )
+    val discColor by animateColorAsState(
+        // The disc is opaque TextHi at rest, not White 92% — that alpha is the ring's.
+        targetValue = if (amber) Amber else TextHi,
+        animationSpec = tween(CAMERA_ALIGN_FADE_MS, easing = LinearOutSlowInEasing),
+        label = "shutterDisc",
+    )
+    val discScale by animateFloatAsState(
+        targetValue = ShutterVisual.discScale(capturing),
+        animationSpec = tween(CAMERA_ALIGN_FADE_MS, easing = LinearOutSlowInEasing),
+        label = "shutterDiscScale",
+    )
+    Box(
+        modifier = Modifier
+            .size(74.dp)
+            .clip(CircleShape)
+            .border(3.dp, ringColor, CircleShape)
+            .semantics { contentDescription = "촬영" }
+            .clickable(enabled = !capturing, onClick = onShutter),
+        contentAlignment = Alignment.Center,
+    ) {
         Box(
             modifier = Modifier
-                .size(76.dp)
+                // Scaled rather than resized: `Modifier.size(58.dp * scale)` would
+                // re-measure the disc every animation frame and, because the parent
+                // centres it, nudge the layout. `graphicsLayer` moves it on the render
+                // thread and leaves the measured tree alone.
+                .size(58.dp)
+                .graphicsLayer {
+                    scaleX = discScale
+                    scaleY = discScale
+                }
                 .clip(CircleShape)
-                .border(4.dp, Color(0xE6FFFFFF), CircleShape)
-                .clickable(enabled = !capturing, onClick = onShutter),
+                .background(discColor),
+        )
+    }
+}
+
+/**
+ * 필터 — raises the sheet, and carries the mood dot.
+ *
+ * Amber at 16% while open, `White 8%` while closed. Both are the design's, and the
+ * asymmetry is the point: this is the one control whose own appearance says whether its
+ * sheet is up, because the sheet has no scrim to say it.
+ */
+@Composable
+private fun FilterButton(open: Boolean, showMoodDot: Boolean, onClick: () -> Unit) {
+    Box(modifier = Modifier.size(BOTTOM_CONTROL_SIZE)) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(CircleShape)
+                .background(if (open) FilterButtonActive else OverPhotoDisc)
+                .semantics { contentDescription = "필터" }
+                .clickable(onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(60.dp)
-                    .clip(CircleShape)
-                    .background(if (capturing) TextLow else TextHi),
+            StrokeIcon(
+                viewBox = 22f,
+                size = 20.dp,
+                strokeWidth = 1.6f,
+                color = if (open) Amber else IconInactive,
+                dots = CameraIconPaths.filterLenses(),
             )
         }
-
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(Ink700)
-                .clickable(onClick = onFlipLens),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text("⟲", color = if (isFront) Amber else TextMid, fontSize = 18.sp)
+        if (showMoodDot) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(2.dp)
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(Amber),
+            )
         }
     }
 }

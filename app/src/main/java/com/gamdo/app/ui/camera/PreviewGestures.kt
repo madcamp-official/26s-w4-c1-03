@@ -79,14 +79,29 @@ import kotlinx.coroutines.launch
  *
  * @param tap the tap-to-focus handler, normally `detectTapGestures { … }`.
  * @param pinch the pinch-to-zoom handler, normally `detectTransformGestures { … }`.
- *   Installed second, so [tap] registers first and keeps the dispatch order the
+ *   Installed after [tap], so [tap] registers first and keeps the dispatch order the
  *   dispatched version happened to have.
+ * @param lasso the 영역 선택 path collector, and **installed first on purpose**.
+ *
+ *   Compose delivers a pass to registered handlers in registration order, so the
+ *   earliest one gets first refusal on consuming the change. While the pencil is armed
+ *   the lasso has to be that handler: a drag it does not consume first is a drag
+ *   `detectTransformGestures` may act on.
+ *
+ *   Ordering it first is safe when it is *not* armed only because it consumes nothing
+ *   then — it inspects the DOWN, sees the pencil is off, and returns without touching
+ *   the event. That is why it is a hand-written loop rather than
+ *   `detectDragGestures`, which consumes slop unconditionally and would take drags
+ *   away from pinch whenever the pencil happened to be off. Defaults to a no-op so the
+ *   two existing call shapes still read the same.
  */
 suspend fun installPreviewGestures(
     tap: suspend () -> Unit,
     pinch: suspend () -> Unit,
+    lasso: suspend () -> Unit = {},
 ) {
     coroutineScope {
+        launch(start = CoroutineStart.UNDISPATCHED) { lasso() }
         launch(start = CoroutineStart.UNDISPATCHED) { tap() }
         launch(start = CoroutineStart.UNDISPATCHED) { pinch() }
     }

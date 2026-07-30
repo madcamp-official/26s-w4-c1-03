@@ -1,11 +1,15 @@
 package com.gamdo.app.ui.camera
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,6 +92,25 @@ fun CameraOverlay(
     val horizonGate = remember { HorizonGate() }
     val showHorizon = horizonGate.update(pitchDeg)
 
+    // D2-3's colour swap, now over 200ms instead of instantly (owner's redesign:
+    // "브래킷도 화이트→앰버 200ms ease-out").
+    //
+    // Animated **here in the composable**, not inside the Canvas: a draw lambda cannot
+    // host an animation, and the value has to be read where recomposition can see it.
+    // `AlignmentAmber.isOn` is the shared predicate — the shutter reads the same one,
+    // so the two cannot disagree about what a match is. `guideShown = true` because
+    // this composable is not rendered at all when the §3-2 toggle is off.
+    //
+    // A hard cut used to be acceptable when the bracket was the only thing that
+    // changed. With the shutter changing at the same moment, two uncoordinated hard
+    // cuts read as a flicker rather than as one event.
+    val alignedAmber = AlignmentAmber.isOn(overlay, guideShown = true)
+    val guideAccent by animateColorAsState(
+        targetValue = if (alignedAmber) Amber else Color.White.copy(alpha = 0.9f),
+        animationSpec = tween(CAMERA_ALIGN_FADE_MS, easing = LinearOutSlowInEasing),
+        label = "guideBracket",
+    )
+
     Box(modifier = modifier) {
         Canvas(modifier = Modifier.fillMaxSize()) {
         val vw = size.width
@@ -151,8 +174,9 @@ fun CameraOverlay(
             ?.let { guide ->
             // The composition target: where the subject should end up in the photo.
             val frame = mapRect(guide.targetFrame, data, vw, vh, OverlayMapping.Space.COMPOSITION)
-            // D2-3: the colour swap is the entire success feedback.
-            val guideColor = if (guide.aligned) Amber else Color.White.copy(alpha = 0.9f)
+            // D2-3: the colour swap is the entire success feedback. Mid-fade value,
+            // computed above — see there for why it is not `if (guide.aligned)` here.
+            val guideColor = guideAccent
 
             guide.silhouetteBounds?.let { silhouette ->
                 val ghost = mapRect(silhouette, data, vw, vh, OverlayMapping.Space.COMPOSITION)
