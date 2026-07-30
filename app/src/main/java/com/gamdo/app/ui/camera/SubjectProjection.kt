@@ -58,6 +58,21 @@ import com.gamdo.app.edit.SubjectBox
  * crop that would, so it is right in both states above and in the one after them,
  * which is the property the old signature could not have.
  *
+ * ## Verified end to end on device, 2026-07-30
+ *
+ * Five 4:5 captures with a person, SM-G970N rear. For each, the stored
+ * `conditions_json.subject` was checked against a derivation done independently of
+ * this code — the window taken from the *measured* `saved=2610x3263` alone, applied
+ * to that row's own `analysis_json.personBox`. **Max error 7.3e-08**, which is
+ * float32 and not arithmetic. A sixth capture of a ceiling had no detection and
+ * correctly stored no subject.
+ *
+ * And the honest part: on those same five photos the retired inference differs by at
+ * most **0.00016**, with one subject at centreX 0.708 and no box clipping to mask it.
+ * In this viewport state the old model was already right. **This change did not
+ * recover a live 6% error** — it removed a dependency on which of two states the
+ * build happens to be in, where one of them costs 0.084.
+ *
  * ## Coordinate spaces
  *
  * The plan's `src` rect is in the **decoded buffer's** coordinates, pre-rotation.
