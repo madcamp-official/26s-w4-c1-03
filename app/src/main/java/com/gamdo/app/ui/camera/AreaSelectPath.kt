@@ -80,19 +80,21 @@ object AreaSelectPath {
         points.size >= MIN_VERTICES
 
     /**
-     * Clamps a sample into the visible preview window.
+     * Clamps a sample into the visible capture window.
      *
-     * The `PreviewView` fills the whole pane and the 4:5 / 1:1 letterbox bars are
-     * drawn *over* it, so a drag that strays into a bar is over live camera pixels
-     * the user cannot see and `centerCropToRatio` will discard. `resolveTapFocusPoint`
-     * **rejects** such a point, which is right for a focus tap — one tap, one answer.
-     * A lasso is a stroke, and dropping its middle would splice the path straight
-     * across the subject. So this rides the boundary instead.
+     * The `PreviewView` fills the whole pane and the aspect bars are drawn *over* it,
+     * so a drag that strays into a bar is over live camera pixels the user cannot see
+     * and the aspect crop will discard. `resolveTapFocusPoint` **rejects** such a
+     * point, which is right for a focus tap — one tap, one answer. A lasso is a
+     * stroke, and dropping its middle would splice the path straight across the
+     * subject. So this rides the boundary instead.
+     *
+     * Clamps on **both axes**: 16:9's window is pillarboxed, so there are side bars to
+     * stray into as well as top and bottom ones. The window itself comes from
+     * [previewWindowOf], shared with the mask and the focus rule.
      *
      * Returns `null` only for input no clamp can rescue: non-finite coordinates, or a
-     * pane that has not been measured. When the pane is too short for the ratio the
-     * bars collapse to zero height and this becomes a plain clamp to the pane, which
-     * is also what the mask draws.
+     * pane that has not been measured.
      */
     fun clampToWindow(
         x: Float,
@@ -102,13 +104,8 @@ object AreaSelectPath {
         ratioWtoH: Float,
     ): Pair<Float, Float>? {
         if (!x.isFinite() || !y.isFinite()) return null
-        if (!paneWidth.isFinite() || !paneHeight.isFinite() || !ratioWtoH.isFinite()) return null
-        if (paneWidth <= 0f || paneHeight <= 0f || ratioWtoH <= 0f) return null
-        // Identical arithmetic to CameraPreviewPane's mask and to
-        // resolveTapFocusPoint's; scale-invariant, so px here and Dp there agree.
-        val windowHeight = (paneWidth / ratioWtoH).coerceAtMost(paneHeight)
-        val barHeight = (paneHeight - windowHeight) / 2f
-        return x.coerceIn(0f, paneWidth) to y.coerceIn(barHeight, barHeight + windowHeight)
+        val window = previewWindowOf(paneWidth, paneHeight, ratioWtoH) ?: return null
+        return window.clamp(x, y)
     }
 }
 

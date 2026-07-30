@@ -42,23 +42,22 @@ data class SceneAnchorPoint(val x: Float, val y: Float)
  * `null` if the tap must not move focus.
  *
  * Rejects, in order:
- * - non-finite coordinates or pane metrics — a NaN handed to `createPoint` becomes
- *   a poisoned metering rectangle inside CameraX, where it stops being our bug;
- * - an unmeasured or degenerate pane (any dimension or the ratio at or below zero),
- *   which also guards the divisor below;
- * - taps outside the pane;
- * - taps on the letterbox bars. That region is invisible *and* `centerCropToRatio`
- *   discards it at save time, so focusing there racks the lens onto something the
- *   user will never receive.
+ * - non-finite coordinates — a NaN handed to `createPoint` becomes a poisoned
+ *   metering rectangle inside CameraX, where it stops being our bug;
+ * - an unmeasured or degenerate pane, which [previewWindowOf] answers `null` for;
+ * - taps outside the capture window, **on either axis**. That region is invisible
+ *   *and* the aspect crop discards it at save time, so focusing there racks the lens
+ *   onto something the user will never receive.
  *
  * In-window taps pass through unchanged — see [FocusPoint].
  *
- * The mask arithmetic below **must stay identical to `CameraPreviewPane`'s**, which
- * computes it in `Dp` off `BoxWithConstraints` while this runs in px off
- * `PointerInputScope.size`. The formula is scale-invariant so the fraction agrees;
- * the two can differ by the sub-pixel rounding of `Modifier.height(barHeight)`,
- * which is far below a fingertip and is why the tests straddle the boundary instead
- * of sitting on it.
+ * The window comes from [previewWindowOf], which `CameraPreviewPane`'s mask also
+ * calls. This file used to carry its own copy of that arithmetic under a comment
+ * saying it "must stay identical to `CameraPreviewPane`'s"; adding 16:9 is precisely
+ * the change that breaks an arrangement held together by watching, so there is one
+ * copy now. The two still differ by the sub-pixel rounding of `Modifier.width/height`
+ * — far below a fingertip, and why the tests straddle the boundary rather than
+ * sitting on it.
  */
 fun resolveTapFocusPoint(
     tapX: Float,
@@ -68,21 +67,20 @@ fun resolveTapFocusPoint(
     ratioWtoH: Float,
 ): FocusPoint? {
     if (!tapX.isFinite() || !tapY.isFinite()) return null
-    if (!paneWidth.isFinite() || !paneHeight.isFinite() || !ratioWtoH.isFinite()) return null
-    if (paneWidth <= 0f || paneHeight <= 0f || ratioWtoH <= 0f) return null
-    if (tapX < 0f || tapX >= paneWidth) return null
-
-    val windowHeight = (paneWidth / ratioWtoH).coerceAtMost(paneHeight)
-    val barHeight = (paneHeight - windowHeight) / 2f
-    // Half-open, matching the mask: the bar Box covers [0, barHeight), so the row
-    // at barHeight is the window's first. When the pane is too short for the ratio
-    // the coercion collapses barHeight to 0 and the mask draws no bars — do not
-    // invent bars the user cannot see.
-    if (tapY < barHeight || tapY >= barHeight + windowHeight) return null
-
+    val window = previewWindowOf(paneWidth, paneHeight, ratioWtoH) ?: return null
+    if (!window.contains(tapX, tapY)) return null
     return FocusPoint(tapX, tapY)
 }
 
+/**
+ * The same tap as a normalized point **within the capture window**.
+ *
+ * Normalized against the window rather than the pane, on both axes. The x term used
+ * to divide by `paneWidth`, which was correct only while the window was always the
+ * pane's full width — true for 4:5 and 1:1, false for 16:9, whose pillarbox makes the
+ * window narrower than the pane. Left as it was, a tap at the window's right edge
+ * would have reported ~0.94 and the scene search would have restarted off-centre.
+ */
 fun resolveTapSceneAnchor(
     tapX: Float,
     tapY: Float,
@@ -90,25 +88,9 @@ fun resolveTapSceneAnchor(
     paneHeight: Float,
     ratioWtoH: Float,
 ): SceneAnchorPoint? {
-    val point = resolveTapPointInPreview(tapX, tapY, paneWidth, paneHeight, ratioWtoH) ?: return null
-    return SceneAnchorPoint(
-        x = (point.x / paneWidth).coerceIn(0f, 1f),
-        y = (point.y / point.windowHeight).coerceIn(0f, 1f),
-    )
-}
-
-private data class PreviewPoint(val x: Float, val y: Float, val windowHeight: Float)
-
-private fun resolveTapPointInPreview(
-    tapX: Float,
-    tapY: Float,
-    paneWidth: Float,
-    paneHeight: Float,
-    ratioWtoH: Float,
-): PreviewPoint? {
-    if (!tapX.isFinite() || !tapY.isFinite() || paneWidth <= 0f || paneHeight <= 0f || ratioWtoH <= 0f) return null
-    val windowHeight = (paneWidth / ratioWtoH).coerceAtMost(paneHeight)
-    val barHeight = (paneHeight - windowHeight) / 2f
-    if (tapX !in 0f..paneWidth || tapY < barHeight || tapY >= barHeight + windowHeight) return null
-    return PreviewPoint(tapX, tapY - barHeight, windowHeight)
+    if (!tapX.isFinite() || !tapY.isFinite()) return null
+    val window = previewWindowOf(paneWidth, paneHeight, ratioWtoH) ?: return null
+    if (!window.contains(tapX, tapY)) return null
+    val (nx, ny) = window.normalize(tapX, tapY)
+    return SceneAnchorPoint(x = nx, y = ny)
 }
