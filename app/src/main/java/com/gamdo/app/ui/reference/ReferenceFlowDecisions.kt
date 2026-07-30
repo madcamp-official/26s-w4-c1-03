@@ -205,8 +205,8 @@ fun shouldShowReferenceOverlay(
 ): Boolean = hasActiveReference && referenceSelected
 
 /**
- * Whether finishing 내 감도 만들기 should make that 감도 the camera's selected
- * style — the companion to [shouldShowReferenceOverlay]'s `referenceSelected`.
+ * Whether the camera should make 내 감도 its selected style — the companion to
+ * [shouldShowReferenceOverlay]'s `referenceSelected`.
  *
  * Gating the overlay on the *selection* creates a hole at the one moment the
  * user most expects to see it: the strip's 내 감도 slot appears unselected the
@@ -215,29 +215,38 @@ fun shouldShowReferenceOverlay(
  * button's mood dot still out, and no overlay. "적용" has to mean applied, so
  * applying selects.
  *
- * @param appliedKey identifies the 감도 that is active *because this session
- *   applied it* — in practice `activeReferenceImageUri.toString()`, which
- *   `GamdoNavHost` sets at the instant `apply()` succeeds and nowhere else.
- *   Null means either no reference or one merely restored from Room on launch,
- *   and a restored one must **not** be selected: that would silently override
- *   the onboarding style the user chose (§6-2) with a 감도 they made days ago.
- * @param lastAutoSelectedKey what this screen has already auto-selected. Held in
- *   `rememberSaveable` state by the caller, and it is the whole reason this is a
- *   function rather than a null-check: "select it once" and "select it on every
- *   recomposition" differ only here, and the second one makes the owner's
- *   "필터를 내 감도가 아닌 다른 것으로 바꾸면 없어져야 해" impossible — every
- *   attempt to pick a preset would be undone on the next frame. It must also
- *   survive a rebuilt composition (album round trip, rotation), or coming back
- *   to the camera would re-select a 감도 the user had deliberately switched off.
+ * ## Why the *sheet state*, and not "a reference exists" or a photo identity
  *
- * Known and accepted: re-picking the *same* photo while that photo's 감도 is
- * already the applied one does not re-select it, because the key has not
- * changed. It is a replace that replaces nothing, and paying for it would mean
- * carrying a per-apply counter through the host for a case the user cannot tell
- * apart from having done nothing.
+ * [ReferenceCreateState.Applied] is the only state that means "the flow just
+ * finished", and it is narrow in exactly the two directions this needs.
+ *
+ * It is **not** "a reference exists": a 감도 restored from Room on launch leaves
+ * the controller at [ReferenceCreateState.Idle], so a launch cannot silently
+ * override the onboarding style the user chose (§6-2) with a 감도 they made days
+ * ago and did not ask for today.
+ *
+ * It is **not** the applied photo's identity either, which is what an earlier
+ * version of this used and got wrong. Keyed on the picked `Uri`, re-making a
+ * 감도 from the *same photo* — or deleting one and making it again — produced
+ * the same key, so the effect never re-ran: the user watched the upload, the
+ * analysis and 적용됐어요, and nothing changed on the strip. Re-running the whole
+ * flow is not "having done nothing". The state passes through AwaitingConsent
+ * and Analyzing on the way, so keying on the state sees every completed run,
+ * identical photo or not.
+ *
+ * ## Why re-entering Applied cannot fight the user
+ *
+ * The concern this replaces a saved "already handled" marker with is a
+ * recomposition re-selecting 내 감도 after the user has deliberately switched to
+ * a preset — which would make the owner's "다른 필터로 바꾸면 없어져야 해"
+ * unachievable. It cannot happen, because Applied is not a resting state: the
+ * create sheet is modal over the whole app while it holds, and dismissing it is
+ * what returns the controller to Idle. There is no moment where the strip is
+ * reachable *and* the state is Applied, so the only compositions that can see
+ * Applied are ones where the user is still inside the flow.
  */
-fun shouldAutoSelectReference(appliedKey: String?, lastAutoSelectedKey: String?): Boolean =
-    appliedKey != null && appliedKey != lastAutoSelectedKey
+fun shouldAutoSelectReference(state: ReferenceCreateState): Boolean =
+    state is ReferenceCreateState.Applied
 
 // ---- what each ReferenceCreateState renders ---------------------------------
 

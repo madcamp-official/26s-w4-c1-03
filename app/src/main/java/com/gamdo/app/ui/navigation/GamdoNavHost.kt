@@ -47,6 +47,7 @@ import com.gamdo.app.ui.reference.ReferenceOverlayAlphaControl
 import com.gamdo.app.ui.reference.ReferenceOverlayLayer
 import com.gamdo.app.ui.reference.canRefine
 import com.gamdo.app.ui.reference.clampReferenceOverlayAlpha
+import com.gamdo.app.ui.reference.shouldAutoSelectReference
 import com.gamdo.app.ui.reference.shouldShowReferenceOverlay
 import com.gamdo.app.ui.result.ResultScreen
 import com.gamdo.app.ui.result.ResultTarget
@@ -305,11 +306,13 @@ fun GamdoNavHost(
                             alpha = overlayAlpha,
                         )
                     },
-                    // The slider, mounted outside the preview box. `overlayAlpha` is
-                    // the single value both halves read (P2 §2), and this callback is
-                    // the **only** write to it anywhere in the app — hiding the
-                    // overlay must not reset it, so returning to 내 감도 finds the
-                    // 투명도 the user set. `ReferenceOverlayAlphaTest` holds that.
+                    // The slider. Where it is mounted is `CameraPreviewPane`'s
+                    // business and deliberately not visible from here — see that
+                    // slot. `overlayAlpha` is the single value both halves read
+                    // (P2 §2), and this callback is the **only** write to it
+                    // anywhere in the app: hiding the overlay must not reset it, so
+                    // returning to 내 감도 finds the 투명도 the user set.
+                    // `ReferenceOverlayAlphaTest` holds that.
                     referenceOverlayControl = { referenceSelected ->
                         ReferenceOverlayAlphaControl(
                             imageUri = referenceOverlayImage(referenceSelected),
@@ -325,6 +328,12 @@ fun GamdoNavHost(
                     activeReferenceImageUri = activeReferenceImageUri,
                     activeReferenceStyle = activeReferenceStyle,
                     onOpenReferenceDetail = onOpenReferenceDetail,
+                    // "적용됐어요" has to mean the 감도 is the style in charge. The
+                    // camera cannot work this out for itself — the create flow's
+                    // state lives here — and it must not be inferred from a
+                    // reference merely *existing*, which is also true on every
+                    // launch that restores one from Room.
+                    referenceJustApplied = shouldAutoSelectReference(referenceState),
                 )
             }
 

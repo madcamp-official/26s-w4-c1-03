@@ -330,41 +330,48 @@ class ReferenceFlowDecisionsTest {
     //
     // The companion to the gate above. Making the overlay follow the selection
     // opens a hole at the moment 내 감도 만들기 finishes — the new strip slot is
-    // not selected yet — and this closes it. Its whole difficulty is doing so
-    // *once*: an effect that re-selected on every recomposition would undo the
-    // user's next filter tap and the owner's fix would never hold at all.
+    // not selected yet — and this closes it.
+    //
+    // The axis that matters is *narrowness*. Too wide and it fights the user:
+    // anything true while the strip is reachable would put 내 감도 back the
+    // frame after they picked a preset, and the owner's fix could never hold.
+    // Too narrow and the flow ends with nothing visibly applied. Only Applied
+    // is both, and these tests are that claim, one state at a time.
 
     @Test
-    fun `applying a 감도 in this session selects it`() {
-        assertEquals(true, shouldAutoSelectReference(appliedKey = "content://pick/1", lastAutoSelectedKey = null))
+    fun `finishing the flow selects the 감도`() {
+        assertEquals(true, shouldAutoSelectReference(ReferenceCreateState.Applied(sampleStyle())))
     }
 
     @Test
-    fun `having already selected it, a recomposition does not select it again`() {
-        // The regression that would break defect 2's fix: the user taps 깔끔한
-        // 소셜, `referenceSelected` goes false, and the very next frame this
-        // effect would put it back.
-        assertEquals(
-            false,
-            shouldAutoSelectReference(appliedKey = "content://pick/1", lastAutoSelectedKey = "content://pick/1"),
-        )
+    fun `no other flow state selects anything`() {
+        // Idle is the load-bearing one. It is where the controller sits on a
+        // launch that restored a 감도 from Room, and where it returns the moment
+        // the create sheet is dismissed — i.e. every moment the filter strip is
+        // reachable. If Idle selected, picking 깔끔한 소셜 would be undone on the
+        // next frame, and a launch would override the onboarding style (§6-2)
+        // with a 감도 the user made days ago.
+        for (state in statesWithoutActiveReference) {
+            assertEquals(
+                "state=$state must not auto-select",
+                false,
+                shouldAutoSelectReference(state),
+            )
+        }
     }
 
     @Test
-    fun `a reference restored from Room on launch is not selected`() {
-        // Null key = a 감도 that is active but was not applied in this session.
-        // Selecting it would override the onboarding style (§6-2) with a 감도 the
-        // user made days ago and did not ask for today.
-        assertEquals(false, shouldAutoSelectReference(appliedKey = null, lastAutoSelectedKey = null))
-        assertEquals(false, shouldAutoSelectReference(appliedKey = null, lastAutoSelectedKey = "content://pick/1"))
-    }
-
-    @Test
-    fun `replacing the 감도 with a different photo selects the new one`() {
-        assertEquals(
-            true,
-            shouldAutoSelectReference(appliedKey = "content://pick/2", lastAutoSelectedKey = "content://pick/1"),
-        )
+    fun `re-making a 감도 from the same photo still selects it`() {
+        // The regression this replaced: the trigger used to be the picked photo's
+        // Uri, so making a 감도 again from the *same* photo — or deleting one and
+        // making it again — produced the same key and the effect never re-ran.
+        // The user watched the upload, the analysis and 적용됐어요, and nothing
+        // changed on the strip. The flow passes through Analyzing on the way, so
+        // keying on the state sees every completed run whatever the photo was.
+        val sameStyleTwice = ReferenceCreateState.Applied(sampleStyle())
+        assertEquals(true, shouldAutoSelectReference(sameStyleTwice))
+        assertEquals(false, shouldAutoSelectReference(ReferenceCreateState.Analyzing))
+        assertEquals(true, shouldAutoSelectReference(ReferenceCreateState.Applied(sampleStyle())))
     }
 
     @Test

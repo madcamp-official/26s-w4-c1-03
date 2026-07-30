@@ -7,38 +7,43 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Pins where the 내 감도 투명도 slider is mounted, which is the whole of the
- * 2026-07-31 사용 불가 fix.
+ * Pins where the 내 감도 투명도 slider is mounted. Two defects live at that one
+ * decision, and they pull in opposite directions.
  *
- * ## The defect
+ * ## Defect A — inside the preview box, too low in the stack (2026-07-31, 사용 불가)
  *
- * The slider lived at the preview box's `BottomStart`, 12dp up. Two layers the
- * preview box mounts *above* the reference layer take it away, and neither is
- * removable:
+ * The slider sat at the preview box's `BottomStart`, 12dp up, drawn right after
+ * the reference photo. Two layers the pane mounts above it take it away, and
+ * neither can move:
  *
  *  - while any sheet is open, `CameraPreviewPane`'s topmost child is a
- *    transparent full-size `clickable(onDismissSheet)`, so Compose's hit test
- *    stops there and a drag on the slider's thumb closed the sheet instead of
- *    moving the slider. `CameraRedesignGuardTest` guards that layer's existence
- *    for its own good reasons — it is not going away.
+ *    transparent full-size `clickable(onDismissSheet)`. Compose hit-tests
+ *    siblings in reverse z-order and stops at the first pointer-input node, so a
+ *    drag on the slider's thumb closed the sheet instead of moving the slider.
  *  - the aspect mask's letterbox bars are opaque `Ink950` and are drawn over the
  *    reference layer so nothing spills onto them. At 4:5 on a phone pane those
- *    bars are tens of dp tall and swallow a control sitting 12dp off the bottom.
+ *    bars are tens of dp tall and swallow a control 12dp off the pane's bottom.
  *
- * So the fix is not a nicer offset inside the box — it is being outside the box,
- * as a sibling of the preview pane in the screen's Column. That is the same
- * structural argument the sheet slot already makes about the shutter row: a
- * sibling earlier in the Column cannot be covered by one later in it, whatever
- * height either turns out to have.
+ * ## Defect B — outside the preview box entirely
+ *
+ * The first fix for A moved the slider into the screen's Column, as a sibling of
+ * the pane. That does fix A, and it silently changed the **saved photo**: the
+ * pane takes `weight(1f)`, its ratio is the CameraX viewport, and the viewport
+ * crop runs before the aspect crop (`captureGeometryFor`). Measured on device at
+ * 4:5 — `pane=0.6475 → 2610×3263`, `pane=0.8163 → 2189×2736`. A sheet pays that
+ * while the user is looking at it; a row that stays for as long as 내 감도 is
+ * selected changes the field of view of every photo taken with it.
+ *
+ * So the mount has to satisfy both at once: **inside the pane** (so it takes no
+ * layout height from it) and **last** (above the mask and above the dismiss
+ * layer), inset to the visible window. That is what this file holds.
  *
  * ## Why source text
  *
- * The real property is a Compose hit-testing and layer-order fact and cannot be
- * evaluated here — no `androidTest`, no Robolectric, no Compose UI test in this
- * module. What is checkable is that the control is still a Column sibling rather
- * than back inside the preview, which is the single edit that reintroduces the
- * bug. Reading goes through [KotlinSourceProbe]; see that file for the two
- * stripper bugs that made an earlier guard pass while checking nothing.
+ * Layer order, hit testing and layout height are all Compose facts this module
+ * cannot evaluate — no `androidTest`, no Robolectric, no Compose UI test. Reading
+ * goes through [KotlinSourceProbe]; see that file for the two stripper bugs that
+ * made an earlier guard pass while checking nothing.
  */
 class ReferenceOverlayPlacementTest {
 
@@ -47,27 +52,40 @@ class ReferenceOverlayPlacementTest {
 
     private fun screenLines(): List<String> = KotlinSourceProbe.codeLines(screen)
     private fun stripLines(): List<String> = KotlinSourceProbe.codeLines(strip)
+    private fun screenCode(): String = screenLines().joinToString("\n")
 
-    private fun indentOf(line: String): Int = line.takeWhile { it == ' ' }.length
-
-    /** The `CameraPreviewPane(` **call**, not the private function that declares it. */
-    private fun paneCallIndex(): Int {
-        val index = screenLines().indexOfFirst {
-            it.contains("CameraPreviewPane(") && !it.contains("fun ")
+    /**
+     * Character range of a **call**'s argument list — from its `(` to the matching
+     * `)`, skipping the declaration of the same name.
+     *
+     * Parentheses rather than braces, because what is being asked is "is this text
+     * an *argument* of that call", and [KotlinSourceProbe.blockAt] answers about
+     * braces: pointed at a call it closes on the first lambda argument, and pointed
+     * at `fun CameraScreen(` it closes on a `= {}` parameter default. Comments are
+     * already blanked, so only code parentheses are counted.
+     */
+    private fun callArguments(code: String, marker: String): IntRange {
+        var from = 0
+        while (true) {
+            val start = code.indexOf(marker, from)
+            assertTrue("call site not found: $marker", start >= 0)
+            val declaration = code.lastIndexOf("fun ", start).let { it >= 0 && start - it <= 12 }
+            if (declaration) {
+                from = start + marker.length
+                continue
+            }
+            var depth = 0
+            var i = start + marker.length - 1
+            while (i < code.length) {
+                if (code[i] == '(') depth++
+                if (code[i] == ')') {
+                    depth--
+                    if (depth == 0) return start..i
+                }
+                i++
+            }
+            error("unbalanced parentheses after: $marker")
         }
-        assertTrue("could not find the CameraPreviewPane call site", index >= 0)
-        return index
-    }
-
-    private fun controlCallIndex(): Int {
-        val index = screenLines().indexOfFirst { it.contains("referenceOverlayControl(") }
-        assertTrue(
-            "the 투명도 slot is not called anywhere in CameraScreen. If it was renamed, " +
-                "repoint this test; if it was folded back into the preview box, read this " +
-                "class's KDoc first.",
-            index >= 0,
-        )
-        return index
     }
 
     @Test
@@ -81,51 +99,75 @@ class ReferenceOverlayPlacementTest {
         assertTrue(screenLines().any { it.contains("fun CameraScreen(") })
     }
 
+    // ---- defect B: the control must not take height from the preview pane ------
+
     @Test
-    fun `the slider is a sibling of the preview pane, not a child of it`() {
-        val lines = screenLines()
-        val pane = paneCallIndex()
-        val control = controlCallIndex()
+    fun `the slider is wired into the preview pane, never mounted beside it`() {
+        val code = screenCode()
+        val pane = callArguments(code, "CameraPreviewPane(")
+        val mounts = Regex("""referenceOverlayControl\(""").findAll(code).map { it.range.first }.toList()
         assertTrue(
-            "the 투명도 control must be mounted after the preview pane in the screen's " +
-                "Column (line ${control + 1} vs pane at line ${pane + 1})",
-            control > pane,
+            "the 투명도 slot is not invoked anywhere in CameraScreen. If it was " +
+                "renamed, repoint this test; if it was removed, read this class's KDoc.",
+            mounts.isNotEmpty(),
         )
+        val outside = mounts.filterNot { it in pane }.map { code.describeOffset(it) }
         assertEquals(
-            "the control must sit at the same nesting level as CameraPreviewPane, i.e. be " +
-                "a statement in the screen's Column. A deeper indent means it went back " +
-                "inside the preview box — where the sheet-dismiss layer eats its touches " +
-                "and the aspect mask hides it. Was: ${lines[control].trim()}",
-            indentOf(lines[pane]),
-            indentOf(lines[control]),
+            "every mount must be an argument of the CameraPreviewPane call. A mount " +
+                "outside it is a statement in the screen's Column, which takes layout " +
+                "height from the weight(1f) pane — and this screen's pane ratio is the " +
+                "CameraX viewport, so it narrows every saved photo. See the class KDoc " +
+                "for the device numbers.",
+            emptyList<String>(),
+            outside,
         )
     }
 
     @Test
-    fun `the slider is mounted above the sheet slot`() {
-        // The sheet cannot cover what the Column places before it. This is the
-        // half of the fix that makes "가려진다" structurally impossible rather
-        // than a matter of how tall the sheet happens to be.
-        val lines = screenLines()
-        val firstSheet = lines.indexOfFirst { it.contains("CameraSheetSlot(") && !it.contains("fun ") }
-        assertTrue("could not find a CameraSheetSlot call site", firstSheet >= 0)
-        assertTrue(
-            "the 투명도 control must come before the first sheet slot (control at line " +
-                "${controlCallIndex() + 1}, sheet at line ${firstSheet + 1})",
-            controlCallIndex() < firstSheet,
-        )
-    }
-
-    @Test
-    fun `the slot is called exactly once`() {
-        val calls = screenLines().count { it.contains("referenceOverlayControl(") }
+    fun `the slot is mounted exactly once`() {
+        val mounts = Regex("""referenceOverlayControl\(""").findAll(screenCode()).count()
         assertEquals(
-            "one mount point. Two would put the same slider in two places, and only one " +
-                "of them can be the one outside the preview box.",
+            "one mount point. Two would put the same slider in two places, and only " +
+                "one of them can be the one inside the pane.",
             1,
-            calls,
+            mounts,
         )
     }
+
+    // ---- defect A: it must be the pane's last child, inset to the window -------
+
+    @Test
+    fun `the slider is drawn after the sheet-dismiss layer`() {
+        val lines = screenLines()
+        val dismiss = KotlinSourceProbe.blockAt("if (dismissSheetOnTap)", lines)
+        val control = lines.indexOfFirst { it.contains("referenceControl()") }
+        assertTrue("the pane must invoke its referenceControl slot", control >= 0)
+        assertTrue(
+            "the slider must come after the dismiss layer (control at line " +
+                "${control + 1}, dismiss block ends at line ${dismiss.last + 1}). Before " +
+                "it, the dismiss clickable takes the DOWN and dragging the slider closes " +
+                "the sheet instead of moving it — the original 사용 불가 report.",
+            control > dismiss.last,
+        )
+    }
+
+    @Test
+    fun `the slider is inset to the aspect window rather than the pane`() {
+        // The mask's own bars, from `previewWindowOf`. Anchored to the pane instead,
+        // the control sits behind an opaque letterbox bar at 4:5.
+        val lines = screenLines()
+        val control = lines.indexOfFirst { it.contains("referenceControl()") }
+        assertTrue(control >= 0)
+        val dismiss = KotlinSourceProbe.blockAt("if (dismissSheetOnTap)", lines)
+        val mount = lines.subList(dismiss.last + 1, minOf(control + 2, lines.size)).joinToString("\n")
+        assertTrue(
+            "the mount must apply the mask's insets (barWidth/barHeight), or the " +
+                "control is positioned against the pane and lands on a bar:\n$mount",
+            mount.contains("barWidth") && mount.contains("barHeight"),
+        )
+    }
+
+    // ---- what the two composables may be --------------------------------------
 
     @Test
     fun `the photo layer no longer carries the slider`() {
@@ -133,8 +175,8 @@ class ReferenceOverlayPlacementTest {
         val layer = KotlinSourceProbe.blockAt("fun ReferenceOverlayLayer(", lines)
         val body = lines.subList(layer.first, layer.last + 1)
         assertTrue(
-            "ReferenceOverlayLayer mounts inside the preview box, so a Slider in it is " +
-                "the original defect. The control belongs in ReferenceOverlayAlphaControl.",
+            "ReferenceOverlayLayer is drawn under the mask and under the dismiss " +
+                "layer, so a Slider in it is the original defect exactly.",
             body.none { it.contains("Slider(") },
         )
         assertTrue(
@@ -145,20 +187,35 @@ class ReferenceOverlayPlacementTest {
     }
 
     @Test
-    fun `the control positions itself in flow, never against a Box`() {
-        // `align(Alignment.…)` only compiles inside a BoxScope, so its absence is
-        // evidence the control is not written to be dropped back into the preview
-        // box — which is what "sibling in a Column" means in Compose terms.
+    fun `the control stays small and does not position itself`() {
+        // Now that it is mounted *over* the gesture surface, its size is the size of
+        // the hole it punches in pinch / tap-to-focus / 올가미. P2: "작은 실제
+        // 컨트롤만 소비해야 카메라 제스처가 유지된다". A fillMaxWidth here would be
+        // the full-screen pointer handler that constraint forbids, arriving as a
+        // layout modifier rather than as a `pointerInput`.
+        //
+        // `align` is banned for a different reason: it only compiles inside a
+        // BoxScope, and where the control sits is the pane's business — only the
+        // pane knows where the visible window is.
         val lines = stripLines()
         val control = KotlinSourceProbe.blockAt("fun ReferenceOverlayAlphaControl(", lines)
         val offenders = lines.subList(control.first, control.last + 1).withIndex()
-            .filter { (_, line) -> line.contains(".align(") }
+            .filter { (_, line) ->
+                line.contains("fillMaxWidth") || line.contains("fillMaxSize") || line.contains(".align(")
+            }
             .map { (i, line) -> "line ${control.first + i + 1}: ${line.trim()}" }
         assertEquals(
-            "a BoxScope alignment here means the control is being positioned against " +
-                "the preview again",
+            "the 투명도 control must be content-sized and unpositioned",
             emptyList<String>(),
             offenders,
         )
     }
+}
+
+/** `line N: text` for a character offset into comment-stripped source. */
+private fun String.describeOffset(offset: Int): String {
+    val line = substring(0, offset).count { it == '\n' } + 1
+    val start = lastIndexOf('\n', offset - 1) + 1
+    val end = indexOf('\n', offset).let { if (it < 0) length else it }
+    return "line $line: ${substring(start, end).trim()}"
 }
