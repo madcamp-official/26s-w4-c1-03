@@ -93,3 +93,37 @@ def test_v2_policy_rejects_more_than_four_slots() -> None:
             json={"version": 2, "layoutId": "too-many", "slots": slots},
         )
     assert response.status_code == 422
+
+
+def test_shoot_session_enforces_five_photo_upload_limit() -> None:
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/shoot-sessions",
+            headers={"X-Device-Id": "owner-device"},
+            json={
+                "version": 2,
+                "layoutId": "portrait_full_center_v3",
+                "slots": [{
+                    "id": "person",
+                    "role": "PERSON",
+                    "visualKind": "PERSON_BRACKET",
+                    "bounds": {"left": 0.25, "top": 0.08, "right": 0.75, "bottom": 0.94},
+                    "preferredAspectRatio": 0.53,
+                }],
+            },
+        )
+        assert created.status_code == 201, created.text
+        token = created.json()["shareUrl"].rsplit("/", 1)[-1]
+
+        for index in range(5):
+            response = client.post(
+                f"/api/v1/shoot-upload/{token}",
+                files={"image": (f"shot-{index}.png", image_bytes(), "image/png")},
+            )
+            assert response.status_code == 201, response.text
+
+        sixth = client.post(
+            f"/api/v1/shoot-upload/{token}",
+            files={"image": ("shot-5.png", image_bytes(), "image/png")},
+        )
+        assert sixth.status_code == 409
