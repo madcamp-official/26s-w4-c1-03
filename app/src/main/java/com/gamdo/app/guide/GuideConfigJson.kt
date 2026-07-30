@@ -35,6 +35,7 @@ data class GuideConfigBundle(
     val scoring: ScoringConfigJson = ScoringConfigJson(),
     val stability: StabilityConfigJson = StabilityConfigJson(),
     val objectGuide: ObjectGuideConfigJson = ObjectGuideConfigJson(),
+    val sceneGuide: SceneGuideConfigJson = SceneGuideConfigJson(),
 ) {
     fun toGuideConfig(): GuideConfig = alignment.toGuideConfig()
 
@@ -47,6 +48,33 @@ data class GuideConfigBundle(
     fun toObjectTrackerConfig(): ObjectTrackerConfig = objectGuide.toTrackerConfig()
 
     fun toEfficientDetConfig(): EfficientDetSceneDetectorConfig = objectGuide.toEfficientDetConfig()
+}
+
+/** Configuration for the situation-first pipeline. Model readiness is explicit. */
+@Serializable
+data class SceneGuideConfigJson(
+    val enabled: Boolean = true,
+    val classifierAsset: String? = null,
+    val classifierInputSize: Int = 224,
+    val classifierMinimumConfidence: Float = 0.65f,
+    val instanceSegmenterAsset: String? = null,
+    val instanceSegmenterInputSize: Int = 640,
+    val instanceSegmenterEnabled: Boolean = false,
+    val instanceSegmenterMaxRunsPerSearch: Int = 3,
+) {
+    init {
+        require(classifierInputSize == 224)
+        require(classifierMinimumConfidence in 0f..1f)
+        require(instanceSegmenterInputSize in 320..1024)
+        require(instanceSegmenterMaxRunsPerSearch in 1..3)
+    }
+
+    /** False until a verified trained classifier asset is bundled. */
+    val classifierReady: Boolean get() = enabled && !classifierAsset.isNullOrBlank()
+
+    /** False until a verified YOLO11n-seg LiteRT asset and license notice exist. */
+    val instanceSegmenterReady: Boolean
+        get() = instanceSegmenterEnabled && !instanceSegmenterAsset.isNullOrBlank()
 }
 
 /**

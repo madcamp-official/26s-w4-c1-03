@@ -118,3 +118,24 @@ CameraX Preview / Analysis / Capture
 | SceneInterestRegion | 자동 탐색이 우선하는 중심 피사체 영역 |
 | StableSceneTracker | 새 검출을 누적해 고정할 피사체 그룹을 결정하는 온디바이스 로직 |
 | 재탐색 | 현재 자동 레이아웃 고정을 해제하고 현 장면을 다시 분석하는 동작 |
+
+## 9. 2026-07-30 상황 우선 가이드 V2 교체 계약
+
+현재 객체 수 중심 자동 템플릿을 즉시 삭제하지는 않지만, 새 카메라 계약의 P2 공개 경계는
+`guide/SceneModeGuide.kt`를 기준으로 한다.
+
+- `CaptureSceneMode`는 `AUTO`, `PORTRAIT`, `ENVIRONMENTAL_PORTRAIT`, `CAFE_FOOD`,
+  `TRAVEL_LANDSCAPE`, `STILL_LIFE`를 제공한다.
+- `SceneGuideSessionController.sceneModeDecision`은 Auto 제안 또는 사용자 선택을 전달한다.
+  사용자 선택은 `USER` 출처로 고정되며 재탐색이 덮어쓰지 않는다. Auto 신뢰도가 0.65 미만이면
+  임의 모드를 확정하지 않는다.
+- `guideMarks`는 `GuideMark.SubjectDot`, `GuideMark.PersonSilhouette`,
+  `GuideMark.HorizonLine`만 노출한다. raw detector box, 라벨, confidence, track ID와 슬롯
+  채움 상태는 P1 화면으로 전달·표시하지 않는다.
+- 객체 점의 개수는 선택된 안정 객체와 1:1이며, 좌표는 현재 물체를 추적하지 않는 고정 템플릿에서
+  나온다. 인물은 얼굴/person box 기반 고정 실루엣을 사용한다.
+- `sceneGuide` 설정의 classifier/instance-segmenter asset이 null이면 해당 모델은 준비되지 않은
+  상태다. MobileNetV3 장면 분류기와 YOLO11n-seg LiteRT를 번들하기 전까지는 모델이 준비됐다고
+  주장하지 않고 보수적 휴리스틱 또는 수동 프레임으로 축소한다.
+- P1은 모드 선택 UI와 점·링·실루엣 렌더링만 연결한다. P2는 `SceneTechniqueSelector`와
+  모델 readiness를 소유하며 화면 파일을 수정하지 않는다.
