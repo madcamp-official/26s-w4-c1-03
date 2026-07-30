@@ -111,6 +111,7 @@ import com.gamdo.app.data.preset.StylePreset
 import com.gamdo.app.detect.DetectionResult
 import com.gamdo.app.guide.toSceneObservation
 import com.gamdo.app.detect.toAnalysisFrame
+import com.gamdo.app.guide.GuideLayoutState
 import com.gamdo.app.guide.LayoutPreviewSlot
 import com.gamdo.app.guide.LayoutTemplateSummary
 import com.gamdo.app.guide.SceneSearchScope
@@ -345,7 +346,8 @@ private class SceneDetectorLease(
  *   reference. Only its composition half is consumed here (as a [StyleTarget]
  *   via [toStyleTarget]) — the color half is a result-screen concern (§5-2:
  *   "촬영 구도·촬영 후 색감에 적용").
- * @param onDeleteReference the reference slot's `×` badge (삭제).
+ * @param onOpenReferenceDetail the reference slot's `⋯` badge — opens 내 감도 상세,
+ *   where 취향 정교화 and 삭제 both live. It no longer deletes: see [MyReferenceThumb].
  */
 @Composable
 fun CameraScreen(
@@ -359,7 +361,18 @@ fun CameraScreen(
     hasActiveReference: Boolean = false,
     activeReferenceImageUri: Uri? = null,
     activeReferenceStyle: ResolvedStyle? = null,
-    onDeleteReference: () -> Unit = {},
+    onOpenReferenceDetail: () -> Unit = {},
+    /**
+     * P2 §5 나 찍어줘 — hand the layout on screen to a friend's browser.
+     *
+     * Nullable and defaulted to null so the control is *absent*, not disabled, in a
+     * build that has not wired it: P2's own §5 says an unconnected QR feature is left
+     * off the product surface rather than shown greyed out. The parameter takes the
+     * layout rather than reading it from a shared holder because
+     * `GuideLayoutState.Fixed` is what the QR screen turns into a `ShootPolicyV2`, and
+     * handing over the value the user is actually looking at is the whole contract.
+     */
+    onOpenDelegatedShoot: ((GuideLayoutState) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     // **The Activity's lifecycle, not this destination's.** Inside a
@@ -757,6 +770,28 @@ fun CameraScreen(
             onToggleGuide = { guideVisible = !guideVisible },
             aspect = aspect,
             onToggleAspect = { aspect = aspect.toggled() },
+            // 나 찍어줘. Null when the host has not wired the hand-off, which is what
+            // keeps the control out of the bar entirely rather than in it and inert.
+            onOpenDelegatedShoot = onOpenDelegatedShoot?.let { open ->
+                {
+                    // "자동 레이아웃이 없으면 QR을 조용히 생성하지 않는다" (P2 §5). The
+                    // policy is built *from* the fixed template, so handing over a
+                    // Searching state would either send a wrong framing or land the QR
+                    // screen on its 넘길 구도가 없어요 dead end for a reason the user
+                    // cannot see from the camera.
+                    //
+                    // So the no-layout branch opens the frame sheet instead. That is
+                    // P2's "기본 프레임을 먼저 고르게 하거나 취소할 수 있어야 한다" with
+                    // the control that already exists for exactly this — 12 manual
+                    // frames, and dismissing the sheet is the cancel. Once a frame is
+                    // fixed the same button hands it over.
+                    when (val layout = layoutState) {
+                        is GuideLayoutState.Fixed -> open(layout)
+                        GuideLayoutState.Searching ->
+                            storedMode = CameraPanels.toggled(overlayMode, CameraOverlayMode.FRAME_SHEET)
+                    }
+                }
+            },
             settingsAvailable = CameraPanels.settingsSheetAvailable(BuildConfig.DEBUG),
             onToggleSettings = {
                 storedMode = CameraPanels.toggled(overlayMode, CameraOverlayMode.SETTINGS_SHEET)
@@ -934,9 +969,9 @@ fun CameraScreen(
                     referenceSelected = true
                     storedMode = CameraPanels.filterPicked(overlayMode)
                 },
-                onDeleteReference = {
+                onOpenReferenceDetail = {
                     referenceSelected = false
-                    onDeleteReference()
+                    onOpenReferenceDetail()
                 },
             )
         }
@@ -1290,6 +1325,8 @@ private fun CameraTopBar(
     onToggleSettings: () -> Unit,
     areaSelectArmed: Boolean,
     onToggleAreaSelect: () -> Unit,
+    /** 나 찍어줘, or null to leave the control out of the bar. */
+    onOpenDelegatedShoot: (() -> Unit)?,
     referenceEntry: @Composable () -> Unit,
     demoControls: @Composable () -> Unit,
 ) {
@@ -1364,6 +1401,23 @@ private fun CameraTopBar(
                         color = if (guideVisible) Amber else IconInactive,
                     ),
                 )
+            }
+
+            // 나 찍어줘 — an auxiliary action, which is where P2 §5 asks for it
+            // ("셔터 주변의 항상 노출된 주 조작으로 만들 필요는 없다"). Never amber:
+            // it opens another screen rather than arming a mode, and amber in this bar
+            // means "this is on".
+            if (onOpenDelegatedShoot != null) {
+                BarIconButton(onClick = onOpenDelegatedShoot, contentDescription = "나 찍어줘") {
+                    StrokeIcon(
+                        pathData = CameraIconPaths.SHARE,
+                        viewBox = 24f,
+                        size = 19.dp,
+                        strokeWidth = 1.8f,
+                        color = IconInactive,
+                        dots = CameraIconPaths.SHARE_NODES,
+                    )
+                }
             }
 
             // 재탐색 stays where the owner put it (2026-07-28) — the preview's
@@ -1519,7 +1573,7 @@ private fun CameraFilterSheet(
     referenceSelected: Boolean,
     activeReferenceImageUri: Uri?,
     onSelectReference: () -> Unit,
-    onDeleteReference: () -> Unit,
+    onOpenReferenceDetail: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -1540,7 +1594,7 @@ private fun CameraFilterSheet(
             referenceSelected = referenceSelected,
             activeReferenceImageUri = activeReferenceImageUri,
             onSelectReference = onSelectReference,
-            onDeleteReference = onDeleteReference,
+            onOpenReferenceDetail = onOpenReferenceDetail,
         )
     }
 }
@@ -1740,7 +1794,7 @@ private fun CameraStyleStrip(
     referenceSelected: Boolean,
     activeReferenceImageUri: Uri?,
     onSelectReference: () -> Unit,
-    onDeleteReference: () -> Unit,
+    onOpenReferenceDetail: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // Reserve the row even with nothing to put in it. `presets` arrives from disk, and a
@@ -1833,7 +1887,7 @@ private fun CameraStyleStrip(
                     imageUri = activeReferenceImageUri,
                     selected = referenceSelected,
                     onSelect = onSelectReference,
-                    onDelete = onDeleteReference,
+                    onOpenDetail = onOpenReferenceDetail,
                 )
             }
         }

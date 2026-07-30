@@ -176,6 +176,34 @@ object CameraIconPaths {
             "H3.2A1.2 1.2 0 0 1 2 12.8Z" +
             "M4.4 5.6h3.2v4.8H4.4ZM9.4 5.6h2.2v2.6H9.4Z"
 
+    /**
+     * 나 찍어줘 — the two connecting strokes of Feather `share-2`; the three nodes are
+     * [SHARE_NODES]. viewBox 24, stroke 1.8, 19dp.
+     *
+     * Not from the mock, same standing as [FRAME]: the design has no hand-off control,
+     * so the glyph is P1's. Share rather than a QR square because 가이드 is already four
+     * corner brackets and a QR mark reads as the same picture at 19dp — and because the
+     * QR is a means here, not the point. What the user is doing is handing this framing
+     * to someone else.
+     */
+    const val SHARE: String = "M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"
+
+    /**
+     * 나 찍어줘's three nodes. Hollow — [IconDot.fill] is transparent rather than a
+     * surface colour, because this bar floats over the live preview and there is no
+     * backdrop to match. [SETTINGS]'s knobs can be filled precisely because the design
+     * has them riding an opaque rail.
+     *
+     * A `val`, not a function taking a colour: [IconDot.stroked] draws the outline in
+     * [StrokeIcon]'s own colour, so the active/inactive state follows the glyph without
+     * this list knowing about it.
+     */
+    val SHARE_NODES: List<IconDot> = listOf(
+        IconDot(cx = 18f, cy = 5f, r = 2.6f, fill = Color.Transparent, stroked = true),
+        IconDot(cx = 6f, cy = 12f, r = 2.6f, fill = Color.Transparent, stroked = true),
+        IconDot(cx = 18f, cy = 19f, r = 2.6f, fill = Color.Transparent, stroked = true),
+    )
+
     /** The 설정 glyph's two knobs, riding the rails at 6.5 and 15.5. */
     fun settingsKnobs(background: Color): List<IconDot> = listOf(
         IconDot(cx = 8.5f, cy = 6.5f, r = 2.4f, fill = background, stroked = true),

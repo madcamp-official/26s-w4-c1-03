@@ -187,7 +187,8 @@ private fun seedFor(
  *   can be null even when a reference is active).
  * @param onCreateReference O-10's leading `+` — opens the same picker/flow as
  *   the camera screen's.
- * @param onDeleteReference the reference slot's `×` badge (삭제).
+ * @param onOpenReferenceDetail the reference slot's `⋯` badge — opens 내 감도 상세,
+ *   where 취향 정교화 and 삭제 both live. It no longer deletes: see [MyReferenceThumb].
  *
  * O-10's `AI로 보정` slot (AI 3 / 사진 살리기) is wired **inside** this screen rather
  * than handed out as a callback: unlike AI 2, whose flow starts from either camera or
@@ -206,7 +207,7 @@ fun ResultScreen(
     activeReferenceStyle: ResolvedStyle? = null,
     activeReferenceImageUri: Uri? = null,
     onCreateReference: () -> Unit = {},
-    onDeleteReference: () -> Unit = {},
+    onOpenReferenceDetail: () -> Unit = {},
 ) {
     val sourceKind = target.kind
     val context = LocalContext.current
@@ -1111,7 +1112,7 @@ fun ResultScreen(
                         // reference removes the catalogue item, and the holder moves
                         // `selectedId` off an id it no longer carries. One rule, in
                         // the place that owns the list.
-                        onDelete = onDeleteReference,
+                        onOpenDetail = onOpenReferenceDetail,
                     )
                 }
             }

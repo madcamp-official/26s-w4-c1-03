@@ -3,6 +3,7 @@ package com.gamdo.app.ui.navigation
 import android.content.ContentUris
 import android.net.Uri
 import android.provider.MediaStore
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -38,8 +39,12 @@ import com.gamdo.app.ui.album.AlbumScreen
 import com.gamdo.app.ui.camera.CameraScreen
 import com.gamdo.app.ui.onboarding.OnboardingScreen
 import com.gamdo.app.ui.reference.DEFAULT_REFERENCE_OVERLAY_ALPHA
+import com.gamdo.app.ui.reference.MAX_REFINE_PHOTOS
+import com.gamdo.app.ui.reference.ProfileRefineState
 import com.gamdo.app.ui.reference.ReferenceCreateSheet
+import com.gamdo.app.ui.reference.ReferenceDetailSheet
 import com.gamdo.app.ui.reference.ReferenceOverlayLayer
+import com.gamdo.app.ui.reference.canRefine
 import com.gamdo.app.ui.reference.clampReferenceOverlayAlpha
 import com.gamdo.app.ui.reference.shouldShowReferenceOverlay
 import com.gamdo.app.ui.result.ResultScreen
@@ -138,19 +143,25 @@ fun GamdoNavHost(
     var pendingShootLayout by remember { mutableStateOf<GuideLayoutState?>(null) }
 
     /**
-     * The camera's entry point into the hand-off — the seam, ready and unoccupied.
+     * The camera's entry point into the hand-off, wired.
      *
-     * `CameraScreen` would take this as
-     * `onOpenDelegatedShoot: ((GuideLayoutState) -> Unit)? = null` and invoke it from a
-     * tap with `layoutState.value`, never from a `LaunchedEffect`. It is not passed
-     * below, by owner decision (2026-07-30): the delegated web page is not deployed —
-     * `gamdo-web/dist` is absent and the server answers `/shoot/{token}` with
-     * 503 `web_not_built` — so a button would be a control that cannot work, and P2's
-     * own §5 says an unconnected QR feature is to be left off the product surface and
-     * marked 미구현 rather than shown. Wiring it is one argument at the `CameraScreen`
-     * call below plus one button in that file.
+     * It was deliberately left unpassed until 2026-07-30 on the grounds that the
+     * delegated web page was not deployed — the note here said the server answered
+     * `/shoot/{token}` with 503 `web_not_built`. **That is no longer true and the
+     * measurement says so**: `/shoot/{token}` returns 200 with the Vite build's
+     * `index.html`. The web is deployed; only this repo's working tree lacks
+     * `gamdo-web/dist`, which says nothing about the server.
+     *
+     * One server-side defect remains and it is not P1's to fix: `main.py` mounts
+     * `/web-assets` at `dist/assets`, while the served `index.html` asks for
+     * `/web-assets/assets/…`, so the JS and CSS 404 and the friend's page renders
+     * white. `/web-assets/index-<hash>.js` is where the file actually is. Reported to
+     * P2 in `docs/P1_브리프응답_결함진단과조치_2026-07-30.md`; owner decided on
+     * 2026-07-30 to expose the entry point now rather than wait for it.
+     *
+     * Invoked from a tap with the layout on screen, never from a `LaunchedEffect` —
+     * see `CameraScreen`'s parameter of the same name for the no-layout branch.
      */
-    @Suppress("UNUSED_VARIABLE")
     val onOpenDelegatedShoot: (GuideLayoutState) -> Unit = { layout ->
         pendingShootLayout = layout
         navController.navigate(Routes.SHOOT)
@@ -173,6 +184,49 @@ fun GamdoNavHost(
         activeReferenceImageUri = null
         activeReferenceStyle = null
     }
+
+    // ---- 취향 더 정교하게 만들기 (요구사항 2026-07-30, 6bef31b) ----
+
+    // The 내 감도 상세 sheet, and the refinement that lives in it. Hosted here for the
+    // same reason `ReferenceCreateSheet` is: the strip's 내 감도 slot is drawn by both
+    // the camera and the result screen, so the surface behind it cannot belong to
+    // either one.
+    var referenceDetailOpen by rememberSaveable { mutableStateOf(false) }
+    var refineState by remember { mutableStateOf<ProfileRefineState>(ProfileRefineState.Idle) }
+    // Multi-select, bounded by P2's own `MAX_PHOTOS` so the picker cannot return more
+    // than `refineFromPhotos` will keep — asking for more and silently dropping the
+    // tail is the picker lying about what it collected.
+    val refinePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(MAX_REFINE_PHOTOS),
+    ) { uris ->
+        // An empty result is a cancel — `PickMultipleVisualMedia` reports the two the
+        // same way — so it must not be sent. `refineFromPhotos` requires at least one
+        // photo and throws otherwise, which would surface as a failure the user caused
+        // by changing their mind.
+        if (canRefine(uris.size, refineState)) {
+            refineState = ProfileRefineState.Analyzing(uris.size)
+            scope.launch {
+                val result = runCatching {
+                    container.profileRefinementRepository.refineFromPhotos(context, uris)
+                }
+                refineState = result.fold(
+                    onSuccess = { ProfileRefineState.Done(uris.size) },
+                    onFailure = { failure ->
+                        Log.w("GamdoNavHost", "profile refinement failed", failure)
+                        // `refineFromPhotos` raises IllegalStateException for the one
+                        // cause a retry cannot fix — no onboarding profile to merge
+                        // into. Everything else (a decode, the network, the cache) is
+                        // worth another tap.
+                        ProfileRefineState.Failed(retryable = failure !is IllegalStateException)
+                    },
+                )
+            }
+        }
+    }
+    val onRefineProfile: () -> Unit = {
+        refinePickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+    }
+    val onOpenReferenceDetail: () -> Unit = { referenceDetailOpen = true }
     // Every path that ends the flow *without* applying funnels through here —
     // the scrim tap, 취소 on consent/preview, 닫기 on a non-retryable error, and
     // 닫기 on Applied (harmless there: `activeReferenceImageUri` was already
@@ -218,6 +272,7 @@ fun GamdoNavHost(
                 CameraScreen(
                     container = container,
                     onOpenAlbum = { navController.navigate(Routes.ALBUM) },
+                    onOpenDelegatedShoot = onOpenDelegatedShoot,
                     // §5-2: the *active* reference's photo, translucent, over the
                     // live preview — never the sheet's transient pick (device
                     // bug, 2026-07-29; see this function's KDoc). Gated on
@@ -242,7 +297,7 @@ fun GamdoNavHost(
                     hasActiveReference = activeReferenceStyle != null,
                     activeReferenceImageUri = activeReferenceImageUri,
                     activeReferenceStyle = activeReferenceStyle,
-                    onDeleteReference = onDeleteReference,
+                    onOpenReferenceDetail = onOpenReferenceDetail,
                 )
             }
 
@@ -274,7 +329,7 @@ fun GamdoNavHost(
                     activeReferenceStyle = activeReferenceStyle,
                     activeReferenceImageUri = activeReferenceImageUri,
                     onCreateReference = onCreateReference,
-                    onDeleteReference = onDeleteReference,
+                    onOpenReferenceDetail = onOpenReferenceDetail,
                     // AI 3's slot (O-10) — deliberately wired to nothing here; see
                     // the integration task's explicit instruction not to
                     // implement AI 3 behaviour.
@@ -366,7 +421,7 @@ fun GamdoNavHost(
                     activeReferenceStyle = activeReferenceStyle,
                     activeReferenceImageUri = activeReferenceImageUri,
                     onCreateReference = onCreateReference,
-                    onDeleteReference = onDeleteReference,
+                    onOpenReferenceDetail = onOpenReferenceDetail,
                 )
             }
         }
@@ -381,6 +436,26 @@ fun GamdoNavHost(
             onConfirmUpload = { referenceController.confirmUpload(context) },
             onRetry = { referenceController.confirmUpload(context) },
             onApply = { pickedScope -> referenceController.apply(pickedScope) },
+        )
+
+        // 내 감도 상세. Above the NavHost for the same reason as the create sheet —
+        // the slot that opens it is drawn on two screens.
+        ReferenceDetailSheet(
+            opened = referenceDetailOpen && activeReferenceStyle != null,
+            imageUri = activeReferenceImageUri,
+            refineState = refineState,
+            onRefine = onRefineProfile,
+            onDelete = {
+                onDeleteReference()
+                referenceDetailOpen = false
+            },
+            onDismiss = {
+                referenceDetailOpen = false
+                // The outcome belongs to the visit that produced it. Left standing, a
+                // 완료 from ten minutes ago greets the next person to open the sheet as
+                // though it had just happened.
+                refineState = ProfileRefineState.Idle
+            },
         )
     }
 }
