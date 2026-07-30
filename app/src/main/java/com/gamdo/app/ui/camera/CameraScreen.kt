@@ -70,7 +70,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.gamdo.app.BuildConfig
 import com.gamdo.app.camera.AnalysisPauseGate
 import com.gamdo.app.camera.AnalysisStats
@@ -228,7 +227,14 @@ fun CameraScreen(
     onDeleteReference: () -> Unit = {},
 ) {
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
+    // **The Activity's lifecycle, not this destination's.** Inside a
+    // Navigation-Compose `composable { }`, `LocalLifecycleOwner` is the
+    // NavBackStackEntry, and binding CameraX to it made navigating to the album
+    // detach the use cases and abort the in-flight capture from underneath us —
+    // `ImageCapture.onStateDetached`, 7ms after the tap, before any code of ours
+    // ran. See [rememberCameraBindingOwner]; this file must not read
+    // `LocalLifecycleOwner` again, and `CameraBindingOwnerTest` enforces that.
+    val cameraLifecycleOwner = rememberCameraBindingOwner()
     val scope = rememberCoroutineScope()
 
     val controller = remember { CameraController(context) }
@@ -524,7 +530,7 @@ fun CameraScreen(
             // [CameraTeardownGate] for the two things that makes safe — a handed-off
             // release must not tear down the *next* screen's camera, and it must not
             // fail to happen at all.
-            cameraTeardownGate.screenDisposed { controller.unbind() }?.invoke()
+            releaseCamera("dispose", cameraTeardownGate.screenDisposed { controller.unbind() })
             if (cameraTeardownGate.hasDeferredTeardown) scheduleTeardownWatchdog()
             // Resume guarantee 2 of 3 (see AnalysisPauseGate): the shutter's
             // `finally` cannot run if its coroutine was cancelled by this very
@@ -566,7 +572,7 @@ fun CameraScreen(
                 .fillMaxWidth()
                 .padding(top = 8.dp),
             controller = controller,
-            lifecycleOwner = lifecycleOwner,
+            cameraLifecycleOwner = cameraLifecycleOwner,
             aspect = aspect,
             overlay = overlay,
             rollDeg = tilt.rollDeg,
@@ -829,12 +835,52 @@ fun CameraScreen(
                         // us. Null in the ordinary case — and null too when someone
                         // else already spent the release, which is what keeps a late
                         // arrival from unbinding a camera that is back on screen.
-                        cameraTeardownGate.captureFinished(teardownToken)?.invoke()
+                        releaseCamera("shutter", cameraTeardownGate.captureFinished(teardownToken))
                         capturing = false
                     }
                 }
             },
         )
+    }
+}
+
+/**
+ * Runs a camera release [CameraTeardownGate] handed back, or does nothing when it
+ * handed back nothing.
+ *
+ * ## Why every release goes through one function
+ *
+ * The camera is bound to the **Activity** (see [rememberCameraBindingOwner]), so
+ * leaving the camera screen no longer detaches it. That was previously a safety
+ * net underneath every mistake in this file: whatever we forgot, navigating away
+ * cleaned it up. It is gone, and what replaces it is an argument that has to hold
+ * link by link:
+ *
+ *  1. `bind()` is called from the `AndroidView` factory and nowhere else, so a
+ *     binding exists only for a composition that was **applied** — an abandoned
+ *     one never creates the node. (`CameraBindingOwnerTest` pins both halves.)
+ *  2. An applied composition always runs its `DisposableEffect`'s `onDispose`.
+ *  3. `onDispose` always asks the gate, never unbinds directly
+ *     (`CameraTeardownGateTest`).
+ *  4. The gate either hands the release back immediately or records a deferral —
+ *     never neither, and a recorded deferral is always visible as
+ *     [CameraTeardownGate.hasDeferredTeardown].
+ *  5. A deferral always gets [scheduleTeardownWatchdog], which fires on the main
+ *     looper — which runs while the Activity is stopped, so backgrounding cannot
+ *     postpone it.
+ *  6. And any deferral still outstanding is spent by the next
+ *     [CameraTeardownGate.releaseBeforeBind].
+ *
+ * So every binding is released within about four seconds of its screen going
+ * away. This function closes the one silent gap left in that chain: a release
+ * that throws. Logged rather than rethrown because the alternative is crashing
+ * the app during a navigation, and step 6 still recovers — the next time the user
+ * opens the camera, the stale binding is torn down before the new one is made.
+ */
+private fun releaseCamera(where: String, release: (() -> Unit)?) {
+    if (release == null) return
+    runCatching(release).onFailure {
+        Log.e(TAG, "camera release failed at '$where'; camera stays open until the next bind", it)
     }
 }
 
@@ -857,15 +903,16 @@ fun CameraScreen(
 private fun scheduleTeardownWatchdog() {
     Handler(Looper.getMainLooper()).postDelayed(
         {
-            cameraTeardownGate.releaseIfExpired()?.let { release ->
+            val expired = cameraTeardownGate.releaseIfExpired()
+            if (expired != null) {
                 Log.w(
                     TAG,
                     "camera teardown waited ${cameraTeardownGate.maxDeferMs}ms for a capture " +
                         "that never finished; releasing anyway " +
                         "(expiredDefers=${cameraTeardownGate.expiredDefers})",
                 )
-                release()
             }
+            releaseCamera("watchdog", expired)
         },
         // The gate's deadline is nanoTime-based and this post is uptimeMillis-based.
         // Landing a hair *early* would find the deferral unexpired and never come
@@ -1172,7 +1219,13 @@ private fun BarChip(onClick: () -> Unit, content: @Composable RowScope.() -> Uni
 private fun CameraPreviewPane(
     modifier: Modifier,
     controller: CameraController,
-    lifecycleOwner: LifecycleOwner,
+    /**
+     * What CameraX is bound to. Must come from [rememberCameraBindingOwner] — the
+     * Activity — and never from `LocalLifecycleOwner`, which inside a
+     * Navigation-Compose destination is that destination's back-stack entry and
+     * detaches the camera the moment the user leaves the screen.
+     */
+    cameraLifecycleOwner: LifecycleOwner,
     aspect: CaptureAspect,
     overlay: OverlayData?,
     rollDeg: Float,
@@ -1249,7 +1302,7 @@ private fun CameraPreviewPane(
                 // does not yet exist. The capture it was waiting for is lost, which
                 // is the right trade — a photo is worth less than a working camera,
                 // and two cameras cannot have the hardware at once.
-                cameraTeardownGate.releaseBeforeBind()?.invoke()
+                releaseCamera("rebind", cameraTeardownGate.releaseBeforeBind())
                 PreviewView(ctx).apply {
                     // Implementation mode is left at CameraX's PERFORMANCE default,
                     // i.e. a SurfaceView.
@@ -1270,7 +1323,7 @@ private fun CameraPreviewPane(
                     }
                     scaleType = PreviewView.ScaleType.FILL_CENTER
                     this.controller = controller.camera
-                    controller.bind(lifecycleOwner)
+                    controller.bind(cameraLifecycleOwner)
                     previewView = this
                     // §7-1: the preview rate, measured rather than inferred from the
                     // analysis rate. Reports why it could not attach when it cannot.

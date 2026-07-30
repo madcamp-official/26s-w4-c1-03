@@ -90,6 +90,56 @@ class CameraTeardownGateTest {
         assertEquals(1, camera.released)
     }
 
+    /**
+     * The invariant the caller's watchdog scheduling rests on.
+     *
+     * `onDispose` reads `if (hasDeferredTeardown) scheduleTeardownWatchdog()`. If
+     * [screenDisposed] could ever return null *without* leaving the deferral
+     * visible, that branch would not fire and the release would have no timer at
+     * all — and since the camera is bound to the Activity now, nothing else would
+     * ever come for it. So: exactly one of "handed back" or "visibly deferred", on
+     * every path.
+     */
+    @Test
+    fun `disposing always either releases or leaves a visible deferral`() {
+        for (inFlight in 0..3) {
+            val gate = gate()
+            val camera = Camera("only")
+            repeat(inFlight) { gate.captureStarted() }
+
+            val release = gate.screenDisposed(nowNs = t0, teardown = camera.unbind)
+
+            assertEquals(
+                "with $inFlight capture(s) in flight, exactly one of {handed back, " +
+                    "deferred} must be true — never neither, which is a camera nobody " +
+                    "will release, and never both.",
+                release == null,
+                gate.hasDeferredTeardown,
+            )
+        }
+    }
+
+    @Test
+    fun `every claim path clears the deferral it spent`() {
+        val byCapture = gate()
+        val token = byCapture.captureStarted()
+        byCapture.screenDisposed(nowNs = t0, teardown = Camera("a").unbind)
+        byCapture.captureFinished(token)
+        assertFalse("captureFinished must clear it", byCapture.hasDeferredTeardown)
+
+        val byBind = gate()
+        byBind.captureStarted()
+        byBind.screenDisposed(nowNs = t0, teardown = Camera("b").unbind)
+        byBind.releaseBeforeBind()
+        assertFalse("releaseBeforeBind must clear it", byBind.hasDeferredTeardown)
+
+        val byWatchdog = gate()
+        byWatchdog.captureStarted()
+        byWatchdog.screenDisposed(nowNs = t0, teardown = Camera("c").unbind)
+        byWatchdog.releaseIfExpired(msAfter(4_000))
+        assertFalse("the watchdog must clear it", byWatchdog.hasDeferredTeardown)
+    }
+
     // ---- a late release must not touch a live camera --------------------
 
     /**
@@ -305,8 +355,7 @@ class CameraTeardownGateTest {
 
     private val screenSource = File("src/main/java/com/gamdo/app/ui/camera/CameraScreen.kt")
 
-    private fun code(): List<String> =
-        screenSource.readText().lines().map { it.substringBefore("//") }
+    private fun code(): List<String> = KotlinSourceProbe.codeLines(screenSource)
 
     @Test
     fun `the screen never unbinds without asking the gate`() {

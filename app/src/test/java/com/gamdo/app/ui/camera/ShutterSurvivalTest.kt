@@ -36,12 +36,12 @@ class ShutterSurvivalTest {
     private val screenSource = File("src/main/java/com/gamdo/app/ui/camera/CameraScreen.kt")
 
     /**
-     * Source lines with `//` comments blanked, indexes preserved.
+     * Source lines with comments blanked, indexes preserved.
      *
      * Comments are removed so that prose *about* the region — of which there is a
      * lot, deliberately — cannot satisfy an assertion about the region.
      */
-    private fun code(): List<String> = screenSource.readText().lines().map { it.substringBefore("//") }
+    private fun code(): List<String> = KotlinSourceProbe.codeLines(screenSource)
 
     @Test
     fun `the screen source this test guards actually exists`() {
@@ -177,75 +177,7 @@ class ShutterSurvivalTest {
         )
     }
 
-    // ---- the matcher these assertions stand on --------------------------
-
-    /**
-     * Brace-matches the block opened on the first line containing [marker].
-     *
-     * Pinned by [the block matcher finds a block's extent] because every assertion
-     * above is a containment claim: a matcher that returned the whole file would
-     * make half of them pass unconditionally and the other half fail.
-     */
-    private fun blockAt(marker: String, lines: List<String>): IntRange {
-        val start = lines.indexOfFirst { it.contains(marker) }
-        require(start >= 0) { "marker not found: $marker" }
-        var depth = 0
-        var opened = false
-        for (i in start until lines.size) {
-            // From the marker, not from the start of its line. A `catch` clause is
-            // written `} catch (…) {`, and counting that leading brace would close
-            // the *previous* block and report a one-line body — which is a matcher
-            // that silently agrees with everything.
-            val text = if (i == start) lines[i].substring(lines[i].indexOf(marker)) else lines[i]
-            for (ch in text) {
-                if (ch == '{') { depth++; opened = true }
-                // Returns on the closing brace itself, not at end of line. `}` and
-                // `{` share a line in `} catch (…) {` and `} finally {`, so waiting
-                // for the line to end would run the clause on into the next one —
-                // and a `catch (CancellationException)` that swallowed the *generic*
-                // clause's body would read as correct while asserting nothing.
-                if (ch == '}') {
-                    depth--
-                    if (opened && depth == 0) return start..i
-                }
-            }
-        }
-        error("unbalanced braces after: $marker")
-    }
-
-    @Test
-    fun `the block matcher finds a block's extent`() {
-        val lines = """
-            before()
-            val x = withContext(NonCancellable) {
-                inside()
-                if (true) {
-                    deeper()
-                }
-            }
-            after()
-        """.trimIndent().lines()
-        val range = blockAt("withContext(NonCancellable)", lines)
-        assertEquals(1..6, range)
-        assertFalse("the trailing call must fall outside", 7 in range)
-        assertFalse("the leading call must fall outside", 0 in range)
-    }
-
-    /** The shape the two catch assertions actually run against. */
-    @Test
-    fun `the block matcher survives a leading close brace`() {
-        val lines = """
-            try {
-                work()
-            } catch (t: Throwable) {
-                report()
-            } finally {
-                always()
-            }
-        """.trimIndent().lines()
-        val range = blockAt("catch (t: Throwable)", lines)
-        assertEquals(2..4, range)
-        assertTrue("the clause body must be inside", 3 in range)
-        assertFalse("the finally body must fall outside", 5 in range)
-    }
+    /** Brace-matches the block opened by [marker]; pinned by [KotlinSourceProbeTest]. */
+    private fun blockAt(marker: String, lines: List<String>): IntRange =
+        KotlinSourceProbe.blockAt(marker, lines)
 }
