@@ -17,8 +17,11 @@ import kotlin.math.sin
  */
 data class CardTone(val brightness: Float, val colorA: Float, val colorB: Float)
 
+/** How many swatches the profile screen draws. 시안 02 shows five. */
+const val SWATCH_COUNT = 5
+
 /**
- * The three swatches shown under "당신의 감도를 저장했어요" (§6-2), derived from the
+ * The five swatches shown on the 내 감도 screen (§6-2 / 시안 02), derived from the
  * colour the user's picks actually contain.
  *
  * ## Why this is not built from colour temperature
@@ -68,15 +71,18 @@ object ProfilePalette {
      *
      * Lightness is a band anchored on the profile but kept inside a readable window:
      * these are drawn on charcoal, and a genuinely dark selection would otherwise
-     * produce three swatches nobody can see, which communicates less than a wrong
-     * colour would.
+     * produce swatches nobody can see, which communicates less than a wrong colour
+     * would. **Only lightness varies across the five** — hue and chroma are the
+     * selection's measured ones and identical in every swatch, so the row reads as one
+     * colour at five depths rather than as five colours.
      */
     fun swatches(tone: CardTone): List<Int> {
         val centre = L_BASE + tone.brightness.coerceIn(0f, 1f) * L_SPAN
         val chroma = (hypot(tone.colorA, tone.colorB) * CHROMA_GAIN).coerceAtMost(CHROMA_CAP)
         val hue = atan2(tone.colorB, tone.colorA)
-        return listOf(-L_STEP, 0f, L_STEP).map { offset ->
-            pack((centre + offset).coerceIn(L_MIN, L_MAX), chroma, hue)
+        val middle = (SWATCH_COUNT - 1) / 2
+        return (0 until SWATCH_COUNT).map { index ->
+            pack((centre + (index - middle) * L_STEP).coerceIn(L_MIN, L_MAX), chroma, hue)
         }
     }
 
@@ -117,9 +123,51 @@ object ProfilePalette {
     // the swatches read as poster paint rather than as a photograph's colour.
     private const val CHROMA_CAP = 38f
 
-    private const val L_BASE = 36f
-    private const val L_SPAN = 38f
-    private const val L_STEP = 14f
+    /*
+     * The lightness band, re-fitted when 시안 02 went from three swatches to five
+     * (owner, 2026-07-30 — "개수만 5로, 색은 사진에서 재기 유지").
+     *
+     * ## Why the old constants could not simply grow two more steps
+     *
+     * They were `L_BASE 36 / L_SPAN 38 / L_STEP 14`, so the centre ran 36..74 and three
+     * swatches spanned 28. Adding `±2 × L_STEP` overflows the readable window at **both**
+     * ends:
+     *
+     *   brightness 0 → 8, 22, 36, 50, 64   (8 and 22 both clamp to L_MIN 24 — two
+     *                                       swatches become the same colour)
+     *   brightness 1 → 46, 60, 74, 88, 102 (88 and 102 both clamp to L_MAX 88 — likewise)
+     *
+     * Two identical swatches at every dark selection and every bright one. Shrinking
+     * `L_STEP` to dodge the walls has the opposite failure: five swatches packed into less
+     * total range than the three they replaced, which is a narrower palette drawn with
+     * more circles.
+     *
+     * ## What these do instead
+     *
+     * The centre range is narrowed and the step re-chosen so the whole five-swatch band
+     * fits **without clamping at any brightness**:
+     *
+     *   brightness 0 → 24, 35, 46, 57, 68
+     *   brightness 1 → 42, 53, 64, 75, 86
+     *
+     * Total lightness span is 44, up from the old 28, so the row is wider than before
+     * rather than narrower — 시안 02's own five swatches run roughly L\* 29..92. 11 L\*
+     * between neighbours is far above the ~1 L\* just-noticeable difference, so all five
+     * are distinct on device.
+     *
+     * The cost is that lightness now tracks the selection's own brightness over 18 L\*
+     * instead of 38 — a dark selection and a bright one are still ordered, and still
+     * visibly different, but less far apart. Brightness is also stated in words in the
+     * profile summary; *colour* is the thing only these swatches can say, and the trade
+     * buys colour range at every brightness.
+     *
+     * `coerceIn(L_MIN, L_MAX)` in [swatches] is now a guard that never fires for any
+     * in-range brightness. It stays for the non-physical inputs
+     * `non-physical measurements are clamped rather than overflowing` covers.
+     */
+    private const val L_BASE = 46f
+    private const val L_SPAN = 18f
+    private const val L_STEP = 11f
     private const val L_MIN = 24f
     private const val L_MAX = 88f
 
