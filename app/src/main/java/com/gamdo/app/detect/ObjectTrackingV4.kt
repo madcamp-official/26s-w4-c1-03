@@ -15,6 +15,13 @@ data class CompactConfidenceMask(
     init { require(values.size == width * height) }
 }
 
+data class InstanceMaskObservation(
+    val bounds: NormalizedBox,
+    val mask: CompactConfidenceMask,
+    val confidence: Float,
+    val source: DetectionSource = DetectionSource.MULTI_SUBJECT,
+)
+
 data class SceneObjectCandidate(
     val box: NormalizedBox,
     val detectionConfidence: Float,
