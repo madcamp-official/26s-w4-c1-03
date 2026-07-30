@@ -37,6 +37,15 @@ import org.junit.Test
  * writes in the source is a weaker check than driving the state, and it is the
  * only one available; reading goes through [KotlinSourceProbe] so a KDoc cannot
  * satisfy or violate an assertion about code.
+ *
+ * **What it does not catch, said plainly.** The write count matches on the
+ * variable's *name*. Hoisting the state into a holder, or renaming it, walks
+ * straight past every assertion here — the guard would go green while saying
+ * nothing, which is the failure mode [KotlinSourceProbe]'s own KDoc records
+ * twice. It catches the edit that is actually likely (a reset added beside a
+ * filter tap or a sheet close, which is what P2 §2 names) and nothing cleverer.
+ * If the alpha ever stops being a `var` in `GamdoNavHost`, this file has to be
+ * rewritten against wherever it went rather than left to pass by accident.
  */
 class ReferenceOverlayAlphaTest {
 
@@ -120,10 +129,17 @@ class ReferenceOverlayAlphaTest {
     @Test
     fun `the slider reports through onAlphaChange and holds no copy of the value`() {
         // "투명도 UI는 overlayAlpha 단일 상태를 읽고 onAlphaChange만 호출한다."
-        // A local `remember` of the position inside the control would be a second
-        // copy of the value, and a second copy is a reset waiting to happen: it
-        // would be rebuilt at the default every time the control is remounted,
-        // which — now that switching filters unmounts it — is on every round trip.
+        // A local copy of the *position* inside the control is a reset waiting to
+        // happen: it would be rebuilt at its initial value every time the control
+        // is remounted, which — now that switching filters unmounts it — is on
+        // every round trip.
+        //
+        // What is banned is therefore **state holding a value**, not `remember`.
+        // An earlier version of this test banned `remember` outright and would
+        // have rejected `remember { MutableInteractionSource() }` — the ordinary
+        // way to customise a Slider's press/drag feedback, which holds no value
+        // of ours at all. A guard that blocks a legitimate edit gets deleted, and
+        // then it guards nothing.
         val strip = File("src/main/java/com/gamdo/app/ui/reference/ReferenceStrip.kt")
         val control = KotlinSourceProbe.blockAt("fun ReferenceOverlayAlphaControl(", codeOf(strip))
         val body = codeOf(strip).subList(control.first, control.last + 1)
@@ -132,10 +148,15 @@ class ReferenceOverlayAlphaTest {
             body.any { it.contains("onAlphaChange(") },
         )
         val stateful = body.withIndex()
-            .filter { (_, line) -> Regex("""\bremember(Saveable)?\s*[({]""").containsMatchIn(line) }
+            .filter { (_, line) ->
+                line.contains("mutableStateOf") ||
+                    line.contains("mutableFloatStateOf") ||
+                    line.contains("rememberSaveable")
+            }
             .map { (i, line) -> "line ${control.first + i + 1}: ${line.trim()}" }
         assertEquals(
-            "the 투명도 control must be stateless — one value, held by the host.",
+            "the 투명도 control must hold no copy of the value — one value, held by " +
+                "the host. (Remembering an interaction source or a painter is fine.)",
             emptyList<String>(),
             stateful,
         )

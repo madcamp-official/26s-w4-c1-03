@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -239,52 +238,52 @@ fun ReferenceOverlayLayer(
 }
 
 /**
- * The 투명도 slider for [ReferenceOverlayLayer] — **a sibling of the preview pane,
- * never a layer inside it.** Mounts in `CameraScreen`'s `referenceOverlayControl`
- * slot, between the preview and the sheet slot.
+ * The 투명도 slider for [ReferenceOverlayLayer] — **the small control, and only
+ * the small control.** Mounts in `CameraPreviewPane`'s `referenceControl` slot,
+ * which places it as the pane's last child inside the aspect window.
  *
- * ## Why it left the preview box (owner report 2026-07-31, 사용 불가)
+ * ## The report this exists for (2026-07-31, 사용 불가)
  *
- * It used to sit at the preview box's `BottomStart`, `bottom = 12.dp`, and the
- * preview box is the one place on this screen where a small control cannot
- * survive. Two independent layers above it eat it, and both are load-bearing:
+ * It used to be drawn by [ReferenceOverlayLayer] itself, at the preview box's
+ * `BottomStart`, `bottom = 12.dp` — i.e. under two layers the pane mounts above
+ * the reference layer, neither of which can move:
  *
- * 1. **The sheet-dismiss layer.** While any sheet is open, `CameraPreviewPane`
- *    mounts a transparent full-size `clickable(onDismissSheet)` as its topmost
- *    child — deliberately, so "버튼 바깥 탭으로 닫는다" works. Compose hit-tests
- *    innermost-first and stops at the first pointer-input node, so every touch
- *    inside the preview goes to *dismiss the sheet*, including a touch that
- *    lands exactly on the slider's thumb. The slider was therefore not merely
- *    obscured while the filter sheet was up — it was inoperable, and dragging it
- *    closed the sheet instead. That is the 사용 불가 the owner hit.
- * 2. **The aspect mask.** The letterbox bars are opaque `Ink950` and are drawn
- *    *above* the reference layer (they have to be: nothing may spill onto the
- *    bars). At 4:5 on a phone pane those bars are tens of dp tall, so a control
- *    12dp off the preview's bottom edge is behind one of them.
+ * 1. **The sheet-dismiss layer.** While any sheet is open the pane's topmost
+ *    child is a transparent full-size `clickable(onDismissSheet)`, deliberately,
+ *    so "버튼 바깥 탭으로 닫는다" works. Compose hit-tests siblings in reverse
+ *    z-order and stops at the first pointer-input node, so every touch inside
+ *    the pane went to *dismiss the sheet* — including one landing exactly on the
+ *    slider's thumb. The slider was not merely obscured while the filter sheet
+ *    was up; it was inoperable, and dragging it closed the sheet.
+ * 2. **The aspect mask.** Its letterbox bars are opaque `Ink950` and are drawn
+ *    above the reference layer, because nothing may spill onto them. At 4:5 on a
+ *    phone pane those bars are tens of dp tall, so a control 12dp off the
+ *    *pane's* bottom edge sits behind one.
  *
- * ## Why a sibling rather than a nicer position inside the box
+ * The fix is z-order plus the mask's own insets, both applied at the mount site.
+ * The first version of this fix instead moved the slider out of the pane
+ * altogether, into the screen's Column — which fixed both symptoms and broke
+ * something worse: a Column sibling takes layout height from the `weight(1f)`
+ * pane, and the pane's ratio is the CameraX viewport, so every photo taken while
+ * 내 감도 was selected was silently cropped narrower. See `CameraScreen`'s Column
+ * comment for the device measurement.
  *
- * Because the same argument this screen already uses for the shutter row
- * applies: `CameraSheetSlot`'s call site notes the sheet is "a **sibling** of
- * the shutter row in this Column, never a layer over it — that is why 시트가
- * 열린 상태에서도 셔터는 계속 쓸 수 있다 holds structurally instead of depending
- * on where the sheet's top edge happens to land". Moving the slider above the
- * mask and re-anchoring it to the aspect window would have fixed both symptoms
- * today while leaving it one layer-order edit away from coming back; a sibling
- * cannot be covered by the sheet or the mask at all, because neither is above it.
+ * ## What this composable may and may not be
  *
- * It also satisfies P2's constraint on this control outright ("기존 포커스·핀치·
- * 올가미 터치 표면 위에 별도 전체 화면 pointer handler로 올리지 않는다"): the
- * pointer-input node this adds is now outside the preview box entirely, so pinch
- * and tap-to-focus never see it.
- *
- * The cost is ~56dp of preview height while 내 감도 is the selected style, paid
- * by the `weight(1f)` pane exactly as an open sheet is. That is the honest trade:
- * a control the user can reach is worth more than the preview rows it covers.
+ * It must stay **content-sized**. P2's constraint is "기존 포커스·핀치·올가미
+ * 터치 표면 위에 별도 전체 화면 pointer handler로 올리지 않는다. 작은 실제
+ * 컨트롤만 소비해야 카메라 제스처가 유지된다", and now that this is mounted over
+ * the gesture surface, a `fillMaxSize`/`fillMaxWidth` here would be exactly the
+ * banned thing: the pane hit-tests this first, so anything it covers is taken
+ * from pinch, tap-to-focus and the lasso. It also does no positioning of its own
+ * — [Alignment] against the pane is the mount site's business, since only the
+ * pane knows where the visible window is.
  *
  * @param imageUri the photo this fades — the *already gated* value handed to
  *   [ReferenceOverlayLayer], not a second decision. Null means there is nothing
  *   to fade, and then this control does not exist rather than sitting inert.
+ *   That is also what keeps the pane's gestures whole while no 감도 is selected:
+ *   nothing is mounted at all, so nothing is hit-tested.
  */
 @Composable
 fun ReferenceOverlayAlphaControl(
@@ -296,32 +295,24 @@ fun ReferenceOverlayAlphaControl(
     if (imageUri == null) return
     Row(
         modifier = modifier
-            .fillMaxWidth()
-            .padding(start = 18.dp, end = 18.dp, top = 4.dp, bottom = 4.dp),
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+            .background(Color(0x99141614))
+            .padding(horizontal = 10.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // The pill is kept from the in-preview version on purpose. On the screen's
-        // own Ink950 background it is no longer needed for legibility, but it is
-        // what ties this control to the translucent photo above it now that the two
-        // no longer touch.
-        Row(
-            modifier = Modifier
-                .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
-                .background(Color(0x99141614))
-                .padding(horizontal = 10.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Slider(
-                value = alpha,
-                onValueChange = { onAlphaChange(clampReferenceOverlayAlpha(it)) },
-                valueRange = 0f..MAX_REFERENCE_OVERLAY_ALPHA,
-                modifier = Modifier.width(160.dp),
-                colors = SliderDefaults.colors(
-                    thumbColor = Amber,
-                    activeTrackColor = Amber,
-                    inactiveTrackColor = Outline,
-                ),
-            )
-        }
+        Slider(
+            value = alpha,
+            onValueChange = { onAlphaChange(clampReferenceOverlayAlpha(it)) },
+            valueRange = 0f..MAX_REFERENCE_OVERLAY_ALPHA,
+            // Wider than the 110dp it carried before, and that is the width budget
+            // spent rather than a preference: 0..60% across 110dp put every step
+            // the user cares about inside a thumb's travel of each other.
+            modifier = Modifier.width(160.dp),
+            colors = SliderDefaults.colors(
+                thumbColor = Amber,
+                activeTrackColor = Amber,
+                inactiveTrackColor = Outline,
+            ),
+        )
     }
 }
