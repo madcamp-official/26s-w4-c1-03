@@ -4,6 +4,7 @@ import com.gamdo.app.guide.LayoutTemplateCatalog
 import com.gamdo.app.guide.SlotRole
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ShootPolicyTest {
@@ -27,5 +28,40 @@ class ShootPolicyTest {
 
         assertEquals(ShootSlotRole.PERSON, slot.role)
         assertEquals(ShootVisualKind.PERSON_BRACKET, slot.visualKind)
+    }
+
+    @Test
+    fun `policy rejects invalid slot bounds before transport`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            ShootSlotV2(
+                id = "object",
+                role = ShootSlotRole.OBJECT,
+                visualKind = ShootVisualKind.GENERIC_OBJECT,
+                bounds = ShootRectN(-0.1f, 0.1f, 0.5f, 0.5f),
+                preferredAspectRatio = 1f,
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ShootSlotV2(
+                id = "object",
+                role = ShootSlotRole.OBJECT,
+                visualKind = ShootVisualKind.GENERIC_OBJECT,
+                bounds = ShootRectN(0f, 0f, 0.1f, 0.1f),
+                preferredAspectRatio = 1f,
+            )
+        }
+    }
+
+    @Test
+    fun `policy rejects versions and aspect ratios outside the shared contract`() {
+        val validBounds = ShootRectN(0.1f, 0.1f, 0.5f, 0.5f)
+        assertThrows(IllegalArgumentException::class.java) {
+            ShootPolicyV2(version = 1, layoutId = "layout", slots = listOf(
+                ShootSlotV2("object", ShootSlotRole.OBJECT, ShootVisualKind.GENERIC_OBJECT, validBounds, 1f),
+            ))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ShootSlotV2("object", ShootSlotRole.OBJECT, ShootVisualKind.GENERIC_OBJECT, validBounds, 3f)
+        }
     }
 }

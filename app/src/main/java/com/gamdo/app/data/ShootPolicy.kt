@@ -19,6 +19,7 @@ data class ShootPolicyV2(
     val recommendedPhotos: Int = 3,
 ) {
     init {
+        require(version == 2)
         require(layoutId.isNotBlank())
         require(slots.size in 1..4)
         require(slots.map { it.id }.distinct().size == slots.size)
@@ -45,7 +46,12 @@ data class ShootSlotV2(
     val visualKind: ShootVisualKind,
     val bounds: ShootRectN,
     val preferredAspectRatio: Float,
-)
+) {
+    init {
+        require(bounds.area in 0.02f..0.80f)
+        require(preferredAspectRatio in 0.40f..2.50f)
+    }
+}
 
 @Serializable
 enum class ShootSlotRole { PERSON, OBJECT }
@@ -54,7 +60,14 @@ enum class ShootSlotRole { PERSON, OBJECT }
 enum class ShootVisualKind { PERSON_SILHOUETTE, PERSON_BRACKET, GENERIC_OBJECT, CUP, PLATE }
 
 @Serializable
-data class ShootRectN(val left: Float, val top: Float, val right: Float, val bottom: Float)
+data class ShootRectN(val left: Float, val top: Float, val right: Float, val bottom: Float) {
+    init {
+        require(left in 0f..1f && top in 0f..1f && right in 0f..1f && bottom in 0f..1f)
+        require(right > left && bottom > top)
+    }
+
+    val area: Float get() = (right - left) * (bottom - top)
+}
 
 private fun LayoutSlot.toShootSlot(): ShootSlotV2 = ShootSlotV2(
     id = id,
