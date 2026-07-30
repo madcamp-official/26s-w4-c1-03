@@ -1,0 +1,52 @@
+package com.gamdo.app.detect
+
+import android.graphics.Bitmap
+import com.gamdo.app.guide.PointN
+import com.gamdo.app.guide.ScenePolygonRegion
+import kotlin.math.ceil
+import kotlin.math.floor
+
+data class ScopeCrop(val left: Float, val top: Float, val right: Float, val bottom: Float) {
+    val width get() = right - left
+    val height get() = bottom - top
+}
+
+object ScopeCropResolver {
+    fun forPolygon(polygon: ScenePolygonRegion, padding: Float = .03f): ScopeCrop {
+        val left = polygon.points.minOf { it.x }; val top = polygon.points.minOf { it.y }
+        val right = polygon.points.maxOf { it.x }; val bottom = polygon.points.maxOf { it.y }
+        return ScopeCrop((left-padding).coerceIn(0f,1f), (top-padding).coerceIn(0f,1f),
+            (right+padding).coerceIn(0f,1f), (bottom+padding).coerceIn(0f,1f))
+    }
+}
+
+class PolygonBitmapMasker {
+    fun maskOutsidePolygon(bitmap: Bitmap, polygon: ScenePolygonRegion, crop: ScopeCrop): Bitmap {
+        val out = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+        val pixels = IntArray(bitmap.width * bitmap.height); bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        for (y in 0 until bitmap.height) for (x in 0 until bitmap.width) {
+            val nx = crop.left + (x + .5f) / bitmap.width * crop.width
+            val ny = crop.top + (y + .5f) / bitmap.height * crop.height
+            if (!polygon.contains(PointN(nx, ny))) pixels[y * bitmap.width + x] = 0xFF808080.toInt()
+        }
+        out.setPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        return out
+    }
+}
+
+/** Conservative mask split: only disconnected components are separated. */
+class MaskInstanceSplitter(private val minimumPartRatio: Float = .15f, private val maxParts: Int = 4) {
+    fun split(mask: CompactConfidenceMask, threshold: Float = .55f): List<CompactConfidenceMask> {
+        val w = mask.width; val h = mask.height; val seen = BooleanArray(w*h); val parts = mutableListOf<List<Int>>()
+        fun visit(start: Int): List<Int> { val q = ArrayDeque<Int>(); val part = mutableListOf<Int>(); q += start; seen[start] = true
+            while (q.isNotEmpty()) { val p=q.removeFirst(); part += p; val x=p%w; val y=p/w
+                for (n in intArrayOf(if(x>0)p-1 else -1, if(x<w-1)p+1 else -1, if(y>0)p-w else -1, if(y<h-1)p+w else -1)) if(n>=0&&!seen[n]&&mask.values[n]>=threshold){seen[n]=true;q+=n} }
+            return part }
+        for(i in mask.values.indices) if(!seen[i]&&mask.values[i]>=threshold) parts += visit(i)
+        val minSize=(w*h*minimumPartRatio).toInt().coerceAtLeast(1)
+        if(parts.size<=1 || parts.none { it.size>=minSize }) return listOf(mask)
+        return parts.filter { it.size>=minSize }.sortedByDescending { it.size }.take(maxParts).map { pixels ->
+            val values=FloatArray(w*h); pixels.forEach { values[it]=mask.values[it] }; mask.copy(values=values)
+        }
+    }
+}

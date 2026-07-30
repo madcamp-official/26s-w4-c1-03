@@ -7,6 +7,7 @@ import com.gamdo.app.detect.NormalizedBox
 import com.gamdo.app.detect.ObjectObservation
 import com.gamdo.app.detect.ObjectDetectionBatch
 import com.gamdo.app.detect.StableSceneTracker
+import com.gamdo.app.detect.SceneSearchScopeStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 class SceneGuideSessionController(
     private val coordinator: SceneGuideCoordinator = SceneGuideCoordinator(),
     private val tracker: StableSceneTracker = StableSceneTracker(),
+    private val scopeStore: SceneSearchScopeStore? = null,
 ) {
     private val _layoutState = MutableStateFlow<GuideLayoutState>(GuideLayoutState.Searching)
     val layoutState: StateFlow<GuideLayoutState> = _layoutState.asStateFlow()
@@ -110,6 +112,7 @@ class SceneGuideSessionController(
         tracker.reset()
         coordinator.rescan()
         _searchScope.value = SceneSearchScope.Default
+        scopeStore?.setDefault()
         _layoutState.value = GuideLayoutState.Searching
     }
 
@@ -118,6 +121,7 @@ class SceneGuideSessionController(
         tracker.rescanAt(anchorX, anchorY)
         coordinator.rescan()
         _searchScope.value = SceneSearchScope.Tap(PointN(anchorX, anchorY).clamped())
+        scopeStore?.setTap(PointN(anchorX, anchorY).clamped())
         _layoutState.value = GuideLayoutState.Searching
     }
 
@@ -127,6 +131,7 @@ class SceneGuideSessionController(
         tracker.rescanInPolygon(polygon)
         coordinator.rescan()
         _searchScope.value = SceneSearchScope.Polygon(polygon.points)
+        scopeStore?.setPolygon(polygon)
         _layoutState.value = GuideLayoutState.Searching
         return true
     }
@@ -136,6 +141,7 @@ class SceneGuideSessionController(
         tracker.rescanInPolygon(polygon)
         coordinator.rescan()
         _searchScope.value = SceneSearchScope.Polygon(polygon.points)
+        scopeStore?.setPolygon(polygon)
         _layoutState.value = GuideLayoutState.Searching
         return true
     }
@@ -144,6 +150,7 @@ class SceneGuideSessionController(
         tracker.cancelPolygonSearch()
         coordinator.rescan()
         _searchScope.value = SceneSearchScope.Default
+        scopeStore?.setDefault()
         _layoutState.value = GuideLayoutState.Searching
     }
 
@@ -156,6 +163,7 @@ class SceneGuideSessionController(
         tracker.reset()
         coordinator.reset()
         _searchScope.value = SceneSearchScope.Default
+        scopeStore?.setDefault()
         _layoutState.value = GuideLayoutState.Searching
     }
 
