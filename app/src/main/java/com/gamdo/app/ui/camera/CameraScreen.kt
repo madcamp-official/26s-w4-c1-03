@@ -346,7 +346,8 @@ private class SceneDetectorLease(
  *   reference. Only its composition half is consumed here (as a [StyleTarget]
  *   via [toStyleTarget]) — the color half is a result-screen concern (§5-2:
  *   "촬영 구도·촬영 후 색감에 적용").
- * @param onDeleteReference the reference slot's `×` badge (삭제).
+ * @param onOpenReferenceDetail the reference slot's `⋯` badge — opens 내 감도 상세,
+ *   where 취향 정교화 and 삭제 both live. It no longer deletes: see [MyReferenceThumb].
  */
 @Composable
 fun CameraScreen(
@@ -360,7 +361,7 @@ fun CameraScreen(
     hasActiveReference: Boolean = false,
     activeReferenceImageUri: Uri? = null,
     activeReferenceStyle: ResolvedStyle? = null,
-    onDeleteReference: () -> Unit = {},
+    onOpenReferenceDetail: () -> Unit = {},
     /**
      * P2 §5 나 찍어줘 — hand the layout on screen to a friend's browser.
      *
@@ -968,9 +969,9 @@ fun CameraScreen(
                     referenceSelected = true
                     storedMode = CameraPanels.filterPicked(overlayMode)
                 },
-                onDeleteReference = {
+                onOpenReferenceDetail = {
                     referenceSelected = false
-                    onDeleteReference()
+                    onOpenReferenceDetail()
                 },
             )
         }
@@ -1572,7 +1573,7 @@ private fun CameraFilterSheet(
     referenceSelected: Boolean,
     activeReferenceImageUri: Uri?,
     onSelectReference: () -> Unit,
-    onDeleteReference: () -> Unit,
+    onOpenReferenceDetail: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -1593,7 +1594,7 @@ private fun CameraFilterSheet(
             referenceSelected = referenceSelected,
             activeReferenceImageUri = activeReferenceImageUri,
             onSelectReference = onSelectReference,
-            onDeleteReference = onDeleteReference,
+            onOpenReferenceDetail = onOpenReferenceDetail,
         )
     }
 }
@@ -1793,7 +1794,7 @@ private fun CameraStyleStrip(
     referenceSelected: Boolean,
     activeReferenceImageUri: Uri?,
     onSelectReference: () -> Unit,
-    onDeleteReference: () -> Unit,
+    onOpenReferenceDetail: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // Reserve the row even with nothing to put in it. `presets` arrives from disk, and a
@@ -1886,7 +1887,7 @@ private fun CameraStyleStrip(
                     imageUri = activeReferenceImageUri,
                     selected = referenceSelected,
                     onSelect = onSelectReference,
-                    onDelete = onDeleteReference,
+                    onOpenDetail = onOpenReferenceDetail,
                 )
             }
         }
