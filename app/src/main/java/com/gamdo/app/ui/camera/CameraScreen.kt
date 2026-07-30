@@ -188,6 +188,13 @@ private val SHEET_CORNER = 20.dp
  */
 private val IconInactive = TextHi.copy(alpha = 0.85f)
 
+/**
+ * `background:rgba(10,10,11,0.45)` — the redesign's rule for a control that sits **on**
+ * the photo: [Ink950] at 45%, the bottom of the spec's 45-62% band. Ghost or scrim
+ * only; never an amber fill.
+ */
+private val OnPhotoScrim = Ink950.copy(alpha = 0.45f)
+
 /** `background:rgba(255,255,255,0.08)` — the shutter row's ghost discs. */
 private val OverPhotoDisc = Color.White.copy(alpha = 0.08f)
 
@@ -216,20 +223,42 @@ private val BOTTOM_CONTROL_SIZE = 42.dp
 /** How much later than the deadline [scheduleTeardownWatchdog] pokes. See there. */
 private const val TEARDOWN_WATCHDOG_SLACK_MS = 50L
 
+/**
+ * The ratios the shutter offers.
+ *
+ * **D9-1 said "exactly two — no 16:9", and the owner reversed it** (2026-07-30:
+ * "4:5 1:1 16:9 비율을 버튼을 클릭해서 바꿀수 있게해"). Mirrored by
+ * [com.gamdo.app.edit.EditAspect], which has to gain the same value or the editor
+ * silently re-crops a 9:16 photo back to 4:5 when it reopens it.
+ *
+ * ## 16:9 is 0.5625, not 1.778
+ *
+ * The camera is portrait-only. 4:5 (0.8) and 1:1 (1.0) are both at-or-taller than
+ * square, so the third rung continues **downward**: 16:9 here is the tall 9:16 frame,
+ * the shape of the phone screen, which is what a portrait camera means by that label.
+ * A 1.778 landscape frame would be the only wide option in a portrait app and would
+ * not match what the preview shows.
+ *
+ * The declaration order is that ramp — 0.8 → 1.0 → 0.5625 is the *cycle*, and
+ * `1.0 → 0.5625` is the one big step in it. See [toggled].
+ */
 enum class CaptureAspect(val label: String, val ratioWtoH: Float) {
     RATIO_4_5("4:5", 4f / 5f),
     RATIO_1_1("1:1", 1f),
+    RATIO_16_9("16:9", 9f / 16f),
     ;
 
     /**
-     * The next ratio — the redesign's top bar is a single label that toggles rather
-     * than the two-cell segmented control it replaces.
+     * The next ratio in the cycle — the redesign's top bar is a single label that
+     * advances rather than the two-cell segmented control it replaced.
      *
-     * Written as `entries` arithmetic rather than `if (this == RATIO_4_5) RATIO_1_1`
-     * so that D9-1 stays enforced by the type: with exactly two members this is a
-     * toggle, and adding a third (16:9, 3:4, full — all banned) would silently turn
-     * the control into a three-way cycle instead of quietly doing the wrong thing.
-     * `CaptureAspectTest` pins the count.
+     * `entries` arithmetic rather than a hand-written chain, so this survived the
+     * two-to-three change without an edit and will survive the next one. It was
+     * written this way while there were only two values and the reversal arrived a
+     * day later; that is the argument for the general form, not a lucky guess.
+     *
+     * `CaptureAspectTest` pins the membership and the order, so adding a fourth is a
+     * failing test rather than a silently different control.
      */
     fun toggled(): CaptureAspect = entries[(ordinal + 1) % entries.size]
 }
@@ -615,6 +644,23 @@ fun CameraScreen(
                                 }?.box,
                             ),
                             sceneSignals = imageProxy.sceneFrameSignals(subjectBox).copy(
+                                // Three capture ratios, two guide viewports — and
+                                // `GuideViewportAspect` is 담당 B's, so it does not grow
+                                // to match (widening it would change every layout
+                                // template's authored coordinates).
+                                //
+                                // 16:9 (0.5625) approximates to FOUR_TO_FIVE, and the
+                                // arithmetic says so rather than the naming: |0.5625 −
+                                // 0.8| = 0.2375 against |0.5625 − 1.0| = 0.4375, so 4:5
+                                // is the nearer of the two by almost half. It is also
+                                // the right *direction* — both are taller than square,
+                                // and the layouts differ mainly in how much vertical
+                                // room a slot may claim.
+                                //
+                                // The `!=` form is deliberate: the two non-square ratios
+                                // share a branch, so a fourth ratio lands on the tall
+                                // approximation by default rather than silently reading
+                                // as square.
                                 viewportAspect = if (aspect == CaptureAspect.RATIO_1_1) {
                                     com.gamdo.app.guide.GuideViewportAspect.ONE_TO_ONE
                                 } else {
@@ -1622,10 +1668,24 @@ private fun CameraPreviewPane(
     hud: @Composable BoxScope.() -> Unit,
 ) {
     BoxWithConstraints(modifier = modifier) {
-        // Mask geometry. `resolveTapFocusPoint` recomputes this from px and must
-        // stay in step with it — the bars are also the no-focus zone.
-        val windowHeight = (maxWidth / aspect.ratioWtoH).coerceAtMost(maxHeight)
-        val barHeight = (maxHeight - windowHeight) / 2
+        // Mask geometry, from the one function `resolveTapFocusPoint` and the lasso
+        // clamp also call — the bars are the no-focus, no-draw zone, so all three have
+        // to mean the same rectangle. Computed here in Dp off `BoxWithConstraints` and
+        // there in px off `PointerInputScope.size`; the formula is scale-invariant so
+        // the fraction agrees.
+        //
+        // **Both axes.** 16:9 (0.5625) is narrower than a phone pane, so its window is
+        // pillarboxed rather than letterboxed. The old `coerceAtMost` form could only
+        // trim height and silently showed a 0.635 window for a 0.5625 capture.
+        val window = previewWindowOf(
+            paneWidth = maxWidth.value,
+            paneHeight = maxHeight.value,
+            ratioWtoH = aspect.ratioWtoH,
+        )
+        val windowWidth = window?.width?.dp ?: maxWidth
+        val windowHeight = window?.height?.dp ?: maxHeight
+        val barHeight = window?.top?.dp ?: 0.dp
+        val barWidth = window?.left?.dp ?: 0.dp
 
         // §3-3 needs the viewport aspect, and this is where it is exact. CameraX
         // attaches the PreviewView's viewport as the capture's cropRect, the
@@ -1854,22 +1914,38 @@ private fun CameraPreviewPane(
             modifier = Modifier.fillMaxSize(),
         )
 
+        // The mask, and the window's own contents.
+        //
+        // Four bars now, not two: 16:9 pillarboxes rather than letterboxes, so a
+        // `Column` of two full-width bars cannot express it. The Row nested inside the
+        // Column's middle band is what makes both axes available while keeping the
+        // window a single Box that `RuleOfThirds`, `ZoomStops` and `RescanButton`
+        // continue to sit inside unchanged — the grid still spans exactly the frame
+        // that will be saved, which is the only thing it is for.
+        //
+        // Every bar is `Ink950`, i.e. the same opaque surface as the screen behind the
+        // pane, so a zero-width or zero-height bar is invisible rather than a hairline
+        // (4:5 and 1:1 have `barWidth == 0`).
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Ink950))
-            Box(modifier = Modifier.fillMaxWidth().height(windowHeight)) {
-                RuleOfThirds()
-                ZoomStops(
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
-                    zoomRatio = zoomRatio,
-                    bounds = zoomBounds,
-                    onSelect = onSelectZoom,
-                )
-                RescanButton(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(bottom = 12.dp, end = 18.dp),
-                    onClick = onRescan,
-                )
+            Row(modifier = Modifier.fillMaxWidth().height(windowHeight)) {
+                Box(modifier = Modifier.width(barWidth).fillMaxHeight().background(Ink950))
+                Box(modifier = Modifier.width(windowWidth).fillMaxHeight()) {
+                    RuleOfThirds()
+                    ZoomStops(
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
+                        zoomRatio = zoomRatio,
+                        bounds = zoomBounds,
+                        onSelect = onSelectZoom,
+                    )
+                    RescanButton(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(bottom = 12.dp, end = 18.dp),
+                        onClick = onRescan,
+                    )
+                }
+                Box(modifier = Modifier.width(barWidth).fillMaxHeight().background(Ink950))
             }
             Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Ink950))
         }
@@ -2372,7 +2448,10 @@ private fun ZoomStops(
                 modifier = Modifier
                     .size(if (isActive) 34.dp else 30.dp)
                     .clip(CircleShape)
-                    .background(Color(0x99141614))
+                    // Same over-photo rule as [RescanButton]; same stale green-tinted
+                    // charcoal replaced. These two sit on the same row, so leaving one
+                    // tinted next to a corrected one would be more visible than either.
+                    .background(OnPhotoScrim)
                     .then(if (isActive) Modifier.border(1.8.dp, Amber, CircleShape) else Modifier)
                     .clickable { onSelect(stop) },
                 contentAlignment = Alignment.Center,
@@ -2405,11 +2484,13 @@ private fun formatZoomStop(stop: Float): String =
  * stops stay centred, so this reads as a sibling affordance rather than a fourth
  * stop — sharing a row with them but never sitting between them.
  *
- * The glyph is a miniature of the app's own target bracket, drawn rather than
- * typed. A refresh arrow would be the conventional choice, but D2 bans direction
- * arrows from this screen and the four corner marks say "composition" in the same
- * vocabulary the overlay already uses. Drawing it also means it cannot fail to
- * render on a device whose font lacks the codepoint.
+ * The glyph **is** the circular arrow now (owner's redesign, 2026-07-30). It used to be
+ * a miniature of the app's own target bracket, on the reasoning that "D2 bans direction
+ * arrows from this screen"; the ban is on arrows that tell the user which way to *move*,
+ * and a refresh arrow is not one. The design draws this shape and the design is final.
+ *
+ * It also stops competing with the 가이드 icon, which is now four corner brackets — two
+ * controls with the same glyph and different jobs was the worse problem.
  */
 @Composable
 private fun RescanButton(modifier: Modifier, onClick: () -> Unit) {
@@ -2417,24 +2498,22 @@ private fun RescanButton(modifier: Modifier, onClick: () -> Unit) {
         modifier = modifier
             .size(34.dp)
             .clip(CircleShape)
-            .background(Color(0x99141614))
+            // The redesign's rule for a control sitting **on** the photo: Ink950 at
+            // 45%, the bottom of the spec's 45-62% band. Was `Color(0x99141614)`, a
+            // green-tinted charcoal from before the token replacement — the one hue
+            // besides the accent that the new palette is supposed to have removed.
+            .background(OnPhotoScrim)
+            .semantics { contentDescription = "재탐색" }
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(modifier = Modifier.size(15.dp)) {
-            val stroke = 1.6.dp.toPx()
-            val arm = size.minDimension * 0.34f
-            for (right in listOf(false, true)) {
-                for (bottom in listOf(false, true)) {
-                    val x = if (right) size.width else 0f
-                    val y = if (bottom) size.height else 0f
-                    val dx = if (right) -arm else arm
-                    val dy = if (bottom) -arm else arm
-                    drawLine(TextMid, Offset(x, y), Offset(x + dx, y), stroke, StrokeCap.Round)
-                    drawLine(TextMid, Offset(x, y), Offset(x, y + dy), stroke, StrokeCap.Round)
-                }
-            }
-        }
+        StrokeIcon(
+            pathData = CameraIconPaths.RESCAN,
+            viewBox = 15f,
+            size = 15.dp,
+            strokeWidth = 1.5f,
+            color = IconInactive,
+        )
     }
 }
 

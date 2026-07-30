@@ -136,8 +136,10 @@ class CaptureGeometryTest {
 
     @Test
     fun `the shipped aspect ratios survive every rotation and mirror`() {
-        // 4:5 and 1:1 — the two the shutter actually offers.
-        for (ratio in listOf(0.8f, 1.0f)) {
+        // 4:5, 1:1 and 16:9 — the three the shutter offers (owner reversed D9-1's
+        // "exactly two" on 2026-07-30). 0.5625 is the *tall* 9:16 frame; see
+        // `CaptureAspect`'s KDoc for why a portrait camera means that by "16:9".
+        for (ratio in listOf(0.5625f, 0.8f, 1.0f)) {
             for (rotation in listOf(0, 90, 180, 270)) {
                 for (mirror in listOf(false, true)) {
                     assertSamePixels(
@@ -166,7 +168,7 @@ class CaptureGeometryTest {
         for (crop in crops) {
             for (rotation in listOf(0, 90, 180, 270)) {
                 for (mirror in listOf(false, true)) {
-                    for (ratio in listOf(null, 0.8f, 1.0f)) {
+                    for (ratio in listOf(null, 0.5625f, 0.8f, 1.0f)) {
                         assertSamePixels(24, 32, crop, rotation, mirror, ratio)
                     }
                 }
@@ -332,5 +334,50 @@ class CaptureGeometryTest {
         assertEquals(3780, plan.outHeight)
         assertTrue(plan.srcX + plan.srcWidth <= 4032)
         assertTrue(plan.srcY + plan.srcHeight <= 3024)
+    }
+
+    /**
+     * 16:9 on the same 12MP frame — and the branch flips.
+     *
+     * The upright frame is 3024×4032 (0.75), which is *wider* than 0.5625, so **width**
+     * is trimmed here where 4:5 trimmed height. 4032 × 0.5625 = 2268 exactly, so the
+     * expected file is 2268×4032 with 378 columns dropped from each side.
+     *
+     * Worth its own case because it is the only shipped ratio that takes that branch,
+     * and because the arithmetic is exact — a rounding change would show up as an
+     * off-by-one here rather than as a slightly wrong photograph.
+     */
+    @Test
+    fun `a 12MP 16 to 9 capture trims width, not height`() {
+        val plan = captureGeometryFor(
+            bufferWidth = 4032,
+            bufferHeight = 3024,
+            rotationDegrees = 90,
+            targetRatioWtoH = 0.5625f,
+        )
+        assertEquals(2268, plan.outWidth)
+        assertEquals(4032, plan.outHeight)
+        assertEquals(
+            "the saved file must be exactly 9:16",
+            0.5625f,
+            plan.outWidth.toFloat() / plan.outHeight.toFloat(),
+            1e-6f,
+        )
+        assertTrue(plan.srcX + plan.srcWidth <= 4032)
+        assertTrue(plan.srcY + plan.srcHeight <= 3024)
+    }
+
+    /** The front lens takes the same path; only the mirror's odd-trim bias differs. */
+    @Test
+    fun `a front 16 to 9 capture is the same shape`() {
+        val plan = captureGeometryFor(
+            bufferWidth = 4032,
+            bufferHeight = 3024,
+            rotationDegrees = 90,
+            mirror = true,
+            targetRatioWtoH = 0.5625f,
+        )
+        assertEquals(2268, plan.outWidth)
+        assertEquals(4032, plan.outHeight)
     }
 }
