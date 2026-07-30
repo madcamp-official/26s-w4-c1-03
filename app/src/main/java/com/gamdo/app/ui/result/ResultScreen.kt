@@ -1116,12 +1116,18 @@ fun ResultScreen(
             runningOperation = rescueRunningOperation,
             candidates = candidates,
             selectedCandidateId = pickedCandidateId,
-            // Closing on Candidates keeps the pick — there the pick *is* the
-            // success, and re-opening the strip slot returns to the same list.
-            // Every other section's close is an abandon, so it cancels and resets.
-            onDismiss = {
-                if (rescueState is RescueState.Candidates) rescueOpened = false else cancelRescue()
-            },
+            // Which exits abandon the job and which merely hide it is
+            // `dismissActionFor`'s decision now, inside the sheet — this used to be a
+            // `RescueState.Candidates` special case right here, and it was the only
+            // state that got the "keep it" treatment.
+            //
+            // Owner decision 2026-07-30: **tapping outside hides, it does not cancel.**
+            // A generation can be 20s into a GPU queue, and stepping out of the sheet
+            // is not a request to throw that away — re-opening AI로 보정 returns to the
+            // progress line. 취소 inside the progress section is still a real cancel,
+            // which is the point of splitting the two.
+            onDismiss = cancelRescue,
+            onHide = { rescueOpened = false },
             onAnalyze = {
                 val input = rescueInput
                 if (input == null) {
