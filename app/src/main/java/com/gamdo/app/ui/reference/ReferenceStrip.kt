@@ -20,6 +20,8 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -182,6 +184,14 @@ fun MyReferenceThumb(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Keyed on `Unit` below, so the detector is installed once and survives
+    // recomposition — the call sites pass lambda literals, and keying the
+    // `pointerInput` on those would tear the detector down and rebuild it on every
+    // recomposition, cancelling a long-press that was already in progress. That would
+    // make deletion intermittent, which for a destructive action is worse than either
+    // outcome. Same pattern `ResultScreen` uses for its own 길게 누르기.
+    val select by rememberUpdatedState(onSelect)
+    val delete by rememberUpdatedState(onDelete)
     StripThumb(label = ReferenceLabels.ACTIVE, shape = shape, size = size, selected = selected, onClick = onSelect, modifier = modifier) {
         if (imageUri != null) {
             AsyncImage(
@@ -201,10 +211,10 @@ fun MyReferenceThumb(
                 // Consumed here rather than left to fall through: an inner pointer
                 // handler swallows the gesture either way, so the tap has to be
                 // forwarded explicitly for the corner of the tile to stay selectable.
-                .pointerInput(onSelect, onDelete) {
+                .pointerInput(Unit) {
                     detectTapGestures(
-                        onTap = { onSelect() },
-                        onLongPress = { onDelete() },
+                        onTap = { select() },
+                        onLongPress = { delete() },
                     )
                 },
             contentAlignment = Alignment.Center,
