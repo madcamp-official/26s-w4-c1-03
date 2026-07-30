@@ -1,5 +1,9 @@
 package com.gamdo.app.ui.result
 
+import com.gamdo.app.data.FilterRenderState
+import com.gamdo.app.data.ResultFilterState
+import com.gamdo.app.data.ResultFilterStateHolder
+import com.gamdo.app.edit.LocalFilter
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -139,5 +143,56 @@ class ResultFlowDecisionsTest {
     fun `AI로 보정 is not offered for a photo with no captures row`() {
         assertTrue(offersGenerativeRestore(EditSourceKind.DEVICE_PHOTO))
         assertTrue(offersGenerativeRestore(EditSourceKind.APP_CAPTURE))
+    }
+
+    // ---- 내 감도로 정리하기 (브리프 §13 결함 2) --------------------------------
+
+    private fun state(
+        recommendedDefaultFilterId: String,
+        selectedId: String,
+    ) = ResultFilterState(
+        items = emptyList(),
+        selectedId = selectedId,
+        recommendedDefaultFilterId = recommendedDefaultFilterId,
+        activeReference = null,
+        renderState = FilterRenderState.Idle,
+    )
+
+    /**
+     * The card applies the 감도 the holder resolved, not the reference slot by name.
+     * A user who never analysed a reference photo still has a 감도 — the session
+     * preset, then the onboarding one — and the card has to reach it, or it is the
+     * dead tap the defect reported.
+     */
+    @Test
+    fun `내 감도로 정리하기 applies the resolved default, reference or not`() {
+        assertEquals(
+            ResultFilterStateHolder.REFERENCE_FILTER_ID,
+            localStyleFilterId(
+                state(ResultFilterStateHolder.REFERENCE_FILTER_ID, selectedId = "clean_social"),
+            ),
+        )
+        assertEquals(
+            "night_street",
+            localStyleFilterId(state("night_street", selectedId = LocalFilter.ORIGINAL.filter.id)),
+        )
+    }
+
+    /**
+     * Whether the tap is going to change anything is a fact the sheet is allowed to
+     * know, so that "이미 적용돼 있어요" can be said instead of shown as silence. An app
+     * capture opens on its session preset, so a user with no reference is already
+     * sitting on their 감도 and the correct outcome is a no-op.
+     */
+    @Test
+    fun `the card reports whether it would change the photo`() {
+        assertTrue(
+            localStyleChangesPhoto(
+                state(ResultFilterStateHolder.REFERENCE_FILTER_ID, selectedId = "clean_social"),
+            ),
+        )
+        assertFalse(
+            localStyleChangesPhoto(state("night_street", selectedId = "night_street")),
+        )
     }
 }
