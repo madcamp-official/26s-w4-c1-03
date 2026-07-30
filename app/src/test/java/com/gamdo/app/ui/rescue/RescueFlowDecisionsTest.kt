@@ -378,7 +378,11 @@ class RescueFlowDecisionsTest {
     fun `confirm copy names the operation without technical words`() {
         assertEquals("방해 요소를 지울게요", confirmMessageFor(buildJsonObject { put("type", "remove_objects") }))
         assertEquals("여백을 넓힐게요", confirmMessageFor(buildJsonObject { put("type", "outpaint") }))
-        assertEquals("지금 보정만 그대로 둘게요", confirmMessageFor(buildJsonObject { put("type", "local_style") }))
+        // 내 감도로 정리하기 applies the user's 감도 now instead of closing the sheet on
+        // an unchanged photo (브리프 §13 결함 2), so the line promises the change the
+        // button makes. An unknown operation still promises nothing, because for it
+        // nothing is what the sheet can do.
+        assertEquals("내 감도로 정리할게요", confirmMessageFor(buildJsonObject { put("type", "local_style") }))
         assertEquals("지금 보정만 그대로 둘게요", confirmMessageFor(JsonObject(emptyMap())))
         assertEquals("보는 위치를 바꿀게요", confirmMessageFor(buildJsonObject { put("type", "viewpoint") }))
         assertEquals("빛의 균형을 맞출게요", confirmMessageFor(buildJsonObject { put("type", "relight") }))
@@ -624,5 +628,65 @@ class RescueFlowDecisionsTest {
     fun `operation type reads the wire field and tolerates a missing one`() {
         assertEquals("remove_objects", operationType(buildJsonObject { put("type", "remove_objects") }))
         assertNull(operationType(JsonObject(emptyMap())))
+    }
+
+    // ---- reopening on an outcome (브리프 §13 결함 5) --------------------------
+
+    private val done = RescueState.Candidates(jobId = "job_1", results = emptyList())
+    private val failed = RescueState.LocalFallback("generation_unavailable")
+
+    /**
+     * The defect itself: the user starts a generation, taps outside to watch the photo
+     * while it runs (which hides rather than cancels, owner decision 2026-07-30), and
+     * the job finishes into a sheet nobody has open. Both outcomes have to come back.
+     */
+    @Test
+    fun `a job that finishes while the sheet is hidden brings the sheet back`() {
+        assertTrue(reopensOnOutcome(RescueState.Polling, done, opened = false))
+        assertTrue(reopensOnOutcome(RescueState.Submitting, done, opened = false))
+        assertTrue(reopensOnOutcome(RescueState.Polling, failed, opened = false))
+        assertTrue(reopensOnOutcome(RescueState.Submitting, failed, opened = false))
+    }
+
+    @Test
+    fun `an open sheet is never reopened over itself`() {
+        assertFalse(reopensOnOutcome(RescueState.Polling, done, opened = true))
+        assertFalse(reopensOnOutcome(RescueState.Polling, failed, opened = true))
+    }
+
+    /**
+     * The rule is an edge, and this is why. Once the user has seen the result and
+     * closed it the controller is still sitting on the same outcome state, so a
+     * state-shaped rule would re-open the sheet every recomposition and the user could
+     * never put it away. Dismissing a finished sheet has to stick.
+     */
+    @Test
+    fun `closing a finished sheet does not summon it again`() {
+        assertFalse(reopensOnOutcome(done, done, opened = false))
+        assertFalse(reopensOnOutcome(failed, failed, opened = false))
+    }
+
+    /** Cancelling goes to `Idle`, and the user who cancelled needs no announcement. */
+    @Test
+    fun `a cancel stays silent`() {
+        assertFalse(reopensOnOutcome(RescueState.Polling, RescueState.Idle, opened = false))
+    }
+
+    /**
+     * Opening a photo while the app-scoped controller still holds another photo's
+     * results must not pop a sheet the user did not ask for. There is no running →
+     * outcome edge in that case, because nothing ran on this screen.
+     */
+    @Test
+    fun `arriving on a stale outcome opens nothing`() {
+        assertFalse(reopensOnOutcome(RescueState.Idle, done, opened = false))
+        assertFalse(reopensOnOutcome(RescueState.Analyzing, done, opened = false))
+        assertFalse(
+            reopensOnOutcome(
+                RescueState.Recommendations(response(allThree, RescueCapabilities())),
+                done,
+                opened = false,
+            ),
+        )
     }
 }

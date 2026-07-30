@@ -89,6 +89,14 @@ import java.io.File
  *   exactly today's behaviour rather than quietly acquiring new behaviour.
  * @param onKeepLocal 기본 보정 유지 — the contract's "후보 다운로드 **또는** 로컬 보정
  *   유지" branch. Clears any pick and closes.
+ * @param onApplyLocalStyle 내 감도로 정리하기 — the `local_style` card's run action.
+ *   Separate from [onKeepLocal] because the two read as the same sentence and are not:
+ *   this one is asked for from `Editing`, where the user has just chosen a card and is
+ *   expecting the photograph to change, while [onKeepLocal] is offered from
+ *   `Candidates`, where the user is declining a generated result they can already see.
+ *   Both used to be wired to the same host handler, and since that handler only closed
+ *   the sheet, the card that promises to tidy the photo up did nothing at all — 결함 2
+ *   of the 2026-07-30 브리프 §13. Nothing here leaves the phone; see [requiresUpload].
  */
 @Composable
 fun RescueSheet(
@@ -103,7 +111,13 @@ fun RescueSheet(
     onChoose: (JsonObject) -> Unit,
     onRun: () -> Unit,
     onKeepLocal: () -> Unit,
+    onApplyLocalStyle: () -> Unit,
     onSelectCandidate: (RescueCandidate) -> Unit,
+    onSaveCandidate: () -> Unit,
+    saving: Boolean,
+    saved: Boolean?,
+    saveError: String?,
+    localStyleWouldChange: Boolean,
     onHide: () -> Unit = onDismiss,
     modifier: Modifier = Modifier,
 ) {
@@ -212,7 +226,8 @@ fun RescueSheet(
                             chosen = chosen,
                             onChoose = onChoose,
                             onRun = runOnce,
-                            onKeepLocal = onKeepLocal,
+                            onApplyLocalStyle = onApplyLocalStyle,
+                            localStyleWouldChange = localStyleWouldChange,
                             onCancel = dismiss,
                             onDirectEdit = { directPane = true },
                         )
@@ -223,6 +238,10 @@ fun RescueSheet(
                     selectedCandidateId = selectedCandidateId,
                     onSelect = onSelectCandidate,
                     onKeepLocal = onKeepLocal,
+                    onSave = onSaveCandidate,
+                    saving = saving,
+                    saved = saved,
+                    saveError = saveError,
                     onClose = dismiss,
                 )
                 RescueSection.FALLBACK -> FallbackSection(
@@ -305,7 +324,8 @@ private fun PickSection(
     chosen: JsonObject?,
     onChoose: (JsonObject) -> Unit,
     onRun: () -> Unit,
-    onKeepLocal: () -> Unit,
+    onApplyLocalStyle: () -> Unit,
+    localStyleWouldChange: Boolean,
     onCancel: () -> Unit,
     onDirectEdit: () -> Unit,
 ) {
@@ -353,16 +373,33 @@ private fun PickSection(
 
     // Only for an operation this section itself offered — see [offersConfirmFor].
     if (chosen != null && offersConfirmFor(response, chosen)) {
+        // 내 감도로 정리하기 on a photo that is *already* wearing the resolved 감도.
+        // The apply is a correct no-op there, and a correct no-op is indistinguishable
+        // from the defect unless the sheet says which one it is — an app capture opens
+        // on its session preset, so a user with no reference photo hits this every
+        // time. Saying it is already tidy is an answer; closing on an unchanged photo
+        // is the silence 결함 2 was reported as.
+        val noOp = !requiresUpload(chosen) && !localStyleWouldChange
         Text(
-            text = confirmMessageFor(chosen),
+            text = if (noOp) "이미 내 감도로 정리돼 있어요" else confirmMessageFor(chosen),
             color = TextMid,
             fontSize = 12.5.sp,
             modifier = Modifier.padding(top = 16.dp),
         )
-        if (requiresUpload(chosen)) {
-            PrimaryPillButton(text = "실행하기", onClick = onRun, modifier = Modifier.padding(top = 10.dp))
-        } else {
-            PrimaryPillButton(text = "이대로 두기", onClick = onKeepLocal, modifier = Modifier.padding(top = 10.dp))
+        when {
+            requiresUpload(chosen) ->
+                PrimaryPillButton(text = "실행하기", onClick = onRun, modifier = Modifier.padding(top = 10.dp))
+            // Still the apply, not a bare close: it puts the strip on the resolved
+            // 감도 explicitly, so the state the line just claimed is the state the
+            // screen is actually in rather than one it happened to agree with.
+            noOp ->
+                PrimaryPillButton(text = "확인", onClick = onApplyLocalStyle, modifier = Modifier.padding(top = 10.dp))
+            // Same word as the uploading branch, because from the user's side it is
+            // the same act — they chose a card and are running it. It read 이대로 두기
+            // while the handler behind it did nothing, which described the bug
+            // accurately but was never what the card offered.
+            else ->
+                PrimaryPillButton(text = "적용하기", onClick = onApplyLocalStyle, modifier = Modifier.padding(top = 10.dp))
         }
     }
     if (offersDirect) {
@@ -414,6 +451,12 @@ private fun RecommendationCard(
  * Tapping a tile updates the photo behind the sheet immediately, because the result
  * screen derives its source from the selection. Nothing is written until the user
  * saves, and the save writes a new file.
+ *
+ * The primary action **is** that save. It used to be 완료, which only closed the
+ * sheet — so the contract's 후보 비교 → 새 파일 저장 ended one step early and the user
+ * was left to find the header's 저장 pill, behind the sheet that had been covering it.
+ * That is the tail of 결함 5 in the 2026-07-30 브리프 §13: 저장됐는지 알기 어려운 흐름.
+ * The save is the same [performSave] the header calls; only the entry point is new.
  */
 @Composable
 private fun CandidatesSection(
@@ -421,6 +464,10 @@ private fun CandidatesSection(
     selectedCandidateId: String?,
     onSelect: (RescueCandidate) -> Unit,
     onKeepLocal: () -> Unit,
+    onSave: () -> Unit,
+    saving: Boolean,
+    saved: Boolean?,
+    saveError: String?,
     onClose: () -> Unit,
 ) {
     if (candidates.isEmpty()) {
@@ -448,8 +495,32 @@ private fun CandidatesSection(
         // two-up layout draws rather than stretching a single result across the sheet.
         if (candidates.size < MAX_RESCUE_CANDIDATES) Box(Modifier.weight(1f))
     }
-    PrimaryPillButton(text = "완료", onClick = onClose, modifier = Modifier.padding(top = 18.dp))
-    SecondaryPillButton(text = "기본 보정 그대로 두기", onClick = onKeepLocal, modifier = Modifier.padding(top = 10.dp))
+    // Saving needs something chosen. Without a pick the photo behind the sheet is
+    // still the local correction, and a 저장 that quietly wrote *that* under a heading
+    // asking the user to choose a candidate would be the flow lying about what it
+    // saved — 기본 보정 그대로 두기 below is the deliberate way to that outcome.
+    val picked = candidates.any { it.resultId == selectedCandidateId }
+    PrimaryPillButton(
+        text = when {
+            saving -> "저장 중이에요"
+            saved == true -> "갤러리에 저장됨"
+            else -> "이 사진으로 저장"
+        },
+        onClick = onSave,
+        enabled = picked && !saving && saved != true,
+        modifier = Modifier.padding(top = 18.dp),
+    )
+    // The header's own save status is behind this sheet, so it has to be repeated
+    // here — a failed save that reports itself somewhere the user cannot see is the
+    // same silence this section exists to remove.
+    if (saveError != null) {
+        Text(text = saveError, color = Amber, fontSize = 12.5.sp, modifier = Modifier.padding(top = 8.dp))
+    }
+    SecondaryPillButton(
+        text = if (saved == true) "닫기" else "기본 보정 그대로 두기",
+        onClick = if (saved == true) onClose else onKeepLocal,
+        modifier = Modifier.padding(top = 10.dp),
+    )
 }
 
 @Composable

@@ -57,16 +57,51 @@ fun rescueSectionFor(state: RescueState, opened: Boolean): RescueSection {
         is RescueState.Recommendations -> RescueSection.RECOMMENDATIONS
         is RescueState.Editing -> RescueSection.CONFIRM
         // `Submitting` and `Polling` are one thing to the user: the job is running.
-        // (Note: the controller never actually emits `Polling` today — `submit()`
-        // goes Submitting → Candidates/LocalFallback because the polling loop is
-        // inside `RescueRepository.submitAndPoll`. Handled anyway; it is in the
-        // sealed interface and that file is not P1's to change.)
+        // (`Polling` is emitted — `submitAndPoll` calls `onPolling()` once, before its
+        // loop. The note that used to sit here saying it never fires predates that.)
         is RescueState.Submitting -> RescueSection.PROGRESS
         is RescueState.Polling -> RescueSection.PROGRESS
         is RescueState.Candidates -> RescueSection.CANDIDATES
         is RescueState.LocalFallback -> RescueSection.FALLBACK
     }
 }
+
+/** The states in which a job the user started is still running. */
+private fun isRunning(state: RescueState): Boolean =
+    state is RescueState.Submitting || state is RescueState.Polling
+
+/** The states that are a running job's outcome — something the user has to be told. */
+private fun isOutcome(state: RescueState): Boolean =
+    state is RescueState.Candidates || state is RescueState.LocalFallback
+
+/**
+ * Whether the sheet has to come back on its own because the job it was showing just
+ * finished.
+ *
+ * The gap this closes is 결함 5 of the 2026-07-30 브리프 §13 — "AI 생성 후보가 도착했는지
+ * … 알기 어려운 흐름". Owner decision 2026-07-30 made tapping outside *hide* the sheet
+ * rather than cancel, so a generation correctly survives being stepped away from. But
+ * nothing outside [RescueSheet] reads the controller, so when that job finished the
+ * screen said nothing: candidates were downloaded and drawn to a sheet nobody had
+ * open, and a `LocalFallback` failed equally quietly. The previous behaviour at least
+ * ended loudly, by killing the job. Surviving without a surface is worse than that,
+ * not better — a result the user is never told about is the same as no result.
+ *
+ * The rule is a *transition*, not a state, and that is what keeps it from fighting the
+ * user. It fires only on the edge from running to outcome, so:
+ *
+ *  - Opening the screen on a controller already holding another photo's `Candidates`
+ *    does not reopen anything (no edge, and `LaunchedEffect(target)` resets it anyway).
+ *  - Dismissing a *finished* sheet leaves the controller on the same outcome state, so
+ *    there is no second edge and the sheet stays shut. The user closes it once.
+ *  - A cancel goes to `Idle`, which is not an outcome, so cancelling stays silent —
+ *    which is right, because the user already knows.
+ *
+ * @param opened the sheet's current visibility. An open sheet needs no help; it is
+ *   already showing the section [rescueSectionFor] picked.
+ */
+fun reopensOnOutcome(previous: RescueState, current: RescueState, opened: Boolean): Boolean =
+    !opened && isRunning(previous) && isOutcome(current)
 
 // ---- what the screen may keep between states --------------------------------
 
@@ -246,7 +281,11 @@ fun confirmMessageFor(operation: JsonObject): String =
         RescueOperation.OUTPAINT -> "여백을 넓힐게요"
         RescueOperation.VIEWPOINT -> "보는 위치를 바꿀게요"
         RescueOperation.RELIGHT -> "빛의 균형을 맞출게요"
-        RescueOperation.LOCAL_STYLE -> "지금 보정만 그대로 둘게요"
+        // Was "지금 보정만 그대로 둘게요", which was true of the handler and false of
+        // the card: 내 감도로 정리하기 now applies the user's 감도 to the photo instead
+        // of closing the sheet on an unchanged one (브리프 §13 결함 2). Still nothing
+        // leaves the phone — the sentence promises a local change, not a generation.
+        RescueOperation.LOCAL_STYLE -> "내 감도로 정리할게요"
         null -> "지금 보정만 그대로 둘게요"
     }
 

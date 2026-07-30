@@ -423,3 +423,46 @@ fun selectionOnOpen(
 } else {
     openingFilterId(source, hasActiveReferenceColor, sessionPresetId, profilePresetId)
 }
+
+/**
+ * The strip item `내 감도로 정리하기` applies — AI 3's one recommendation that never
+ * leaves the phone.
+ *
+ * Until now the card was wired to a handler that closed the sheet, reset the
+ * controller and changed nothing else: no bitmap was produced, and the user who
+ * tapped a card promising to tidy their photo got the identical photo back. That is
+ * 결함 2 of `docs/P1_전체기능_사용자시나리오_테스트·시연개선요청_2026-07-30.md` §13,
+ * and its §8 restates the requirement as 실행 즉시 전후 변화·저장 가능.
+ *
+ * The fix is a *selection*, not a second rendering path. Moving the strip is what
+ * the preview loop and `performSave` both already key on, so one write puts the
+ * styled pixels on screen and makes the header's 저장 write them at full size — no
+ * new editor call, no server job.
+ *
+ * Which item: [ResultFilterState.recommendedDefaultFilterId], the holder's own
+ * answer to 활성 레퍼런스 색감 → 촬영 세션 스타일 → 온보딩 추천 → 원본. `내 감도` is
+ * that chain, not a synonym for the reference slot, so a user who never analysed a
+ * reference photo still gets their own look rather than a dead tap. It is also the
+ * field the brief's §7 lists as `코어 구현, P1 연결 필요` — this is the consumer it
+ * was asking for.
+ *
+ * The holder validates the id against its own catalogue every time it sets this
+ * ([ResultFilterStateHolder.setRecommendedDefault]), so the result is always
+ * selectable and the caller does not need a membership check of its own.
+ */
+fun localStyleFilterId(state: ResultFilterState): String = state.recommendedDefaultFilterId
+
+/**
+ * Whether tapping `내 감도로 정리하기` would actually change the photograph.
+ *
+ * False when the chain already resolved to the item the strip is sitting on — an app
+ * capture opens on its session preset ([ACTIVE_REFERENCE_OPENS_APP_CAPTURES]), so a
+ * user with no reference photo is *already* looking at their 감도. Applying it again
+ * is a correct no-op, which is exactly the silence the defect reports.
+ *
+ * The caller uses this to say which of the two it is rather than to hide the card:
+ * "이미 적용돼 있다" is information, and a card that vanishes when the state is fine
+ * reads as a bug of its own.
+ */
+fun localStyleChangesPhoto(state: ResultFilterState): Boolean =
+    localStyleFilterId(state) != state.selectedId

@@ -85,6 +85,7 @@ import com.gamdo.app.ui.rescue.RescueLocalResult
 import com.gamdo.app.ui.rescue.RescueSheet
 import com.gamdo.app.ui.rescue.canSubmit
 import com.gamdo.app.ui.rescue.referenceCompositionJson
+import com.gamdo.app.ui.rescue.reopensOnOutcome
 import com.gamdo.app.ui.rescue.rescueCandidates
 import com.gamdo.app.ui.rescue.retainedCandidateId
 import com.gamdo.app.ui.rescue.retainedRecommendations
@@ -268,10 +269,22 @@ fun ResultScreen(
     // Anything set when the flow starts is dropped by the same rule that governs a
     // flow ending in success, in failure, or in a cancel — there is no per-path
     // cleanup to forget.
+    // The state the last pass saw, so the effect below can act on the *edge* into an
+    // outcome rather than on the outcome itself. Plain `remember`: a recreation loses
+    // the running job with it (the poll lives on this screen's coroutine scope), so
+    // there is no edge left to restore.
+    var previousRescueState by remember { mutableStateOf(rescueState) }
     LaunchedEffect(rescueState) {
         rescueResponse = retainedRecommendations(rescueState, rescueResponse)
         rescueRunningOperation = retainedRunningOperation(rescueState, rescueRunningOperation)
         pickedCandidateId = retainedCandidateId(rescueState, pickedCandidateId)
+        // A job the user stepped away from has finished — bring its result back to
+        // them. See `reopensOnOutcome` for why this is an edge and not a state.
+        if (reopensOnOutcome(previousRescueState, rescueState, rescueOpened)) {
+            Log.d(TAG, "rescueSheetReopened outcome=${rescueState::class.simpleName}")
+            rescueOpened = true
+        }
+        previousRescueState = rescueState
     }
     // What the job downloaded, read back from `edit_results_local` rather than from
     // the response: the response's `url` points at the server, the row's `file_path`
@@ -335,7 +348,19 @@ fun ResultScreen(
     // not chosen" and the screen re-seeded the opening look over the filter they had
     // just picked — the same class of overwrite the effect below exists to prevent,
     // arriving by a different route.
-    var styleChosenByUser by rememberSaveable { mutableStateOf(false) }
+    //
+    // It stores the id rather than a bare flag, because a flag outlives the thing it
+    // refers to. `selectedId` lives in the app-scoped holder, which survives a
+    // *rotation* but not process death; the saved flag survives both. So after the OS
+    // restarted the app the screen restored "the user has chosen" on top of a holder
+    // rebuilt at 원본, and `selectionOnOpen` dutifully answered 원본 — the restored
+    // flag actively suppressed `recommendedDefaultFilterId`, which by then held the
+    // right answer. The user's 내 감도 was gone from under them on relaunch, which is
+    // 앱 재시작 복원 in the brief's §7 and D-1 (6). Saving the id makes the two
+    // recoveries agree: rotation re-selects what is already selected, and a cold start
+    // re-selects what the holder no longer knows.
+    var chosenFilterId by rememberSaveable { mutableStateOf<String?>(null) }
+    val styleChosenByUser = chosenFilterId != null
     // O-15 (1): the preset that was on screen when the shutter was pressed, not the
     // one chosen during onboarding. `CameraScreen` already records it on the
     // session; this reads that row and falls back to the profile when there is no
@@ -350,7 +375,7 @@ fun ResultScreen(
     }
     // A pick belongs to the photo it was made about. Declared before the effect
     // that reads it so it lands first when both restart on a new `target`.
-    LaunchedEffect(target) { styleChosenByUser = false }
+    LaunchedEffect(target) { chosenFilterId = null }
     // What this photo opens on, pushed into the shared store.
     //
     // Re-running is safe *because* of `selectionOnOpen`: once the user has tapped,
@@ -363,7 +388,13 @@ fun ResultScreen(
         val next = selectionOnOpen(
             source = sourceKind,
             userHasChosen = styleChosenByUser,
-            currentSelectedId = selectedFilterId,
+            // The saved pick when there is one. Identical to `selectedFilterId` in
+            // every case except the one this closes — a cold start, where the holder
+            // has forgotten and only the saved id remembers. The effect re-runs on
+            // `filterState.items`, so a pick of 내 감도 that cannot be honoured yet
+            // (the reference row loads asynchronously) is retried when the slot lands
+            // rather than being lost to the 원본 fallback below.
+            currentSelectedId = chosenFilterId ?: selectedFilterId,
             hasActiveReferenceColor = hasReferenceColor,
             sessionPresetId = ids.first,
             profilePresetId = ids.second,
@@ -463,9 +494,37 @@ fun ResultScreen(
         // at roughly 940 wide — about twelve times more work than the screen can
         // show, on the interaction path. Saving still uses the full file; see the
         // save button below.
+        // What is already on screen, read before the producer replaces it. Only a
+        // *re*-run has one — the first pass through here sees `Loading`.
+        val standing = value as? OpenedPhoto.Ready
         value = withContext(Dispatchers.Default) {
-            val preview = image.decode(EDITOR_DECODE_MAX_SIDE)
-                ?: return@withContext OpenedPhoto.Unavailable
+            // The decode used to sit outside the `runCatching` below, and that was
+            // the second half of 결함 3 ("사진이 사라지는 현상"). Selecting 내 감도 is
+            // the *only* strip tap that re-enters this producer — `passes` is a key,
+            // and it differs for the reference slot alone — so a decode that failed
+            // here failed exactly when the user picked their own look:
+            //
+            //  - `null` became `Unavailable`, which replaces the photo with 사진을
+            //    열지 못했어요 and stays there, because nothing re-runs until a key
+            //    changes again.
+            //  - `OutOfMemoryError` is an `Error`, so neither `BitmapFactory`'s own
+            //    `catch (Exception)` nor an absent guard here would hold it, and it
+            //    escaped the producer's coroutine and took the Recomposer — the whole
+            //    screen, strip included — down with it. This tap is the screen's peak:
+            //    the outgoing `corrected` bitmap, the outgoing `edited` bitmap, the
+            //    render loop's scratch `IntArray` and a fresh measure buffer are all
+            //    live at once, and none of them is recycled.
+            //
+            // `runCatching` takes `Throwable`, which is the point — an allocation
+            // failure on a re-decode must cost the user their *tap*, not their photo.
+            val preview = runCatching { image.decode(EDITOR_DECODE_MAX_SIDE) }
+                .onFailure { Log.w(TAG, "decode failed for $target; keeping what is on screen", it) }
+                .getOrNull()
+            // Falling back to the standing bitmap rather than to `Unavailable`: the
+            // photo opened once, so "열지 못했어요" would be a false statement about a
+            // file that is demonstrably readable. `Unavailable` stays the answer for
+            // the first decode, which is the case it was written for.
+                ?: return@withContext standing ?: OpenedPhoto.Unavailable
             // **O-12.** A device photo shows the decode and nothing else until the
             // user picks a look — no rotation, no exposure, no white balance, no
             // crop. `plan = null` carries that all the way to the save path, which
@@ -519,7 +578,15 @@ fun ResultScreen(
     // It is only needed to cap a preset's exposure against this frame's headroom.
     val measure by produceState<FilterEngine.Measure?>(null, source) {
         val bitmap = source ?: return@produceState
-        value = withContext(Dispatchers.Default) { QuickFilterEditor.measure(bitmap) }
+        // Allocates an `IntArray(w*h)` of its own, on the same peak this screen hits
+        // when 내 감도 is picked — guarded for the reason the decode above is. Losing
+        // the measurement costs a preset its exposure cap; losing the screen costs
+        // the photo.
+        value = withContext(Dispatchers.Default) {
+            runCatching { QuickFilterEditor.measure(bitmap) }
+                .onFailure { Log.w(TAG, "measure failed for $target; presets seed uncapped", it) }
+                .getOrNull()
+        }
     }
     var adjustments by remember { mutableStateOf(FilterEngine.Adjustments.NEUTRAL) }
     // Where the chosen filter puts every slider. Reset targets it, and the strip
@@ -568,7 +635,7 @@ fun ResultScreen(
     // rebuilt or hidden by the act of choosing from it (P1-B2).
     val selectStrip: (String) -> Unit = { id ->
         if (filterHolder.select(id)) {
-            styleChosenByUser = true
+            chosenFilterId = id
             measure?.let { m ->
                 val seeded = seedFor(id, m)
                 baseline = seeded
@@ -762,7 +829,17 @@ fun ResultScreen(
     // nearly the whole screen and the bottom is two words. Both tool surfaces used to be
     // permanently mounted below the photo, which is what left the photograph — the thing
     // being judged — as a strip in the middle of its own editor.
-    var openTool by remember { mutableStateOf<ToolTab?>(null) }
+    //
+    // `rememberSaveable`, same reason as `styleChosenByUser` above. The filter strip is
+    // mounted *only* inside this sheet, so with a plain `remember` any Activity
+    // recreation — rotation, a font-size or dark-mode change, an OS restart after
+    // memory pressure — closed the panel and took the strip off screen while the
+    // holder behind it was perfectly intact. That is the third way 결함 3 was seen
+    // ("필터 목록이 사라진다"), and it compounds with the decode above: the 내 감도 tap
+    // is the screen's peak-memory moment, so the very tap that could trigger an
+    // OS-initiated recreation is the one after which the strip failed to come back.
+    // `ToolTab` is an enum, so the default saver handles it.
+    var openTool by rememberSaveable { mutableStateOf<ToolTab?>(null) }
     // `AnimatedVisibility` keeps its child composed for the whole exit animation, so
     // reading `openTool` inside the sheet would blank it on the first frame of the close
     // and slide an empty panel off screen. This holds the last real choice, and it is set
@@ -1109,6 +1186,31 @@ fun ResultScreen(
                     .onFailure { Log.w(TAG, "clearing selected_result_id failed", it) }
             }
         }
+        // 내 감도로 정리하기 — the one recommendation that resolves on the phone.
+        //
+        // It is a strip selection, not a second rendering path: `selectStrip` is what
+        // the preview loop and `performSave` already key on, so moving the strip to
+        // [localStyleFilterId] puts the styled pixels on screen and makes the header's
+        // 저장 write them at full resolution. The card used to share `keepLocalResult`
+        // with the candidates section, which only closed the sheet — so the user got
+        // their photo back untouched (브리프 §13 결함 2, §8 "실행 즉시 전후 변화·저장").
+        //
+        // The sheet closes first so the change is visible: it covers the photograph it
+        // just altered, and a result nobody can see is the defect restated.
+        val applyLocalStyle: () -> Unit = {
+            rescueOpened = false
+            selectStrip(localStyleFilterId(filterState))
+            scope.launch {
+                rescueJob?.cancelAndJoin()
+                rescueJob = null
+                rescueController.reset()
+                // Same clearing as `keepLocalResult`: this is a decision *against* any
+                // generated candidate, so the recorded pick goes with it and
+                // `editSource` falls back off the candidate file to the capture.
+                runCatching { captureId?.let { container.database.captureEditStackDao().setSelectedResult(it, null) } }
+                    .onFailure { Log.w(TAG, "clearing selected_result_id failed", it) }
+            }
+        }
         RescueSheet(
             state = rescueState,
             opened = rescueOpened,
@@ -1164,6 +1266,14 @@ fun ResultScreen(
                 }
             },
             onKeepLocal = keepLocalResult,
+            onApplyLocalStyle = applyLocalStyle,
+            // The same save the header runs. It stays open over the photo so the
+            // 갤러리에 저장됨 the header would have shown lands somewhere visible.
+            onSaveCandidate = { performSave() },
+            saving = saving,
+            saved = saved,
+            saveError = saveError,
+            localStyleWouldChange = localStyleChangesPhoto(filterState),
             onSelectCandidate = { candidate ->
                 pickedCandidateId = candidate.resultId
                 scope.launch {
