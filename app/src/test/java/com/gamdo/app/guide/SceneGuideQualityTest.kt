@@ -141,6 +141,58 @@ class SceneGuideQualityTest {
     }
 
     @Test
+    fun `person-only automatic layout uses the fixed portrait framing catalog`() {
+        val face = RectN(0.42f, 0.12f, 0.58f, 0.27f)
+        val person = SlotDetection(
+            id = "person",
+            category = GuideObjectCategory.PERSON,
+            bounds = NormalizedBox(0.28f, 0.08f, 0.72f, 0.94f),
+            confidence = 0.9f,
+            isReliable = true,
+            role = SlotRole.PERSON,
+        )
+        val template = AutoLayoutTemplateResolver().resolve(
+            detections = listOf(person),
+            portraitEvidence = PortraitSceneClassifier.classify(
+                face = face,
+                person = RectN(0.28f, 0.08f, 0.72f, 0.94f),
+                objectCount = 0,
+                backgroundRatio = 0.2f,
+                symmetry = 0.85f,
+            ),
+        )
+
+        assertEquals("portrait_full_center_v3", template?.id)
+        assertEquals(SlotVisualKind.PERSON_BRACKET, template?.slots?.single()?.visualKind)
+        assertEquals(RectN(0.30f, 0.08f, 0.70f, 0.94f), template?.slots?.single()?.bounds)
+    }
+
+    @Test
+    fun `portrait preference changes only the fixed framing candidate`() {
+        val person = SlotDetection(
+            id = "person",
+            category = GuideObjectCategory.PERSON,
+            bounds = NormalizedBox(0.20f, 0.08f, 0.58f, 0.94f),
+            confidence = 0.9f,
+            isReliable = true,
+            role = SlotRole.PERSON,
+        )
+        val evidence = PortraitSceneClassifier.classify(
+            face = RectN(0.27f, 0.10f, 0.43f, 0.27f),
+            person = RectN(0.20f, 0.08f, 0.58f, 0.94f),
+            objectCount = 0,
+            backgroundRatio = 0.2f,
+            symmetry = 0f,
+            preferredTemplateId = "portrait_full_lead_room_v3",
+        )
+
+        val template = AutoLayoutTemplateResolver().resolve(listOf(person), portraitEvidence = evidence)
+
+        assertEquals("portrait_full_lead_room_v3", template?.id)
+        assertEquals(RectN(0.14f, 0.08f, 0.55f, 0.94f), template?.slots?.single()?.bounds)
+    }
+
+    @Test
     fun `manual layout replaces automatic layout and rescan clears it`() {
         val controller = SceneGuideSessionController()
         assertTrue(controller.selectManualLayout(LayoutTemplateCatalog.GENERIC_PAIR))
@@ -150,5 +202,27 @@ class SceneGuideQualityTest {
 
         assertEquals(GuideLayoutState.Searching, controller.layoutState.value)
         assertFalse(controller.selectManualLayout("not-a-layout"))
+    }
+
+    @Test
+    fun `fresh face frames confirm a portrait even when object detector is cached`() {
+        val controller = SceneGuideSessionController()
+        val face = FaceObservation(NormalizedBox(0.36f, 0.12f, 0.64f, 0.42f), null, null, 0f)
+        val cachedObjectResult = DetectionResult(
+            faces = listOf(face),
+            pose = null,
+            objects = emptyList(),
+            objectsFresh = false,
+            objectSequenceId = 7L,
+        )
+
+        repeat(4) { controller.updateScene(cachedObjectResult, StyleTarget()) }
+        val fixed = controller.updateScene(cachedObjectResult, StyleTarget())
+
+        assertTrue(fixed.layoutState is GuideLayoutState.Fixed)
+        assertEquals(
+            "portrait_upper_45_v3",
+            (fixed.layoutState as GuideLayoutState.Fixed).template.id,
+        )
     }
 }

@@ -156,7 +156,7 @@ dependencies {
     // CameraX
     implementation(libs.bundles.camerax)
 
-    // ML Kit (face + pose streaming; accurate pose kept out until perf-checked — see Day 1 plan)
+    // ML Kit (face streaming, object detection, subject segmentation; pose path retired in V3.1)
     implementation(libs.bundles.mlkit)
     implementation(libs.mediapipe.tasks.vision)
 

@@ -8,7 +8,7 @@ import kotlin.math.sqrt
 
 enum class SlotRole { PERSON, OBJECT }
 
-enum class SlotVisualKind { PERSON_SILHOUETTE, POSE_SKELETON, GENERIC_OBJECT, CUP, PLATE }
+enum class SlotVisualKind { PERSON_SILHOUETTE, PERSON_BRACKET, GENERIC_OBJECT, CUP, PLATE }
 
 /** Server-derived, normalized slot used only when a reference is active. */
 data class ReferenceTargetSlot(
@@ -39,7 +39,7 @@ data class LayoutSlot(
     /** Rendering hint only; it never changes the composition decision. */
     val preferredAspectRatio: Float = when (visualKind) {
         SlotVisualKind.PERSON_SILHOUETTE -> 0.52f
-        SlotVisualKind.POSE_SKELETON -> 0.52f
+        SlotVisualKind.PERSON_BRACKET -> 0.52f
         SlotVisualKind.CUP -> 0.78f
         SlotVisualKind.PLATE -> 1.15f
         SlotVisualKind.GENERIC_OBJECT -> 1f
@@ -53,7 +53,6 @@ data class LayoutTemplate(
     val horizonY: Float? = null,
     val opacity: Float = 0.30f,
     val viewportAspect: GuideViewportAspect = GuideViewportAspect.FOUR_TO_FIVE,
-    val poseGuide: PoseGuideTemplate? = null,
 ) {
     init {
         require(id.isNotBlank())
@@ -112,6 +111,7 @@ data class SlotDetection(
     val semanticConfidence: Float? = null,
     val semanticConfirmed: Boolean = false,
     val outline: List<LayoutGuidePoint> = emptyList(),
+    val stableObjectKey: String = id,
 ) {
     fun normalized() = copy(
         bounds = NormalizedBox(
@@ -149,26 +149,51 @@ data class LayoutSlotAssignment(
     val centerDistance: Float,
 )
 
-/** Greedy one-to-one correspondence; it never changes the fixed template. */
+/** Exact one-to-one correspondence for the small (maximum four-slot) scene. */
 object LayoutSlotAssigner {
     fun assign(template: LayoutTemplate, detections: List<SlotDetection>): List<LayoutSlotAssignment> {
-        val available = detections.filter { it.isReliable }.toMutableList()
-        return template.slots.map { slot ->
-            val candidate = available
-                .filter { detection ->
-                    slot.expectedCategory == null ||
-                        detection.category == slot.expectedCategory ||
-                        detection.category == GuideObjectCategory.UNKNOWN
-                }
-                .maxByOrNull { score(slot.bounds, it.bounds) }
-            candidate?.let { available.remove(it) }
-            LayoutSlotAssignment(
-                slotId = slot.id,
-                detectionId = candidate?.id,
-                overlap = candidate?.let { overlap(slot.bounds, it.bounds) } ?: 0f,
-                centerDistance = candidate?.let { centerDistance(slot.bounds, it.bounds) } ?: 1f,
-            )
+        val candidates = detections.filter { it.isReliable }.take(4)
+        val pairs = bestAssignment(template.slots, candidates)
+        return template.slots.mapIndexed { index, slot ->
+            val candidate = pairs.getOrNull(index)
+            LayoutSlotAssignment(slot.id, candidate?.id, candidate?.let { overlap(slot.bounds, it.bounds) } ?: 0f, candidate?.let { centerDistance(slot.bounds, it.bounds) } ?: 1f)
         }
+    }
+
+    private fun bestAssignment(slots: List<LayoutSlot>, detections: List<SlotDetection>): List<SlotDetection?> {
+        if (slots.isEmpty() || detections.isEmpty()) return List(slots.size) { null }
+        var bestCost = Float.POSITIVE_INFINITY
+        var best = List<SlotDetection?>(slots.size) { null }
+        fun visit(slotIndex: Int, used: Set<Int>, current: List<SlotDetection?>, cost: Float) {
+            if (slotIndex == slots.size) {
+                if (cost < bestCost) { bestCost = cost; best = current }
+                return
+            }
+            visit(slotIndex + 1, used, current + null, cost + 0.75f)
+            detections.indices.filterNot { it in used }.filter { detectionIndex ->
+                val detection = detections[detectionIndex]
+                slots[slotIndex].expectedCategory == null ||
+                    detection.category == slots[slotIndex].expectedCategory ||
+                    detection.category == GuideObjectCategory.UNKNOWN
+            }.forEach { detectionIndex ->
+                val detection = detections[detectionIndex]
+                visit(slotIndex + 1, used + detectionIndex, current + detection, cost + cost(slots[slotIndex], detection))
+            }
+        }
+        visit(0, emptySet(), emptyList(), 0f)
+        return best
+    }
+
+    private fun cost(slot: LayoutSlot, detection: SlotDetection): Float {
+        val center = centerDistance(slot.bounds, detection.bounds).coerceIn(0f, 1f)
+        val targetAspect = slot.preferredAspectRatio.coerceAtLeast(0.01f)
+        val sourceAspect = (detection.bounds.width / detection.bounds.height.coerceAtLeast(0.01f)).coerceIn(0.4f, 2.5f)
+        val aspect = (kotlin.math.abs(kotlin.math.ln(targetAspect / sourceAspect)) / 2.0f).coerceIn(0f, 1f)
+        val slotArea = (slot.bounds.width * slot.bounds.height).coerceAtLeast(0.001f)
+        val detectionArea = (detection.bounds.width * detection.bounds.height).coerceAtLeast(0.001f)
+        val areaRank = (kotlin.math.abs(kotlin.math.ln(slotArea / detectionArea)) / 3.0f).coerceIn(0f, 1f)
+        val semantic = if (slot.expectedCategory == null || detection.category == slot.expectedCategory || detection.category == GuideObjectCategory.UNKNOWN) 0f else 1f
+        return center * 0.55f + aspect * 0.20f + areaRank * 0.15f + semantic * 0.10f
     }
 
     private fun score(slot: RectN, detection: NormalizedBox): Float =
@@ -204,6 +229,8 @@ object LayoutTemplateCatalog {
 
     const val PERSON_FULL_CENTER = "person_full_center_v2"
     const val PERSON_FULL_OFFSET = "person_full_offset_v2"
+    const val PERSON_FULL_RELAXED = "person_full_relaxed_v3"
+    const val PERSON_FULL_WALKING = "person_full_walking_v3"
     const val PERSON_UPPER = "person_upper_v2"
     const val PERSON_SEATED = "person_seated_v2"
     const val PERSON_OBJECT = "person_object_v2"
@@ -213,12 +240,14 @@ object LayoutTemplateCatalog {
     const val OBJECT_TRIO_TRIANGLE = "object_trio_triangle_v2"
     const val OBJECT_TRIO_ROW = "object_trio_row_v2"
     const val OBJECT_QUAD_GRID = "object_quad_grid_v2"
+    const val OBJECT_QUAD_HIERARCHY = "object_quad_hierarchy_v3"
     const val CAFE_TABLE_V2 = "cafe_table_v2"
 
     val manualIds = listOf(
-        PERSON_FULL_CENTER, PERSON_FULL_OFFSET, PERSON_UPPER, PERSON_SEATED,
-        PERSON_OBJECT, OBJECT_SINGLE, OBJECT_PAIR_BALANCED, OBJECT_PAIR_DIAGONAL,
-        OBJECT_TRIO_TRIANGLE, OBJECT_TRIO_ROW, OBJECT_QUAD_GRID, CAFE_TABLE_V2,
+        PERSON_FULL_CENTER, PERSON_FULL_OFFSET, PERSON_FULL_RELAXED, PERSON_FULL_WALKING,
+        PERSON_UPPER, PERSON_SEATED,
+        OBJECT_SINGLE, OBJECT_PAIR_BALANCED, OBJECT_PAIR_DIAGONAL,
+        OBJECT_TRIO_TRIANGLE, OBJECT_QUAD_HIERARCHY, CAFE_TABLE_V2,
     )
 
     val legacyIds = listOf(
@@ -234,7 +263,9 @@ object LayoutTemplateCatalog {
                     displayName = displayName(id),
                     category = if (template.slots.any { it.role == SlotRole.PERSON }) LayoutCategory.PERSON else LayoutCategory.OBJECT,
                     slots = template.slots.map { LayoutPreviewSlot(it.role, it.visualKind, it.bounds) },
-                    poseTemplateId = template.poseGuide?.id,
+                    // Kept nullable for persisted-client compatibility. New
+                    // templates do not expose pose landmarks or a skeleton.
+                    poseTemplateId = null,
                 )
             }
         }
@@ -245,10 +276,12 @@ object LayoutTemplateCatalog {
         viewportAspect: GuideViewportAspect = GuideViewportAspect.FOUR_TO_FIVE,
     ): LayoutTemplate? = when (id) {
         PORTRAIT_PERSON -> LayoutTemplate(id, listOf(LayoutSlot("person", GuideObjectCategory.PERSON, RectN(0.25f, 0.14f, 0.75f, 0.86f), role = SlotRole.PERSON, visualKind = SlotVisualKind.PERSON_SILHOUETTE)), viewportAspect = viewportAspect)
-        PERSON_FULL_CENTER -> portraitTemplate(id, PoseGuideCatalog.FULL_CENTER, RectN(0.25f, 0.10f, 0.75f, 0.92f), viewportAspect)
-        PERSON_FULL_OFFSET -> portraitTemplate(id, PoseGuideCatalog.FULL_OFFSET, RectN(0.18f, 0.10f, 0.68f, 0.92f), viewportAspect)
-        PERSON_UPPER -> portraitTemplate(id, PoseGuideCatalog.UPPER_BODY, RectN(0.23f, 0.18f, 0.77f, 0.88f), viewportAspect)
-        PERSON_SEATED -> portraitTemplate(id, PoseGuideCatalog.SEATED, RectN(0.20f, 0.16f, 0.80f, 0.88f), viewportAspect)
+        PERSON_FULL_CENTER -> portraitFrame(id, RectN(0.30f, 0.08f, 0.70f, 0.94f), viewportAspect)
+        PERSON_FULL_OFFSET -> portraitFrame(id, RectN(0.15f, 0.08f, 0.53f, 0.94f), viewportAspect)
+        PERSON_FULL_RELAXED -> portraitFrame(id, RectN(0.27f, 0.08f, 0.72f, 0.94f), viewportAspect)
+        PERSON_FULL_WALKING -> portraitFrame(id, RectN(0.14f, 0.08f, 0.55f, 0.94f), viewportAspect)
+        PERSON_UPPER -> portraitFrame(id, RectN(0.30f, 0.17f, 0.78f, 0.92f), viewportAspect)
+        PERSON_SEATED -> portraitFrame(id, RectN(0.20f, 0.15f, 0.80f, 0.90f), viewportAspect)
         PERSON_OBJECT -> LayoutTemplate(id, listOf(
             LayoutSlot("person", GuideObjectCategory.PERSON, RectN(0.08f, 0.14f, 0.50f, 0.88f), role = SlotRole.PERSON, visualKind = SlotVisualKind.PERSON_SILHOUETTE),
             LayoutSlot("object", null, RectN(0.60f, 0.56f, 0.84f, 0.78f)),
@@ -268,21 +301,23 @@ object LayoutTemplateCatalog {
         GENERIC_PAIR, OBJECT_PAIR_BALANCED -> GenericLayoutSynthesizer.generic(2, Arrangement.ROW, id = id, viewportAspect = viewportAspect)
         OBJECT_PAIR_DIAGONAL -> GenericLayoutSynthesizer.generic(2, Arrangement.DIAGONAL, id = id, viewportAspect = viewportAspect)
         GENERIC_TRIO, OBJECT_TRIO_TRIANGLE -> GenericLayoutSynthesizer.generic(3, Arrangement.TRIANGLE, id = id, viewportAspect = viewportAspect)
-        OBJECT_TRIO_ROW -> GenericLayoutSynthesizer.generic(3, Arrangement.ROW, id = id, viewportAspect = viewportAspect)
-        GENERIC_QUAD, OBJECT_QUAD_GRID -> GenericLayoutSynthesizer.generic(4, Arrangement.GRID, id = id, viewportAspect = viewportAspect)
+        OBJECT_TRIO_ROW -> GenericLayoutSynthesizer.generic(3, Arrangement.TRIANGLE, id = id, viewportAspect = viewportAspect)
+        GENERIC_QUAD, OBJECT_QUAD_GRID -> GenericLayoutSynthesizer.generic(4, Arrangement.DIAMOND, id = id, viewportAspect = viewportAspect)
+        OBJECT_QUAD_HIERARCHY -> GenericLayoutSynthesizer.generic(4, Arrangement.DIAMOND, id = id, viewportAspect = viewportAspect)
         else -> null
     }
 
-    private fun portraitTemplate(id: String, poseId: String, bounds: RectN, viewportAspect: GuideViewportAspect) = LayoutTemplate(
+    private fun portraitFrame(id: String, bounds: RectN, viewportAspect: GuideViewportAspect) = LayoutTemplate(
         id = id,
-        slots = listOf(LayoutSlot("person", GuideObjectCategory.PERSON, bounds, role = SlotRole.PERSON, visualKind = SlotVisualKind.POSE_SKELETON)),
+        slots = listOf(LayoutSlot("person", GuideObjectCategory.PERSON, bounds, role = SlotRole.PERSON, visualKind = SlotVisualKind.PERSON_BRACKET)),
         viewportAspect = viewportAspect,
-        poseGuide = PoseGuideCatalog.resolve(poseId),
     )
 
     private fun displayName(id: String): String = when (id) {
         PERSON_FULL_CENTER -> "전신 중앙"
         PERSON_FULL_OFFSET -> "전신 비대칭"
+        PERSON_FULL_RELAXED -> "전신 자연스러운 흐름"
+        PERSON_FULL_WALKING -> "전신 리드 룸"
         PERSON_UPPER -> "상반신"
         PERSON_SEATED -> "앉은 인물"
         PERSON_OBJECT -> "인물과 소품"
@@ -324,7 +359,7 @@ data class LayoutTemplateSummary(
     val slotCount: Int get() = slots.size
 }
 
-enum class Arrangement { SINGLE, ROW, COLUMN, DIAGONAL, TRIANGLE, GRID }
+enum class Arrangement { SINGLE, ROW, COLUMN, DIAGONAL, TRIANGLE, DIAMOND, GRID }
 
 /** Privacy-safe scene decision trace: no pixels or coordinates are retained. */
 data class SceneSignature(
@@ -364,11 +399,11 @@ object GenericLayoutSynthesizer {
         val xSpan = detections.maxOf { it.bounds.centerX } - detections.minOf { it.bounds.centerX }
         val ySpan = detections.maxOf { it.bounds.centerY } - detections.minOf { it.bounds.centerY }
         return when {
-            xSpan >= ySpan * 1.5f -> Arrangement.ROW
-            ySpan >= xSpan * 1.5f -> Arrangement.COLUMN
+            detections.size == 2 && xSpan >= ySpan * 1.5f -> Arrangement.ROW
             detections.size == 2 -> Arrangement.DIAGONAL
             detections.size == 3 -> Arrangement.TRIANGLE
-            else -> Arrangement.GRID
+            detections.size >= 4 -> Arrangement.DIAMOND
+            else -> Arrangement.SINGLE
         }
     }
 
@@ -378,17 +413,26 @@ object GenericLayoutSynthesizer {
         id: String = "generic_${count}_$arrangement",
         viewportAspect: GuideViewportAspect = GuideViewportAspect.FOUR_TO_FIVE,
     ): LayoutTemplate {
-        val positions = when (arrangement) {
-            // Generic objects are guides to place the subject, not large
-            // portrait frames. Keep them compact so the camera scene remains
-            // visible around the layout.
-            Arrangement.SINGLE -> listOf(RectN(0.39f, 0.43f, 0.61f, 0.65f))
-            Arrangement.ROW -> (0 until count).map { index -> slotRect(index, count, horizontal = true, viewportAspect = viewportAspect) }
-            Arrangement.COLUMN -> (0 until count).map { index -> slotRect(index, count, horizontal = false, viewportAspect = viewportAspect) }
-            Arrangement.DIAGONAL -> listOf(RectN(0.26f, 0.38f, 0.46f, 0.62f), RectN(0.54f, 0.44f, 0.74f, 0.68f))
-            Arrangement.TRIANGLE -> listOf(RectN(0.25f, 0.50f, 0.45f, 0.74f), RectN(0.55f, 0.50f, 0.75f, 0.74f), RectN(0.40f, 0.25f, 0.60f, 0.49f))
-            Arrangement.GRID -> listOf(RectN(0.24f, 0.26f, 0.44f, 0.48f), RectN(0.56f, 0.26f, 0.76f, 0.48f), RectN(0.24f, 0.56f, 0.44f, 0.78f), RectN(0.56f, 0.56f, 0.76f, 0.78f)).take(count)
+        // COLUMN and GRID remain in the enum only for persisted/legacy input.
+        // They are not V3.1 composition contracts: normalize them before
+        // resolving slots so stale callers cannot resurrect a vertical strip
+        // or a generic 2x2 grid.
+        val safeArrangement = when (arrangement) {
+            Arrangement.COLUMN -> when {
+                count <= 1 -> Arrangement.SINGLE
+                count == 2 -> Arrangement.DIAGONAL
+                count == 3 -> Arrangement.TRIANGLE
+                else -> Arrangement.DIAMOND
+            }
+            Arrangement.GRID -> when {
+                count <= 1 -> Arrangement.SINGLE
+                count == 2 -> Arrangement.ROW
+                count == 3 -> Arrangement.TRIANGLE
+                else -> Arrangement.DIAMOND
+            }
+            else -> arrangement
         }
+        val positions = CompositionTechniqueCatalog.forObjects(count, safeArrangement).slots.map { it.bounds }
         return LayoutTemplate(
             id = id,
             slots = positions.take(4).mapIndexed { index, bounds ->
@@ -416,7 +460,7 @@ object GenericLayoutSynthesizer {
         val objects = detections.filter { it.isReliable && it.role == SlotRole.OBJECT }
         if (objectSlots.isEmpty() || objects.isEmpty()) return template
 
-        val matches = matchObjectSlots(objectSlots, objects)
+        val matches = matchObjectSlotsExact(objectSlots, objects)
         if (matches.isEmpty()) return template
         val medianArea = matches.map { (_, detection) -> detection.bounds.width * detection.bounds.height }
             .sorted()
@@ -475,16 +519,21 @@ object GenericLayoutSynthesizer {
         })
     }
 
-    private fun slotRect(index: Int, count: Int, horizontal: Boolean, viewportAspect: GuideViewportAspect): RectN {
-        val size = if (count <= 2) 0.22f else 0.19f
-        val gap = if (count <= 2) 0.30f else 0.23f
-        val center = if (horizontal) 0.5f + (index - (count - 1) / 2f) * gap else 0.5f
-        val baseY = if (viewportAspect == GuideViewportAspect.FOUR_TO_FIVE) 0.58f else 0.54f
-        val vertical = if (horizontal) baseY else 0.5f + (index - (count - 1) / 2f) * gap
-        return RectN(center - size / 2f, vertical - size / 2f, center + size / 2f, vertical + size / 2f)
+    /** Uses the same exact assignment as the public KPI mapping for shape snapshots. */
+    private fun matchObjectSlotsExact(
+        slots: List<IndexedValue<LayoutSlot>>,
+        detections: List<SlotDetection>,
+    ): List<Pair<Int, SlotDetection>> {
+        val matchingTemplate = LayoutTemplate("shape_matching", slots.map { it.value })
+        val byId = detections.associateBy { it.id }
+        return LayoutSlotAssigner.assign(matchingTemplate, detections).mapNotNull { assignment ->
+            val detection = assignment.detectionId?.let(byId::get) ?: return@mapNotNull null
+            val slotIndex = slots.firstOrNull { it.value.id == assignment.slotId }?.index ?: return@mapNotNull null
+            slotIndex to detection
+        }
     }
 
-    /** Matches source objects to fixed template positions without retaining coordinates. */
+    /** Legacy normalized-center matcher retained only for old serialized fixtures. */
     private fun matchObjectSlots(
         slots: List<IndexedValue<LayoutSlot>>,
         detections: List<SlotDetection>,
@@ -549,6 +598,7 @@ class AutoLayoutTemplateResolver {
         explicitId: String? = null,
         styleTarget: StyleTarget = StyleTarget(),
         viewportAspect: GuideViewportAspect = GuideViewportAspect.FOUR_TO_FIVE,
+        portraitEvidence: PortraitSceneEvidence? = null,
     ): LayoutTemplate? {
         explicitId?.let {
             selectedId = it
@@ -559,7 +609,7 @@ class AutoLayoutTemplateResolver {
             return template
         }
         if (!objectsFresh) return null
-        val candidate = choose(detections, viewportAspect)
+        val candidate = choose(detections, viewportAspect, portraitEvidence)
         if (candidate == null) {
             return null
         }
@@ -577,7 +627,11 @@ class AutoLayoutTemplateResolver {
 
     private data class Candidate(val id: String, val template: LayoutTemplate)
 
-    private fun choose(detections: List<SlotDetection>, viewportAspect: GuideViewportAspect): Candidate? {
+    private fun choose(
+        detections: List<SlotDetection>,
+        viewportAspect: GuideViewportAspect,
+        portraitEvidence: PortraitSceneEvidence?,
+    ): Candidate? {
         val valid = detections.filter { it.isReliable }.take(4)
         if (valid.isEmpty()) return null
         val person = valid.firstOrNull { it.role == SlotRole.PERSON }
@@ -585,11 +639,12 @@ class AutoLayoutTemplateResolver {
         val drinks = objects.count { it.category == GuideObjectCategory.DRINKWARE && it.semanticConfirmed && (it.semanticConfidence ?: 0f) >= 0.80f }
         val food = objects.count { it.category == GuideObjectCategory.FOOD_TABLEWARE && it.semanticConfirmed && (it.semanticConfidence ?: 0f) >= 0.80f }
         if (person != null && objects.isEmpty()) {
-            return Candidate(LayoutTemplateCatalog.PORTRAIT_PERSON, LayoutTemplateCatalog.resolve(LayoutTemplateCatalog.PORTRAIT_PERSON, viewportAspect)!!)
+            val framing = portraitEvidence?.let { PortraitFramingCatalog.select(it, it.preferredTemplateId) } ?: PortraitFramingCatalog.upper
+            return Candidate(framing.id, LayoutTemplate(framing.id, listOf(framing.toLayoutSlot()), viewportAspect = viewportAspect))
         }
-        if (drinks >= 3) return specialisedCandidate(LayoutTemplateCatalog.DRINK_TRIO, person, viewportAspect)
-        if (drinks >= 2 && food >= 1) return specialisedCandidate(LayoutTemplateCatalog.CAFE_TABLE, person, viewportAspect)
-        if (drinks >= 2) return specialisedCandidate(LayoutTemplateCatalog.DRINK_PAIR, person, viewportAspect)
+        if (drinks >= 3) return specialisedCandidate(LayoutTemplateCatalog.DRINK_TRIO, person, viewportAspect, portraitEvidence)
+        if (drinks >= 2 && food >= 1) return specialisedCandidate(LayoutTemplateCatalog.CAFE_TABLE, person, viewportAspect, portraitEvidence)
+        if (drinks >= 2) return specialisedCandidate(LayoutTemplateCatalog.DRINK_PAIR, person, viewportAspect, portraitEvidence)
 
         val objectCount = objects.size.coerceAtMost(if (person == null) 4 else 3)
         if (objectCount == 0) return null
@@ -599,27 +654,29 @@ class AutoLayoutTemplateResolver {
             id = "auto_${objectCount}_${GenericLayoutSynthesizer.chooseArrangement(objects).name.lowercase()}",
             viewportAspect = viewportAspect,
         )
-        return Candidate(base.id, if (person == null) base else withPerson(base, person))
+        return Candidate(base.id, if (person == null) base else withPerson(base, person, portraitEvidence))
     }
 
     private fun specialisedCandidate(
         id: String,
         person: SlotDetection?,
         viewportAspect: GuideViewportAspect,
+        portraitEvidence: PortraitSceneEvidence? = null,
     ): Candidate {
         val base = LayoutTemplateCatalog.resolve(id, viewportAspect)!!
-        return Candidate(id, if (person == null) base else withPerson(base, person))
+        return Candidate(id, if (person == null) base else withPerson(base, person, portraitEvidence))
     }
 
-    private fun withPerson(base: LayoutTemplate, person: SlotDetection): LayoutTemplate {
+    private fun withPerson(base: LayoutTemplate, person: SlotDetection, portraitEvidence: PortraitSceneEvidence? = null): LayoutTemplate {
         val personOnLeft = person.bounds.centerX < base.slots.map { (it.bounds.left + it.bounds.right) / 2f }.average().toFloat()
-        val personSlot = LayoutSlot(
-            id = "person",
-            expectedCategory = GuideObjectCategory.PERSON,
-            bounds = if (personOnLeft) RectN(0.06f, 0.18f, 0.38f, 0.82f) else RectN(0.62f, 0.18f, 0.94f, 0.82f),
-            role = SlotRole.PERSON,
-            visualKind = SlotVisualKind.PERSON_SILHOUETTE,
-        )
+        val personSlot = portraitEvidence?.let { PortraitFramingCatalog.select(it, it.preferredTemplateId).toLayoutSlot() }
+            ?: LayoutSlot(
+                id = "person",
+                expectedCategory = GuideObjectCategory.PERSON,
+                bounds = if (personOnLeft) RectN(0.06f, 0.18f, 0.38f, 0.82f) else RectN(0.62f, 0.18f, 0.94f, 0.82f),
+                role = SlotRole.PERSON,
+                visualKind = SlotVisualKind.PERSON_BRACKET,
+            )
         return LayoutTemplate(
             id = "auto_person_${base.slots.size}",
             slots = (listOf(personSlot) + base.slots).take(4),

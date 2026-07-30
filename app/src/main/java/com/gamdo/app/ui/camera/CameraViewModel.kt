@@ -641,7 +641,6 @@ class CameraViewModel(
 
     private fun detectionLabelOf(detection: DetectionResult): String {
         val faces = detection.faces.size
-        val pose = detection.pose?.landmarks?.size ?: 0
         val objects = detection.objects.size
         val objectDetails = detection.objects
             .take(2)
@@ -653,7 +652,7 @@ class CameraViewModel(
             }
             .ifBlank { "none" }
         val segmentation = if (detection.segmentation != null) "on" else "off"
-        return "얼굴 $faces · 포즈 $pose · 물체 $objects[$objectDetails] · seg=$segmentation"
+        return "얼굴 $faces · 물체 $objects[$objectDetails] · seg=$segmentation"
     }
 
     /**
@@ -661,13 +660,6 @@ class CameraViewModel(
      * falling back to the primary face box.
      */
     private fun personCenterOf(detection: DetectionResult): Pair<Float, Float>? {
-        val landmarks = detection.pose?.landmarks
-            ?.filter { it.inFrameLikelihood > config.features.minLandmarkLikelihood }
-            ?.takeIf { it.isNotEmpty() }
-        if (landmarks != null) {
-            return landmarks.map { it.x }.average().toFloat() to
-                landmarks.map { it.y }.average().toFloat()
-        }
         return detection.faces.firstOrNull()?.box?.let { it.centerX to it.centerY }
     }
 }

@@ -179,10 +179,7 @@ class StableSceneTracker(
             window.count { sample -> sample.objects.any { sameSubject(it, observation) } } >=
             config.semanticConfirmationsRequired
 
-    private fun stableKey(objectObservation: ObjectObservation): String =
-        objectObservation.trackingId?.toString() ?: "%.2f:%.2f".format(
-            objectObservation.box.centerX, objectObservation.box.centerY,
-        )
+    private fun stableKey(objectObservation: ObjectObservation): String = objectObservation.stableObjectKey
 
     private fun rankingScore(objectObservation: ObjectObservation): Float {
         val centrality = 1f - (hypot(

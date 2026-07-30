@@ -63,7 +63,19 @@ data class ObjectObservation(
     val semanticConfirmed: Boolean = false,
     @Deprecated("Guide eligibility is derived by the scene policy.")
     val isGuideEligible: Boolean = false,
-)
+) {
+    /** Stable identity for composition matching when the detector has no track id. */
+    val stableObjectKey: String
+        get() = trackingId?.let { "track:$it" } ?: buildString {
+            append(category.name.lowercase())
+            append(':')
+            append((box.centerX * 100).toInt())
+            append(':')
+            append((box.centerY * 100).toInt())
+            append(':')
+            append((box.width / box.height.coerceAtLeast(0.01f) * 20).toInt())
+        }
+}
 
 /** The intentionally small vocabulary for reliable GAMDO composition guides. */
 enum class GuideObjectCategory {

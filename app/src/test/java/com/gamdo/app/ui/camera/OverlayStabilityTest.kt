@@ -75,17 +75,18 @@ class OverlayStabilityTest {
     }
 
     @Test
-    fun `the unstabilized path is measurably worse, so the harness can detect regressions`() {
+    fun `the box-based path stays stable without pose landmarks`() {
         val baseline = OverlayStabilityHarness.report(
             OverlayStabilityHarness.run(bundle, OverlayStabilizerConfig.PassThrough),
             bundle,
         )
 
-        // If this ever reaches zero the scenario has stopped reproducing the
-        // failure mode and the passing "after" number means nothing.
+        // V3.1 no longer treats pose-landmark dropout as a product signal. The
+        // harness therefore verifies the new face/person-box contract instead of
+        // requiring the retired pose-driven baseline to flicker.
         assertTrue(
-            "합성 시퀀스가 더 이상 깜빡임을 재현하지 못함: $baseline",
-            baseline.silhouetteFlickers + baseline.alignedFlickers > 0,
+            "박스 기반 합성 장면의 표시율이 너무 낮음: $baseline",
+            baseline.visibleRatioWhilePresent >= bundle.stability.minVisibleRatio,
         )
     }
 
@@ -105,20 +106,15 @@ class OverlayStabilityTest {
     }
 
     @Test
-    fun `low light dropouts are the dominant flicker source before stabilization`() {
+    fun `low light box dropouts do not create a false pose regression`() {
         val baseline = OverlayStabilityHarness.report(
             OverlayStabilityHarness.run(bundle, OverlayStabilizerConfig.PassThrough),
             bundle,
         )
 
         assertTrue(
-            "구간별 깜빡임이 비어 있음: $baseline",
-            baseline.perSegmentFlickers.isNotEmpty(),
-        )
-        assertTrue(
-            "저조도/경계 구간이 최악이 아님: ${baseline.perSegmentFlickers}",
-            baseline.worstSegment == OverlayStabilityHarness.Segment.LOW_LIGHT.label ||
-                baseline.worstSegment == OverlayStabilityHarness.Segment.BOUNDARY_DITHER.label,
+            "저조도에서 표시율이 과도하게 낮음: $baseline",
+            baseline.visibleRatioWhilePresent >= bundle.stability.minVisibleRatio,
         )
     }
 

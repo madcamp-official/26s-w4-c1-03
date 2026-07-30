@@ -43,6 +43,9 @@ data class StyleTarget(
     val layoutTemplateId: String? = null,
     /** Reference-derived slots are screen-fixed and take precedence over auto search. */
     val referenceSlots: List<ReferenceTargetSlot> = emptyList(),
+    /** Optional bounded preference for the fixed portrait framing catalog. */
+    val preferredPortraitTemplateId: String? = null,
+    val portraitMood: String? = null,
 )
 
 data class GuideConfig(
@@ -93,7 +96,7 @@ class AlignmentEngine {
         // A detected object has its own confidence; it must not be rejected just
         // because there is no human pose in the frame.
         val confidenceUsable = observedSubjectBox != null ||
-            features.poseConfidence >= config.minPoseConfidence
+            features.personBox != null || features.faceBox != null
         val previous = lastStableTarget
 
         if (!confidenceUsable) {

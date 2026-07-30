@@ -11,7 +11,7 @@ class LayoutTemplateCatalogTest {
     fun `public manual catalog contains twelve previewable layouts`() {
         assertEquals(12, LayoutTemplateCatalog.manualSummaries.size)
         assertEquals(12, LayoutTemplateCatalog.manualSummaries.map { it.id }.distinct().size)
-        assertEquals(4, LayoutTemplateCatalog.manualSummaries.count { it.poseTemplateId != null })
+        assertEquals(0, LayoutTemplateCatalog.manualSummaries.count { it.poseTemplateId != null })
         assertEquals(12, LayoutTemplateCatalog.manualSummaries.count { it.slots.isNotEmpty() })
     }
 

@@ -58,10 +58,31 @@ class ResultFilterStateHolder {
 
     /** Applies the resolved precedence: reference → session → onboarding → original. */
     fun setRecommendedDefault(filterId: String?) {
-        val resolved = filterId?.takeIf { id -> _state.value.items.any { it.id == id } }
-            ?: _state.value.recommendedDefaultFilterId.takeIf { id -> _state.value.items.any { it.id == id } }
-            ?: LocalFilter.ORIGINAL.filter.id
+        val current = _state.value
+        val resolved = current.referenceColorAvailable()
+            .let { hasReferenceColor ->
+                if (hasReferenceColor) REFERENCE_FILTER_ID
+                else filterId?.takeIf { id -> current.items.any { it.id == id } }
+                    ?: LocalFilter.ORIGINAL.filter.id
+            }
         _state.value = _state.value.copy(recommendedDefaultFilterId = resolved)
+    }
+
+    /**
+     * Resolves all lower-priority profile sources in one operation.
+     *
+     * Keeping this policy in the holder prevents a later session/onboarding
+     * update from overwriting an active reference's colour recommendation.
+     */
+    fun setRecommendedDefaults(sessionFilterId: String?, onboardingFilterId: String?) {
+        val current = _state.value
+        val resolved = when {
+            current.referenceColorAvailable() -> REFERENCE_FILTER_ID
+            sessionFilterId.isUsable(current) -> sessionFilterId!!
+            onboardingFilterId.isUsable(current) -> onboardingFilterId!!
+            else -> LocalFilter.ORIGINAL.filter.id
+        }
+        _state.value = current.copy(recommendedDefaultFilterId = resolved)
     }
 
     fun select(filterId: String): Boolean {
@@ -93,4 +114,10 @@ class ResultFilterStateHolder {
         }
         private val referenceItem = ResultFilterItem(REFERENCE_FILTER_ID, ResultFilterKind.REFERENCE, "내 감도")
     }
+
+    private fun ResultFilterState.referenceColorAvailable(): Boolean =
+        activeReference != null && activeReference.referenceScope != ResolvedStyle.ReferenceScope.COMPOSITION
+
+    private fun String?.isUsable(state: ResultFilterState): Boolean =
+        this != null && state.items.any { item -> item.id == this }
 }

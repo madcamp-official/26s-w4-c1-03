@@ -67,6 +67,7 @@ class SceneGuideCoordinator(
             subjectBox = detected.subjectBox,
             subjectKind = detected.subjectKind,
             subjectConfidence = detected.subjectConfidence,
+            faceBox = detected.faceBox,
             subjectOutline = detected.subjectOutline,
             subjectLabels = detected.subjectLabels,
             slotDetections = detected.slotDetections,
@@ -101,7 +102,6 @@ class SceneGuideCoordinator(
                 styleTarget = styleTarget,
                 signals = signals,
                 referenceTemplate = referenceTemplate,
-                poseGuide = PoseGuideSelector.select(detection.pose),
             )
         }
         val template = baseTemplate?.let { GenericLayoutSynthesizer.transform(it, styleTarget, templateSafetyMargin) }
@@ -165,13 +165,35 @@ class SceneGuideCoordinator(
         styleTarget: StyleTarget,
         signals: SceneFrameSignals,
         referenceTemplate: LayoutTemplate?,
-        poseGuide: PoseGuideTemplate?,
     ): LayoutTemplate? {
+        val personDetection = observation.slotDetections.firstOrNull { it.role == SlotRole.PERSON }
+        val portraitEvidence = personDetection?.let {
+            val personRect = RectN(it.bounds.left, it.bounds.top, it.bounds.right, it.bounds.bottom)
+            val faceRect = observation.faceBox?.let { face ->
+                RectN(face.left, face.top, face.right, face.bottom)
+            }
+            // A face-only fallback is represented internally as a PERSON slot whose
+            // bounds equal the face box. Do not let the style's background preference
+            // reinterpret that synthetic evidence as an environmental portrait.
+            val faceOnly = faceRect != null &&
+                personRect.height <= faceRect.height * 1.5f &&
+                personRect.width <= faceRect.width * 1.5f
+            PortraitSceneClassifier.classify(
+                face = faceRect
+                    ?: RectN(it.bounds.left, it.bounds.top, it.bounds.right, (it.bounds.top + it.bounds.height * 0.25f).coerceIn(0f, 1f)),
+                person = personRect.takeUnless { faceOnly },
+                objectCount = observation.slotDetections.count { detection -> detection.role == SlotRole.OBJECT },
+                backgroundRatio = styleTarget.backgroundRatioRange?.let { range -> (range.start + range.endInclusive) / 2f } ?: 0.4f,
+                symmetry = 0f,
+                preferredTemplateId = styleTarget.preferredPortraitTemplateId,
+            )
+        }
         val sceneTemplate = autoLayoutResolver.resolve(
             detections = observation.slotDetections,
             objectsFresh = observation.objectsFresh,
             styleTarget = styleTarget,
             viewportAspect = signals.viewportAspect,
+            portraitEvidence = portraitEvidence,
         )
         val reliable = observation.slotDetections.filter { it.isReliable }
         val choice = GuideCompositionChoice.choose(
@@ -212,14 +234,7 @@ class SceneGuideCoordinator(
             // frames use fixedBaseTemplate and cannot move or resize the brackets
             // until the user explicitly rescans.
             GuideCompositionSource.SCENE -> sceneTemplate?.let { selected ->
-                val selectedWithPose = if (selected.slots.any { it.role == SlotRole.PERSON } && poseGuide != null) {
-                    selected.copy(
-                        poseGuide = poseGuide,
-                        slots = selected.slots.map { slot ->
-                            if (slot.role == SlotRole.PERSON) slot.copy(visualKind = SlotVisualKind.POSE_SKELETON) else slot
-                        },
-                    )
-                } else selected
+                val selectedWithPose = selected
                 GenericLayoutSynthesizer.snapshotObjectShapes(
                     template = selectedWithPose,
                     detections = observation.slotDetections,

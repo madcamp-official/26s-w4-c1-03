@@ -51,6 +51,9 @@ class ShootSessionRepository(
         return session
     }
 
+    /** Preferred V2 entry point; the raw JSON overload remains for V1 callers. */
+    suspend fun create(policy: ShootPolicyV2): ActiveSession = create(policy.toJson(json))
+
     suspend fun active(): ActiveSession? = runCatching {
         settings.getShootSession()?.let { json.decodeFromString<ActiveSession>(it) }
             ?.takeIf { it.expiresAt > System.currentTimeMillis() }

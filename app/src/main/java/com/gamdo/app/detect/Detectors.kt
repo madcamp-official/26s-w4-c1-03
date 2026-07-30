@@ -15,6 +15,12 @@ interface PoseDetector {
     fun close()
 }
 
+/** Compatibility seam for old tests/serialized callers; production wiring does not run pose inference. */
+object NoPoseDetector : PoseDetector {
+    override fun detect(frame: AnalysisFrame): PoseObservation? = null
+    override fun close() = Unit
+}
+
 interface ObjectSceneDetector {
     fun detect(frame: AnalysisFrame): List<ObjectObservation>
     fun detectBatch(frame: AnalysisFrame): ObjectDetectionBatch =
@@ -329,8 +335,9 @@ data class DetectStageTimings(
 }
 
 /**
- * Runs the configured face + pose detectors over one frame. B's
- * FrameFeatureCalculator (Day 2) consumes [DetectionResult] downstream.
+ * Runs the configured face and object detectors over one frame. The pose
+ * parameter remains only as a source-compatible closeable seam for old callers;
+ * V3.1 never executes it and always returns a null pose result.
  *
  * @param stageSink optional per-frame timing sink. A sink rather than a `Log` call
  *   so this file stays free of `android.*` and JVM-testable; the host wires it to
@@ -338,7 +345,7 @@ data class DetectStageTimings(
  */
 class SceneDetector(
     private val faceDetector: FaceDetector,
-    private val poseDetector: PoseDetector,
+    private val poseDetector: PoseDetector = NoPoseDetector,
     private val objectDetector: ObjectSceneDetector? = null,
     private val subjectSegmenter: SubjectSceneSegmenter? = null,
     private val customObjectDetector: CustomSceneDetector? = null,
@@ -367,8 +374,11 @@ class SceneDetector(
         val t0 = System.nanoTime()
         val faces = faceDetector.detect(frame)
         val t1 = System.nanoTime()
-        val pose = poseDetector.detect(frame)
-        val t2 = System.nanoTime()
+        // Pose guidance was retired in V3.1. Keep the legacy parameter for
+        // binary/source compatibility, but never invoke it in the production
+        // detection pipeline.
+        val pose: PoseObservation? = null
+        val t2 = t1
         val objectBatch = when {
             customObjectDetector != null -> customObjectDetector.detectBatch(frame)
             objectDetector != null -> objectDetector.detectBatch(frame)
@@ -380,7 +390,7 @@ class SceneDetector(
         // candidate (D12), but did cost ~600ms on the CPU fallback device every
         // twelfth frame. Return null while there is no seed so a previous mask can
         // never survive an empty scene either.
-        val hasForegroundSeed = faces.isNotEmpty() || pose != null || objectBatch.objects.isNotEmpty()
+        val hasForegroundSeed = faces.isNotEmpty() || objectBatch.objects.isNotEmpty()
         val segmentation = if (hasForegroundSeed) subjectSegmenter?.detect(frame) else null
         val t4 = System.nanoTime()
 

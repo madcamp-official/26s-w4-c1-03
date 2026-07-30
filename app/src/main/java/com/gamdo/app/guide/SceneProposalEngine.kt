@@ -2,6 +2,7 @@ package com.gamdo.app.guide
 
 import com.gamdo.app.detect.NormalizedBox
 import com.gamdo.app.detect.DetectionResult
+import com.gamdo.app.detect.GuideObjectCategory
 import com.gamdo.app.detect.SceneRecognitionPolicy
 import kotlin.math.abs
 
@@ -17,6 +18,7 @@ enum class LeadingDirection { NONE, LEFT, RIGHT }
  */
 data class SceneObservation(
     val subjectBox: NormalizedBox? = null,
+    val faceBox: NormalizedBox? = null,
     val subjectKind: SubjectKind = SubjectKind.UNKNOWN,
     val subjectConfidence: Float = 0f,
     val horizonPosition: Float? = null,
@@ -34,6 +36,7 @@ data class SceneObservation(
 ) {
     fun normalized(): SceneObservation = copy(
         subjectBox = subjectBox?.clamped(),
+        faceBox = faceBox?.clamped(),
         subjectConfidence = subjectConfidence.coerceIn(0f, 1f),
         horizonPosition = horizonPosition?.coerceIn(0f, 1f),
         openSpaceLeft = openSpaceLeft.coerceIn(0f, 1f),
@@ -92,17 +95,8 @@ private const val DETECTED_SUBJECT_FLOOR = 0.7f
 
 /** Minimal bridge from the detector aggregate to the proposal contract. */
 fun DetectionResult.toSceneObservation(): SceneObservation {
-    val poseBox = pose?.landmarks
-        ?.filter { it.inFrameLikelihood >= 0.3f }
-        ?.let { points ->
-            if (points.isEmpty()) null else NormalizedBox(
-                left = points.minOf { it.x },
-                top = points.minOf { it.y },
-                right = points.maxOf { it.x },
-                bottom = points.maxOf { it.y },
-            )
-        }
-    val personBox = poseBox ?: faces.maxByOrNull { it.box.width * it.box.height }?.box
+    val personBox = objects.firstOrNull { it.category == GuideObjectCategory.PERSON }?.box
+        ?: faces.maxByOrNull { it.box.width * it.box.height }?.box
     val objectCandidate = objects
         .filter { it.box.width > 0f && it.box.height > 0f }
         .maxByOrNull { it.box.width * it.box.height * (it.detectionConfidence ?: it.confidence.takeIf { confidence -> confidence > 0f } ?: 0.7f) }
@@ -114,19 +108,10 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
         else -> SubjectKind.UNKNOWN
     }
     val detectorConfidence = when {
-        // Pose likelihood is a real measurement of person-presence, so it wins.
-        // Without it, ML Kit's face detector exposes **no confidence at all** —
-        // DETECTED_SUBJECT_FLOOR stands in for a number that does not exist,
-        // exactly as the object branch below already does.
-        //
-        // This used to fall back to `leftEyeOpenProbability`. That is eyelid
-        // state, not detection confidence: a blink, sunglasses, or simply the
-        // classifier being off reported "no confident subject" for a person
-        // standing in plain view. Pose detection fails routinely on upper-body
-        // and backlit framing, so that fallback was the common path, not the rare
-        // one. `SceneObservationAdapterTest` pins the property that eye state
-        // cannot move this number.
-        personBox != null -> pose?.averageInFrameLikelihood ?: DETECTED_SUBJECT_FLOOR
+        // Face/person detectors do not expose a common confidence scale. A
+        // valid person or face box is therefore treated as a present subject;
+        // no pose model is consulted for confidence or outline generation.
+        personBox != null -> DETECTED_SUBJECT_FLOOR
         objectCandidate != null -> objectCandidate.detectionConfidence
             ?: objectCandidate.confidence.takeIf { it > 0f }
             ?: DETECTED_SUBJECT_FLOOR
@@ -135,19 +120,19 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
     val confidence = maxOf(detectorConfidence, segmented?.confidence ?: 0f)
     return SceneObservation(
         subjectBox = subjectBox,
+        faceBox = faces.maxByOrNull { it.box.width * it.box.height }?.box,
         subjectKind = kind,
         subjectConfidence = confidence,
         subjectOutline = segmented?.outline
             ?.map { LayoutGuidePoint(it.x, it.y) }
             ?.takeIf { it.size >= 3 }
-            ?: pose?.landmarks
-            ?.filter { it.inFrameLikelihood >= 0.3f }
-            ?.map { LayoutGuidePoint(it.x, it.y) }
             .orEmpty(),
         subjectLabels = objectCandidate?.labels.orEmpty(),
         hasReliableOutline = when {
             segmented?.outline?.size ?: 0 >= 3 -> true
-            personBox != null -> (pose?.landmarks?.count { it.inFrameLikelihood >= 0.3f } ?: 0) >= 3
+            // A person box is sufficient for a fixed bracket. The product path
+            // does not promise a pose skeleton or a live contour.
+            personBox != null -> true
             else -> objectCandidate?.mask?.outline?.size?.let { it >= 3 } == true
         },
         slotDetections = buildList {
@@ -185,6 +170,7 @@ fun DetectionResult.toSceneObservation(): SceneObservation {
                         outline = detectedObject.mask?.outline
                             ?.map { LayoutGuidePoint(it.x, it.y) }
                             .orEmpty(),
+                        stableObjectKey = detectedObject.stableObjectKey,
                     ),
                 )
             }

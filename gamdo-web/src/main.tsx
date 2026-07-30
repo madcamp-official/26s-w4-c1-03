@@ -2,13 +2,53 @@ import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './style.css'
 
-type ShootConfig = { maxPhotos: number; policy: Record<string, unknown> }
+type ShootSlot = {
+  id: string
+  role: 'PERSON' | 'OBJECT'
+  visualKind: string
+  bounds: { left: number; top: number; right: number; bottom: number }
+  preferredAspectRatio: number
+}
+
+type ShootPolicy = {
+  version?: number
+  layoutId?: string
+  slots?: ShootSlot[]
+  preferredZoom?: number
+  recommendedPhotos?: number
+  zoom?: number
+}
+
+type ShootConfig = { maxPhotos: number; policy: ShootPolicy }
+
+function GuideOverlay({ slots = [], frameWidth, frameHeight }: { slots?: ShootSlot[]; frameWidth: number; frameHeight: number }) {
+  return <svg className="guide-overlay" viewBox={`0 0 ${frameWidth} ${frameHeight}`} preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    {slots.map(slot => {
+      const { left, top, right, bottom } = slot.bounds
+      const width = right - left
+      const height = bottom - top
+      const x = left * frameWidth
+      const y = top * frameHeight
+      const w = width * frameWidth
+      const h = height * frameHeight
+      const r = right * frameWidth
+      const b = bottom * frameHeight
+      return <g key={slot.id} className={slot.role === 'PERSON' ? 'person-guide' : 'object-guide'}>
+        <rect x={x} y={y} width={w} height={h} rx={Math.min(frameWidth, frameHeight) * 0.012} />
+        <path d={`M ${x} ${y + h * .14} V ${y} H ${x + w * .14} M ${r - w * .14} ${y} H ${r} V ${y + h * .14} M ${x} ${b - h * .14} V ${b} H ${x + w * .14} M ${r - w * .14} ${b} H ${r} V ${b - h * .14}`} />
+      </g>
+    })}
+  </svg>
+}
 
 function ShootPage({ token }: { token: string }) {
   const video = useRef<HTMLVideoElement>(null)
   const [config, setConfig] = useState<ShootConfig | null>(null)
-  const [message, setMessage] = useState('카메라를 준비하는 중')
+  const [message, setMessage] = useState('')
   const [count, setCount] = useState(0)
+  const [sending, setSending] = useState(false)
+  const [retryBlob, setRetryBlob] = useState<Blob | null>(null)
+  const [frameSize, setFrameSize] = useState({ width: 1, height: 1 })
 
   useEffect(() => {
     let stream: MediaStream | undefined
@@ -19,31 +59,59 @@ function ShootPage({ token }: { token: string }) {
       setConfig(value)
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false })
       if (video.current) video.current.srcObject = stream
-      setMessage('직접 셔터를 눌러 촬영하세요')
+      setMessage('')
+      const zoom = value.policy.preferredZoom ?? value.policy.zoom
+      const track = stream?.getVideoTracks()[0]
+      const capabilities = track?.getCapabilities?.() as MediaTrackCapabilities & { zoom?: { min: number; max: number; step?: number } } | undefined
+      if (track && zoom && capabilities?.zoom) {
+        const clamped = Math.min(capabilities.zoom.max, Math.max(capabilities.zoom.min, zoom))
+        const constraints = { advanced: [{ zoom: clamped }] } as unknown as MediaTrackConstraints
+        void track.applyConstraints(constraints).catch(() => undefined)
+      }
     }).catch(() => setMessage('이 촬영 링크는 만료되었거나 카메라를 사용할 수 없어요.'))
     return () => stream?.getTracks().forEach(track => track.stop())
   }, [token])
 
+  async function uploadPhoto(blob: Blob) {
+    if (!config || sending || count >= config.maxPhotos) return
+    setSending(true)
+    setMessage('사진을 보내는 중입니다')
+    const form = new FormData(); form.append('image', blob, 'gamdo-shoot.jpg')
+    try {
+      const response = await fetch(`/api/v1/shoot-upload/${token}`, { method: 'POST', body: form })
+      if (!response.ok) throw new Error('upload failed')
+      setCount(value => value + 1)
+      setRetryBlob(null)
+      setMessage('')
+    } catch {
+      setRetryBlob(blob)
+      setMessage('사진을 보내지 못했습니다')
+    } finally {
+      setSending(false)
+    }
+  }
+
   async function takePhoto() {
-    if (!video.current || !config || count >= config.maxPhotos) return
+    if (retryBlob) return uploadPhoto(retryBlob)
+    if (!video.current || !config || sending || count >= config.maxPhotos) return
     const canvas = document.createElement('canvas')
     canvas.width = video.current.videoWidth; canvas.height = video.current.videoHeight
     canvas.getContext('2d')?.drawImage(video.current, 0, 0)
-    setMessage('사진을 보내는 중')
     const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92))
     if (!blob) return setMessage('사진을 만들지 못했어요.')
-    const form = new FormData(); form.append('image', blob, 'gamdo-shoot.jpg')
-    const response = await fetch(`/api/v1/shoot-upload/${token}`, { method: 'POST', body: form })
-    if (!response.ok) return setMessage('전송하지 못했어요. 다시 시도해 주세요.')
-    setCount(value => value + 1); setMessage('감도 앱으로 사진을 보냈어요')
+    await uploadPhoto(blob)
   }
 
   const policy = config?.policy ?? {}
+  const slots = policy.slots ?? []
+  const targetPhotos = Math.min(config?.maxPhotos ?? 5, policy.recommendedPhotos ?? 3)
   return <main className="camera">
-    <video ref={video} autoPlay playsInline muted />
-    <div className="shade top"><strong>감도 · 나 찍어줘</strong><span>{count}/{config?.maxPhotos ?? 5}</span></div>
-    <div className="guide"><div className="bracket" /><p>{policy.zoom ? `${policy.zoom}배 줌으로` : '원하는 구도로'} 직접 맞춰주세요</p></div>
-    <div className="shade bottom"><p>{message}</p><button aria-label="촬영" onClick={takePhoto} disabled={!config || count >= config.maxPhotos}><i /></button></div>
+    <video ref={video} autoPlay playsInline muted onLoadedMetadata={() => {
+      if (video.current) setFrameSize({ width: video.current.videoWidth || 1, height: video.current.videoHeight || 1 })
+    }} />
+    <GuideOverlay slots={slots} frameWidth={frameSize.width} frameHeight={frameSize.height} />
+    <div className="shade top"><strong>감도</strong><span className="shot-dots" aria-label={`${count}장 촬영됨`}>{Array.from({ length: targetPhotos }, (_, index) => <i key={index} className={index < count ? 'done' : ''} />)}</span></div>
+    <div className="shade bottom"><span role="status" aria-live="polite">{message}</span><button aria-label={retryBlob ? '사진 다시 보내기' : '촬영'} aria-busy={sending} onClick={takePhoto} disabled={!config || sending || count >= targetPhotos}><i /></button></div>
   </main>
 }
 

@@ -102,26 +102,6 @@ data class ObjectGuideConfigJson(
      * for 17ms. Nothing here is worth spending that margin on.
      */
     val faceRefreshEveryFrames: Int = 2,
-    /**
-     * How often the pose model runs, as a divisor of analysed frames.
-     *
-     * Measured on SM-G970N (2026-07-28): pose cost **89.8ms of a 263ms frame** and
-     * ran on every one. Like every model in this pipeline it does not get cheaper on
-     * an empty frame — it scans for a person and then reports none — so cadence is
-     * the only lever the app has (owner decision, 2026-07-28).
-     *
-     * 2 for the same reason [faceRefreshEveryFrames] is 2: the saving is a 1/N curve
-     * and the first halving is nearly all of it. What bounds the cost here is
-     * [OverlayStabilizerConfigJson] rather than the 3-of-5 tracker — the guide is
-     * already smoothed between updates and held for
-     * `silhouetteHoldFrames`/`visibleHoldFrames` of 6, so the silhouette and foot
-     * marker do not visibly step at half rate.
-     *
-     * This was the last throttle in the pipeline that could only be changed by
-     * rebuilding. It is a key now so it can be tuned in the field like the three
-     * divisors above it.
-     */
-    val poseRefreshEveryFrames: Int = 2,
     val confirmationWindow: Int = 5,
     val confirmationsRequired: Int = 3,
     val companionConfirmationsRequired: Int = 2,
@@ -182,9 +162,6 @@ data class ObjectGuideConfigJson(
         require(segmentationRefreshEveryFrames >= 1)
         require(faceRefreshEveryFrames >= 1) {
             "faceRefreshEveryFrames must be >= 1, was $faceRefreshEveryFrames"
-        }
-        require(poseRefreshEveryFrames >= 1) {
-            "poseRefreshEveryFrames must be >= 1, was $poseRefreshEveryFrames"
         }
         require(templateSafetyMargin in 0f..0.20f)
         require(detectedSlotAspectMin > 0f && detectedSlotAspectMax >= detectedSlotAspectMin)
@@ -361,11 +338,11 @@ data class FeaturesConfigJson(
         }
     }
 
-    fun toCalculator(): FrameFeatureCalculator = FrameFeatureCalculator(
-        minLandmarkLikelihood = minLandmarkLikelihood,
-        lowLightThreshold = lowLightThreshold,
-        backlightRatioThreshold = backlightRatioThreshold,
-    )
+      fun toCalculator(): FrameFeatureCalculator = FrameFeatureCalculator(
+          minLandmarkLikelihood = minLandmarkLikelihood,
+          lowLightThreshold = lowLightThreshold,
+          backlightRatioThreshold = backlightRatioThreshold,
+      )
 }
 
 /**
