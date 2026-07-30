@@ -44,6 +44,41 @@ android {
             applicationIdSuffix = ".debug"
             isMinifyEnabled = false
         }
+        /**
+         * The build the demo runs on — `debug` in every respect except the one that
+         * makes it unusable on stage.
+         *
+         * ART restricts its optimising JIT for `debuggable` apps, and the edit
+         * screen's filter is a scalar per-pixel Kotlin loop, so it takes that
+         * penalty at full strength: **one filter tap measured 1059ms debuggable and
+         * 55ms not** on SM-G970N (2026-07-30, same code, same device, same photo —
+         * see `edit/ParallelFilter.kt`). A demo given on a debuggable build shows a
+         * one-second stall on every tap of the filter strip.
+         *
+         * `release` was the other candidate and is not ready: it has no signing
+         * config, so it produces an APK that will not install. This one is signed
+         * with the debug key deliberately — it is for a phone in someone's hand,
+         * not for a store.
+         *
+         * `.demo` suffix so it installs **alongside** the debug build rather than
+         * replacing it: swapping between them otherwise trips
+         * `INSTALL_FAILED_UPDATE_INCOMPATIBLE` and costs the demo's onboarding and
+         * captures, which is not something to discover an hour before presenting.
+         *
+         * Note `BuildConfig.DEBUG` is false here, because AGP derives it from
+         * `isDebuggable`. That is intended — the HUD, the detection logs and the
+         * latency traces are all gated on it — but it does mean **this build cannot
+         * be measured with the instrumentation the debug build carries**, and
+         * `run-as` will not read its database.
+         */
+        create("demo") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".demo"
+            isDebuggable = false
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("debug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
