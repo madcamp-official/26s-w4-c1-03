@@ -183,6 +183,31 @@ private val SHEET_CORNER = 20.dp
  */
 private val IconInactive = TextHi.copy(alpha = 0.85f)
 
+/** `background:rgba(255,255,255,0.08)` — the shutter row's ghost discs. */
+private val OverPhotoDisc = Color.White.copy(alpha = 0.08f)
+
+/** `border:1px rgba(255,255,255,0.16)` — the album tile's hairline. */
+private val AlbumTileBorder = Color.White.copy(alpha = 0.16f)
+
+/**
+ * `background:rgba(232,195,139,0.16)` — the filter button while its sheet is up.
+ *
+ * The only amber *fill* the redesign allows besides the shutter, and it is allowed
+ * because 16% of an accent is not a filled surface — the icon over it is still what
+ * carries the state. "한 화면에 채워진 앰버 면은 1개까지" is about the shutter-sized
+ * ones.
+ */
+private val FilterButtonActive = Amber.copy(alpha = 0.16f)
+
+/** `gap:14px` between the filter strip's thumbnails. */
+private val STRIP_ITEM_GAP = 14.dp
+
+/** `gap:16px` between the filter and lens buttons. */
+private val SHUTTER_ROW_GAP = 16.dp
+
+/** 42×42 — album, filter and lens. The shutter is 74. */
+private val BOTTOM_CONTROL_SIZE = 42.dp
+
 /** How much later than the deadline [scheduleTeardownWatchdog] pokes. See there. */
 private const val TEARDOWN_WATCHDOG_SLACK_MS = 50L
 
@@ -697,36 +722,53 @@ fun CameraScreen(
             )
         }
 
-        // 2c: the style strip is a permanent row between the preview and the
-        // shutter, not something you open. Choosing a look is the screen's primary
-        // job, so it costs no taps and its state is always readable.
-        CameraStyleStrip(
-            presets = presets,
-            selectedIndex = styleIndex,
-            // Session-only: this never reaches SettingsRepository (TEAM.md §8) —
-            // that key is the D4 personalisation profile, so a relaunch returns to
-            // the onboarding style.
-            onSelect = { index ->
-                sessionStyleId = presetIds.getOrNull(index)
-                referenceSelected = false
-            },
-            onCreateReference = onCreateReference,
-            hasActiveReference = hasActiveReference,
-            referenceSelected = referenceSelected,
-            activeReferenceImageUri = activeReferenceImageUri,
-            onSelectReference = { referenceSelected = true },
-            onDeleteReference = {
-                referenceSelected = false
-                onDeleteReference()
-            },
-            modifier = Modifier.padding(top = 12.dp),
-        )
+        // The strip is **in the sheet now**, not on screen. O-13 made a preset a
+        // colour, and six colour swatches permanently occupying the bottom of a camera
+        // is the "기능을 모두 펼쳐놓는" arrangement the redesign undoes: the preview is
+        // what the screen is for.
+        //
+        // Picking one does not close it — see [CameraPanels.filterPicked]. That is why
+        // choosing between two looks still costs one tap each rather than three.
+        CameraSheetSlot(visible = overlayMode == CameraOverlayMode.FILTER_SHEET) {
+            CameraFilterSheet(
+                presets = presets,
+                selectedIndex = styleIndex,
+                // Session-only: this never reaches SettingsRepository (TEAM.md §8) —
+                // that key is the D4 personalisation profile, so a relaunch returns to
+                // the onboarding style.
+                onSelect = { index ->
+                    sessionStyleId = presetIds.getOrNull(index)
+                    referenceSelected = false
+                    storedMode = CameraPanels.filterPicked(overlayMode)
+                },
+                onCreateReference = onCreateReference,
+                hasActiveReference = hasActiveReference,
+                referenceSelected = referenceSelected,
+                activeReferenceImageUri = activeReferenceImageUri,
+                onSelectReference = {
+                    referenceSelected = true
+                    storedMode = CameraPanels.filterPicked(overlayMode)
+                },
+                onDeleteReference = {
+                    referenceSelected = false
+                    onDeleteReference()
+                },
+            )
+        }
 
         CameraBottomBar(
             lastThumb = lastThumb,
             capturing = capturing,
             isFront = isFront,
+            filterSheetOpen = overlayMode == CameraOverlayMode.FILTER_SHEET,
+            // "적용 중", so the *active* style being a reference — not the mere existence
+            // of one. Hidden while the sheet is open because the button is already amber
+            // then (시안 05 draws no dot).
+            showMoodDot = referenceSelected && overlayMode != CameraOverlayMode.FILTER_SHEET,
             onOpenAlbum = onOpenAlbum,
+            onToggleFilterSheet = {
+                storedMode = CameraPanels.toggled(overlayMode, CameraOverlayMode.FILTER_SHEET)
+            },
             onFlipLens = {
                 controller.toggleLens()
                 isFront = controller.isFront
@@ -1227,21 +1269,69 @@ private fun SheetHandle() {
 }
 
 /**
- * The permanent style strip, per 2c: a circular thumbnail per preset with its name
- * underneath, the active one ringed in sage.
+ * 시안 05 — the filter sheet: `Ink800`, 20dp top corners, a grab handle, and the strip.
  *
- * Round rather than square, and always on screen rather than behind a picker,
- * because choosing a look is the job this screen exists for. The thumbnails are the
- * presets’ own bundled images, so the strip shows what each look *is* rather than
- * only what it is called — which matters for `자연스러운 피드` and `밤거리`, whose
- * bracket geometry is identical and whose names are the only thing separating them.
+ * ```
+ * background #1A1A1D · radius 20 20 0 0 · padding 8 0 12 · gap 11
+ * handle 36×4 r2 White 22%    strip gap 14 · padding 0 18 · thumb 52 circle
+ * ```
  *
- * O-10 (2026-07-29) wraps this same row with the AI 2 entry point: a leading `+`
- * and, once a reference is active, a trailing `내 레퍼런스` slot — built by
- * [buildFilterStrip] and rendered with the shared thumb composables in
- * `ui/reference/ReferenceStrip.kt` so this screen and the result screen stay
- * pixel-consistent without duplicating the thumb shape twice.
+ * **Opaque `Ink800`, and no scrim over the preview.** Both are the design's, and both
+ * follow from what the sheet is for: a preset is a colour (O-13), so choosing one means
+ * comparing it against the live scene. A translucent sheet would tint its own swatches
+ * and a scrim would tint the scene, and either makes the comparison the sheet exists
+ * for impossible.
+ *
+ * A **sibling** of the shutter row rather than a layer over it (see the call site),
+ * which is how "시트가 열린 상태에서도 셔터는 계속 쓸 수 있다" holds structurally.
+ *
+ * Round thumbnails showing the presets' own bundled images, so the strip shows what
+ * each look *is* rather than only what it is called — which matters for
+ * `자연스러운 피드` and `밤거리`, whose names are the only thing separating them.
+ *
+ * O-10's AI 2 entry points ride the same row: a leading `+` and, once a reference is
+ * active, a trailing `내 레퍼런스` slot — ordered by [buildFilterStrip] and drawn with
+ * the shared thumbs in `ui/reference/ReferenceStrip.kt` so this sheet and the result
+ * screen stay pixel-consistent. 시안 05 shows the strip mid-scroll with the `+` pushed
+ * off the left edge; that is a scroll position, not a different order.
  */
+@Composable
+private fun CameraFilterSheet(
+    presets: List<StylePreset>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    onCreateReference: () -> Unit,
+    hasActiveReference: Boolean,
+    referenceSelected: Boolean,
+    activeReferenceImageUri: Uri?,
+    onSelectReference: () -> Unit,
+    onDeleteReference: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(topStart = SHEET_CORNER, topEnd = SHEET_CORNER))
+            .background(Ink800)
+            .padding(top = 8.dp, bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(11.dp),
+    ) {
+        SheetHandle()
+        CameraStyleStrip(
+            presets = presets,
+            selectedIndex = selectedIndex,
+            onSelect = onSelect,
+            onCreateReference = onCreateReference,
+            hasActiveReference = hasActiveReference,
+            referenceSelected = referenceSelected,
+            activeReferenceImageUri = activeReferenceImageUri,
+            onSelectReference = onSelectReference,
+            onDeleteReference = onDeleteReference,
+        )
+    }
+}
+
+/** The strip itself. Its container is [CameraFilterSheet]. */
 @Composable
 private fun CameraStyleStrip(
     presets: List<StylePreset>,
@@ -1255,13 +1345,11 @@ private fun CameraStyleStrip(
     onDeleteReference: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Reserve the row even with nothing to put in it: `presets` arrives from disk a
-    // frame or two after first composition, and a strip that appears late makes the
-    // preview visibly jump. (It no longer *breaks* anything — the preview spill that
-    // used to follow a pane resize was an unclipped interop view, fixed at the
-    // AndroidView — but a fixed height is still the right shape for a row whose
-    // contents are async.) The `+`/`내 레퍼런스` slots wait for the same frame as
-    // the presets rather than appearing first and shifting everything right.
+    // Reserve the row even with nothing to put in it. `presets` arrives from disk, and a
+    // sheet that opens at one height and grows to another 60ms later is a visible
+    // stutter on top of the 260ms slide — the two animations would fight. Empty is also
+    // the honest state when the read failed (AGENTS §7-6), which is why this is a blank
+    // row rather than a placeholder thumbnail.
     if (presets.isEmpty()) {
         Box(modifier = modifier.fillMaxWidth().height(STYLE_STRIP_HEIGHT))
         return
@@ -1290,9 +1378,11 @@ private fun CameraStyleStrip(
     LazyRow(
         modifier = modifier.fillMaxWidth().height(STYLE_STRIP_HEIGHT),
         state = listState,
-        contentPadding = PaddingValues(horizontal = 18.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        contentPadding = PaddingValues(horizontal = STRIP_H_PADDING),
+        horizontalArrangement = Arrangement.spacedBy(STRIP_ITEM_GAP),
+        // `align-items:flex-start` — the labels hang below their thumbnails and a
+        // two-line label must not push its thumbnail up out of line with the others.
+        verticalAlignment = Alignment.Top,
     ) {
         itemsIndexed(strip) { _, entry ->
             when (entry) {
@@ -1654,73 +1744,171 @@ private fun CameraPreviewPane(
     }
 }
 
-/** Bottom bar: album / shutter / flip. */
+/**
+ * Shutter row, per the redesign: `album | shutter | filter · lens`.
+ *
+ * ```
+ * grid-template-columns:1fr auto 1fr · padding:0 34px 18px
+ * album 42 r13 border White 16% (justify-self:start)
+ * shutter 74 ring 3 · disc 58          filter/lens 42 circle, gap 16 (justify-self:end)
+ * ```
+ *
+ * The `1fr auto 1fr` is what centres the shutter regardless of how wide the two side
+ * groups are, and it is a real requirement rather than CSS trivia: the right group has
+ * two controls and the left has one, so `SpaceBetween` would put the shutter visibly
+ * off-centre. Hence the two weighted boxes.
+ *
+ * The **filter button is the mood indicator**. The `내 감도 적용 중` pill that used to
+ * say this in the top bar is gone; a 6dp amber dot on this button's corner says it
+ * instead. See [showMoodDot] for what "mood" means here and why the dot goes away
+ * while the sheet is open.
+ */
 @Composable
 private fun CameraBottomBar(
     lastThumb: android.graphics.Bitmap?,
     capturing: Boolean,
     isFront: Boolean,
+    filterSheetOpen: Boolean,
+    /**
+     * Whether a reference (`내 감도`) is the active style **right now** — not merely
+     * whether one exists. A preset is always selected, so a dot meaning "something is
+     * selected" would never go out and would say nothing.
+     *
+     * False while [filterSheetOpen], because then the whole button is amber and the dot
+     * would be saying it twice. 시안 03 has the dot; 시안 05 does not.
+     */
+    showMoodDot: Boolean,
     onOpenAlbum: () -> Unit,
+    onToggleFilterSheet: () -> Unit,
     onFlipLens: () -> Unit,
     onShutter: () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 34.dp, vertical = 14.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 34.dp, end = 34.dp, bottom = 18.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
+        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .size(BOTTOM_CONTROL_SIZE)
+                    .clip(RoundedCornerShape(13.dp))
+                    // Kept from before the redesign, deliberately. The mock's album tile
+                    // contains a photo, so it does not say what an empty one looks like
+                    // — and on first launch there is no photo. Without a fill this is a
+                    // 1px hairline on near-black, i.e. an invisible control. Preserving
+                    // the existing answer to a question the design does not address is
+                    // not the same as inventing one.
                     .background(moodBrush(2))
-                    .border(1.5.dp, Color(0x40FFFFFF), RoundedCornerShape(12.dp))
+                    .border(1.dp, AlbumTileBorder, RoundedCornerShape(13.dp))
+                    .semantics { contentDescription = "앨범" }
                     .clickable(onClick = onOpenAlbum),
-                contentAlignment = Alignment.Center,
             ) {
                 if (lastThumb != null) {
                     Image(
                         bitmap = lastThumb.asImageBitmap(),
                         contentDescription = "최근 촬영",
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)),
+                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(13.dp)),
                     )
                 }
             }
-            Text("앨범", color = TextMid, fontSize = 10.sp)
         }
 
-        // D2: the shutter is manual only — capture is reachable from this
-        // clickable lambda and nowhere else.
+        // D2-4: the shutter is manual only — `takePicture` is reachable from this
+        // clickable lambda and nowhere else. No countdown, no auto-capture.
+        //
+        // Geometry is the redesign's (74 / ring 3 / disc 58, White 92%). The three
+        // *states* — amber on a matched composition, the 78% contraction, the 200ms
+        // fade — land in the next commit so each is revertable on its own.
         Box(
             modifier = Modifier
-                .size(76.dp)
+                .size(74.dp)
                 .clip(CircleShape)
-                .border(4.dp, Color(0xE6FFFFFF), CircleShape)
+                .border(3.dp, Color.White.copy(alpha = 0.92f), CircleShape)
+                .semantics { contentDescription = "촬영" }
                 .clickable(enabled = !capturing, onClick = onShutter),
             contentAlignment = Alignment.Center,
         ) {
             Box(
                 modifier = Modifier
-                    .size(60.dp)
+                    .size(58.dp)
                     .clip(CircleShape)
                     .background(if (capturing) TextLow else TextHi),
             )
         }
 
+        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(SHUTTER_ROW_GAP),
+            ) {
+                FilterButton(
+                    open = filterSheetOpen,
+                    showMoodDot = showMoodDot,
+                    onClick = onToggleFilterSheet,
+                )
+                Box(
+                    modifier = Modifier
+                        .size(BOTTOM_CONTROL_SIZE)
+                        .clip(CircleShape)
+                        .background(OverPhotoDisc)
+                        .semantics { contentDescription = "렌즈 전환" }
+                        .clickable(onClick = onFlipLens),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    StrokeIcon(
+                        pathData = CameraIconPaths.FLIP_LENS,
+                        viewBox = 24f,
+                        size = 19.dp,
+                        strokeWidth = 1.8f,
+                        // The front lens is a state, and amber means active — the same
+                        // rule the top bar's 가이드 icon follows.
+                        color = if (isFront) Amber else IconInactive,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 필터 — raises the sheet, and carries the mood dot.
+ *
+ * Amber at 16% while open, `White 8%` while closed. Both are the design's, and the
+ * asymmetry is the point: this is the one control whose own appearance says whether its
+ * sheet is up, because the sheet has no scrim to say it.
+ */
+@Composable
+private fun FilterButton(open: Boolean, showMoodDot: Boolean, onClick: () -> Unit) {
+    Box(modifier = Modifier.size(BOTTOM_CONTROL_SIZE)) {
         Box(
             modifier = Modifier
-                .size(44.dp)
+                .fillMaxSize()
                 .clip(CircleShape)
-                .background(Ink700)
-                .clickable(onClick = onFlipLens),
+                .background(if (open) FilterButtonActive else OverPhotoDisc)
+                .semantics { contentDescription = "필터" }
+                .clickable(onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
-            Text("⟲", color = if (isFront) Amber else TextMid, fontSize = 18.sp)
+            StrokeIcon(
+                viewBox = 22f,
+                size = 20.dp,
+                strokeWidth = 1.6f,
+                color = if (open) Amber else IconInactive,
+                dots = CameraIconPaths.filterLenses(),
+            )
+        }
+        if (showMoodDot) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(2.dp)
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(Amber),
+            )
         }
     }
 }
