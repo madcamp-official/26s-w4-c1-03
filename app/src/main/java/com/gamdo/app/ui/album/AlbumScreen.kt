@@ -36,9 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import com.gamdo.app.core.AppPermissions
@@ -47,6 +45,7 @@ import com.gamdo.app.data.media.AlbumEntry
 import com.gamdo.app.data.media.DEFAULT_ALBUM_PAGE_SIZE
 import com.gamdo.app.data.media.PhotoPageRequest
 import com.gamdo.app.data.media.mergeAlbumEntries
+import com.gamdo.app.ui.theme.GamdoType
 import com.gamdo.app.ui.theme.Ink800
 import com.gamdo.app.ui.theme.Ink900
 import com.gamdo.app.ui.theme.TextHi
@@ -94,10 +93,16 @@ private fun AlbumEntry.DevicePhoto.contentUri(): Uri =
  * device library is never read at once. App captures are loaded in full up front
  * (see [APP_CAPTURE_LOAD_LIMIT]).
  *
- * Deliberately renders both kinds identically — no badge, no separate section, no
- * different corner treatment. O-11's owner note leaves "should the two kinds look
- * different" undecided; this pass does not answer it, it just doesn't force it by
- * inventing a marker. If a future change needs that answer, ask before adding one.
+ * Renders both kinds identically — no badge, no separate section, no different corner
+ * treatment.
+ *
+ * That used to be a deferral: O-11's owner note left "should the two kinds look different"
+ * undecided and this file declined to force it. **It is now the answer.** The owner's final
+ * redesign (Claude Design, 2026-07-30) captions 시안 06 as `앨범 — 3열 · 셀 라운드 8 ·
+ * 배지·라벨 없음`, so the album does not distinguish app captures from device photos, and
+ * there is nothing here to look up in order to decide — no `capture_edit_stack` query, no
+ * AI marker. The design's own JS still carries an unused `ai` flag per cell; the caption
+ * overrides it.
  */
 @Composable
 fun AlbumScreen(
@@ -183,14 +188,16 @@ fun AlbumScreen(
                     .clickable(onClick = onBack),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(text = "‹", color = TextMid, fontSize = 18.sp)
+                Text(text = "‹", color = TextMid, style = GamdoType.Title)
             }
-            Text(text = "앨범", color = TextHi, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+            // The redesign's `Title` role rather than a literal, so bundling Pretendard
+            // later is one line in `Type.kt` and nothing here (see [GamdoType]).
+            Text(text = "앨범", color = TextHi, style = GamdoType.Title)
         }
 
         if (merged.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("아직 촬영한 사진이 없어요", color = TextLow, fontSize = 13.sp)
+                Text("아직 촬영한 사진이 없어요", color = TextLow, style = GamdoType.Body)
             }
         } else {
             val gridState = rememberLazyGridState()
@@ -231,7 +238,8 @@ fun AlbumScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(1f)
-                            .clip(RoundedCornerShape(10.dp))
+                            // 시안 06: `셀 라운드 8`.
+                            .clip(RoundedCornerShape(8.dp))
                             .background(Ink800)
                             .clickable {
                                 when (entry) {
