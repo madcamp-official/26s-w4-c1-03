@@ -305,6 +305,22 @@ const val LOCAL_FALLBACK_MESSAGE = "자연스러운 보정만 적용했어요"
 @Suppress("UNUSED_PARAMETER")
 fun fallbackMessage(reason: String): String = LOCAL_FALLBACK_MESSAGE
 
+/**
+ * What the photograph behind the sheet is currently showing, for the candidates
+ * section's comparison row.
+ *
+ * 브리프 §8 asks for `원본·현재 감도·AI 후보 비교`, and the screen already has the one
+ * surface big enough to judge a photograph on — the photograph. So the row is a
+ * *selector* over that surface rather than three thumbnails: tapping moves the full
+ * image, which is where over-saturation or a bad generation is actually visible. Two
+ * more full-resolution renders to fill preview tiles would also land on this screen's
+ * peak-memory moment, which is what blanked the photo in 결함 3.
+ *
+ * The mapping from screen state to this lives in `ResultFlowDecisions` — it is the
+ * result screen's strip and pick that answer it, not anything the sheet knows.
+ */
+enum class RescueComparison { ORIGINAL, CURRENT_GAMDO, CANDIDATE }
+
 /** §5-3 "결과 후보(최대 2개)". */
 const val MAX_RESCUE_CANDIDATES = 2
 

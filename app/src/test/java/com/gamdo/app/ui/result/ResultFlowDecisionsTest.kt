@@ -4,6 +4,7 @@ import com.gamdo.app.data.FilterRenderState
 import com.gamdo.app.data.ResultFilterState
 import com.gamdo.app.data.ResultFilterStateHolder
 import com.gamdo.app.edit.LocalFilter
+import com.gamdo.app.ui.rescue.RescueComparison
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -195,4 +196,48 @@ class ResultFlowDecisionsTest {
             localStyleChangesPhoto(state("night_street", selectedId = "night_street")),
         )
     }
+
+    // ---- 후보 비교 (브리프 §8) -------------------------------------------------
+
+    /**
+     * A picked candidate wins over the strip: choosing one replaces the editor's
+     * *source*, so the filter on top is a statement about the generated file, not
+     * about the capture.
+     */
+    @Test
+    fun `a picked candidate is what the photo is showing`() {
+        assertEquals(
+            RescueComparison.CANDIDATE,
+            rescueComparisonFor(pickedCandidateId = "res_1", selectedFilterId = LocalFilter.ORIGINAL.filter.id),
+        )
+        assertEquals(
+            RescueComparison.CANDIDATE,
+            rescueComparisonFor(pickedCandidateId = "res_1", selectedFilterId = "night_street"),
+        )
+    }
+
+    /**
+     * With no pick the strip decides, and the only line that matters to the row is
+     * 원본 versus a look of the user's — every preset and the reference slot alike
+     * count as 현재 감도.
+     */
+    @Test
+    fun `with no candidate the strip says original or 현재 감도`() {
+        assertEquals(
+            RescueComparison.ORIGINAL,
+            rescueComparisonFor(pickedCandidateId = null, selectedFilterId = LocalFilter.ORIGINAL.filter.id),
+        )
+        assertEquals(
+            RescueComparison.CURRENT_GAMDO,
+            rescueComparisonFor(pickedCandidateId = null, selectedFilterId = "night_street"),
+        )
+        assertEquals(
+            RescueComparison.CURRENT_GAMDO,
+            rescueComparisonFor(
+                pickedCandidateId = null,
+                selectedFilterId = ResultFilterStateHolder.REFERENCE_FILTER_ID,
+            ),
+        )
+    }
+
 }
