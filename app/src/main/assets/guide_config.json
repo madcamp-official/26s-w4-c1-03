@@ -36,7 +36,7 @@
     "sceneModelFallbackAsset": "models/efficientdet_lite0_coco_int8.tflite",
     "sceneModelMinimumConfidence": 0.20,
     "sceneModelMaxResults": 12,
-    "sceneModelPreferGpu": true,
+    "sceneModelPreferGpu": false,
     "sceneModelCenterCropEveryFrames": 4,
     "sceneModelCenterCropScale": 1.60,
     "objectRefreshEveryFrames": 1,
