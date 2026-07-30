@@ -2,6 +2,8 @@ package com.gamdo.app.ui.camera
 
 import android.content.Context
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.widget.Toast
 import androidx.camera.view.PreviewView
@@ -139,6 +141,9 @@ private const val LATENCY_TAG = "CaptureLatency"
 
 /** 52dp thumbnail + 4dp gap + label, fixed so the preview pane is laid out once. */
 private val STYLE_STRIP_HEIGHT = 78.dp
+
+/** How much later than the deadline [scheduleTeardownWatchdog] pokes. See there. */
+private const val TEARDOWN_WATCHDOG_SLACK_MS = 50L
 
 enum class CaptureAspect(val label: String, val ratioWtoH: Float) {
     RATIO_4_5("4:5", 4f / 5f),
@@ -498,7 +503,29 @@ fun CameraScreen(
         )
         onDispose {
             controller.clearAnalyzer()
-            controller.unbind()
+            // **This line used to be the bug, and it is no longer unconditional.**
+            //
+            // `LifecycleCameraController.unbind()` is
+            // `ProcessCameraProvider.unbindAll()`, and unbinding an `ImageCapture`
+            // runs `abortImageCaptureRequests()` → `TakePictureManager.abortRequests()`,
+            // which fails every request *still in flight* with
+            // `ImageCaptureException(ERROR_CAMERA_CLOSED, "Camera is closed.")`. So
+            // leaving the camera screen mid-capture destroyed the photo inside
+            // CameraX, before the shutter coroutine could reach any code that saves
+            // it — which is why making that coroutine uncancellable was necessary
+            // and not sufficient. Confirmed on SM-G970N 2026-07-30 from both ends:
+            // the camera-core 1.4.1 disassembly, and the device's own
+            // `ImageCaptureException: Camera is closed. at
+            // TakePictureManager.abortRequests(TakePictureManager.java:159)` with
+            // zero `CaptureLatency` lines.
+            //
+            // With no capture in flight this runs right here, exactly as before.
+            // With one, the release is handed to the shutter's `finally`. See
+            // [CameraTeardownGate] for the two things that makes safe — a handed-off
+            // release must not tear down the *next* screen's camera, and it must not
+            // fail to happen at all.
+            cameraTeardownGate.screenDisposed { controller.unbind() }?.invoke()
+            if (cameraTeardownGate.hasDeferredTeardown) scheduleTeardownWatchdog()
             // Resume guarantee 2 of 3 (see AnalysisPauseGate): the shutter's
             // `finally` cannot run if its coroutine was cancelled by this very
             // disposal, so the pause is released unconditionally here as well.
@@ -622,6 +649,16 @@ fun CameraScreen(
                     // One line per capture, DEBUG only. Null in release, which is
                     // what keeps `CaptureTrace` out of the shipped shutter path.
                     val trace = if (BuildConfig.DEBUG) CaptureTrace() else null
+                    // Two claims, released together in the same `finally`. This one
+                    // is first so that `pause()` keeps the position its KDoc pins;
+                    // neither call can throw, so nothing can be lost between them.
+                    //
+                    // What it claims: for as long as this capture runs, the camera
+                    // is not released even if the screen goes away. Held here rather
+                    // than around `capture()` alone because the abort window is the
+                    // whole CameraX request, and the request has already been issued
+                    // by the time `capture()` suspends.
+                    val teardownToken = cameraTeardownGate.captureStarted()
                     // The statement immediately before `try`, with nothing between
                     // them, so its `finally` is unconditionally paired with it:
                     // `finally` runs on success, on throw and on cancellation
@@ -783,12 +820,55 @@ fun CameraScreen(
                         // that no ordering of the two can leave the shutter usable
                         // again while the guide is still stood down.
                         analysisPauseGate.resume(pauseToken)
+                        // The screen may have been disposed while this capture was
+                        // in flight, in which case `onDispose` left the camera to
+                        // us. Null in the ordinary case — and null too when someone
+                        // else already spent the release, which is what keeps a late
+                        // arrival from unbinding a camera that is back on screen.
+                        cameraTeardownGate.captureFinished(teardownToken)?.invoke()
                         capturing = false
                     }
                 }
             },
         )
     }
+}
+
+/**
+ * Pokes a deferred camera release once its deadline has passed.
+ *
+ * `AnalysisPauseGate` gets its expiry for free — the analysis thread asks
+ * `isPaused()` on every frame, so a stuck pause is noticed by the next one. This
+ * gate has no such visitor: `clearAnalyzer()` has already run by the time anything
+ * is deferred, so there is no frame loop left to ask. Hence one delayed post,
+ * which is the only timer in the arrangement.
+ *
+ * Idempotent and cheap to be wrong about: if the capture finished normally the
+ * poke finds nothing and does nothing. Logged at `w` rather than behind
+ * `BuildConfig.DEBUG` because a non-zero count is a defect — a capture that
+ * neither succeeded nor failed — and the same reasoning as
+ * `AnalysisPauseGate.watchdogTrips` applies: it should be visible in whatever
+ * build it happens in, not inferred later from a camera indicator that stayed on.
+ */
+private fun scheduleTeardownWatchdog() {
+    Handler(Looper.getMainLooper()).postDelayed(
+        {
+            cameraTeardownGate.releaseIfExpired()?.let { release ->
+                Log.w(
+                    TAG,
+                    "camera teardown waited ${cameraTeardownGate.maxDeferMs}ms for a capture " +
+                        "that never finished; releasing anyway " +
+                        "(expiredDefers=${cameraTeardownGate.expiredDefers})",
+                )
+                release()
+            }
+        },
+        // The gate's deadline is nanoTime-based and this post is uptimeMillis-based.
+        // Landing a hair *early* would find the deferral unexpired and never come
+        // back, so the poke is deliberately late by a margin larger than the two
+        // clocks can disagree by.
+        cameraTeardownGate.maxDeferMs + TEARDOWN_WATCHDOG_SLACK_MS,
+    )
 }
 
 /**
@@ -1154,6 +1234,18 @@ private fun CameraPreviewPane(
             // treating the symptom.
             modifier = Modifier.fillMaxSize().clipToBounds(),
             factory = { ctx ->
+                // Before anything of ours is bound, and never after.
+                //
+                // A release deferred by the *previous* camera screen is
+                // `ProcessCameraProvider.unbindAll()` — it does not know which
+                // controller asked for it. Landing after the bind below, it would
+                // tear down this preview instead of the old one, leaving a black
+                // screen with no error anywhere. Spending it here means the two can
+                // never overlap: the old camera is always released while the new one
+                // does not yet exist. The capture it was waiting for is lost, which
+                // is the right trade — a photo is worth less than a working camera,
+                // and two cameras cannot have the hardware at once.
+                cameraTeardownGate.releaseBeforeBind()?.invoke()
                 PreviewView(ctx).apply {
                     // Implementation mode is left at CameraX's PERFORMANCE default,
                     // i.e. a SurfaceView.
