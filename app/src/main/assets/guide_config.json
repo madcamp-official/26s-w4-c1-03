@@ -82,5 +82,15 @@
     "trackingBoxSmoothingAlpha": 0.55,
     "trackingMinimumMatchIou": 0.15,
     "trackingMaximumMatchCenterDistance": 0.18
+  },
+  "sceneGuide": {
+    "enabled": true,
+    "classifierAsset": null,
+    "classifierInputSize": 224,
+    "classifierMinimumConfidence": 0.65,
+    "instanceSegmenterAsset": null,
+    "instanceSegmenterInputSize": 640,
+    "instanceSegmenterEnabled": false,
+    "instanceSegmenterMaxRunsPerSearch": 3
   }
 }

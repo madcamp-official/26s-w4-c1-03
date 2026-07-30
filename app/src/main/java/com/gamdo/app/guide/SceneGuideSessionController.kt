@@ -17,6 +17,8 @@ class SceneGuideSessionController(
     private val coordinator: SceneGuideCoordinator = SceneGuideCoordinator(),
     private val tracker: StableSceneTracker = StableSceneTracker(),
     initialScopeStore: SceneSearchScopeStore? = null,
+    private val sceneModeClassifier: SceneModeClassifier = HeuristicSceneModeClassifier(),
+    private val sceneTechniqueSelector: SceneTechniqueSelector = SceneTechniqueSelector(),
 ) {
     private var scopeStore: SceneSearchScopeStore? = initialScopeStore
     private val _layoutState = MutableStateFlow<GuideLayoutState>(GuideLayoutState.Searching)
@@ -24,6 +26,16 @@ class SceneGuideSessionController(
 
     private val _searchScope = MutableStateFlow<SceneSearchScope>(SceneSearchScope.Default)
     val searchScope: StateFlow<SceneSearchScope> = _searchScope.asStateFlow()
+
+    private val _sceneModeDecision = MutableStateFlow<SceneModeDecision?>(null)
+    /** The proposed or user-selected situation. P1 may render this as a mode chip. */
+    val sceneModeDecision: StateFlow<SceneModeDecision?> = _sceneModeDecision.asStateFlow()
+
+    private val _guideMarks = MutableStateFlow<SceneGuideMarks?>(null)
+    /** Fixed dots/rings/silhouette contract; never contains raw detector geometry. */
+    val guideMarks: StateFlow<SceneGuideMarks?> = _guideMarks.asStateFlow()
+
+    private var userSceneMode: CaptureSceneMode? = null
 
     val availableManualLayouts: List<LayoutTemplateSummary> = LayoutTemplateCatalog.manualSummaries
 
@@ -99,8 +111,27 @@ class SceneGuideSessionController(
             styleTarget = styleTarget,
             signals = signals,
         )
+        updateSituationAndMarks(
+            detection = detection,
+            stable = stable,
+            state = state,
+            style = styleTarget,
+            signals = signals,
+        )
         _layoutState.value = state.layoutState
         return state
+    }
+
+    /** Selects a situation and invalidates the previous fixed scene. AUTO clears the override. */
+    fun selectSceneMode(mode: CaptureSceneMode) {
+        userSceneMode = mode.takeUnless { it == CaptureSceneMode.AUTO }
+        resetSearchState()
+    }
+
+    /** Returns the session to classifier-driven AUTO. */
+    fun resetSceneMode() {
+        userSceneMode = null
+        resetSearchState()
     }
 
     fun selectManualLayout(templateId: String, style: StyleTarget = StyleTarget()): Boolean {
@@ -165,9 +196,56 @@ class SceneGuideSessionController(
     fun endSession() {
         tracker.reset()
         coordinator.reset()
+        userSceneMode = null
+        _sceneModeDecision.value = null
+        _guideMarks.value = null
         _searchScope.value = SceneSearchScope.Default
         scopeStore?.setDefault()
         _layoutState.value = GuideLayoutState.Searching
+    }
+
+    private fun resetSearchState() {
+        tracker.reset()
+        coordinator.rescan()
+        _sceneModeDecision.value = userSceneMode?.let {
+            SceneModeDecision(it, 1f, SceneModeSource.USER)
+        }
+        _guideMarks.value = null
+        _layoutState.value = GuideLayoutState.Searching
+    }
+
+    private fun updateSituationAndMarks(
+        detection: DetectionResult,
+        stable: List<ObjectObservation>,
+        state: SceneGuideState,
+        style: StyleTarget,
+        signals: SceneFrameSignals,
+    ) {
+        val stablePeople = stable.count { it.category == GuideObjectCategory.PERSON }
+        val stableObjects = stable.count { it.category != GuideObjectCategory.PERSON }
+        val evidence = SceneModeEvidence(
+            faces = detection.faces.size,
+            people = stablePeople,
+            objects = stableObjects,
+            backgroundRatio = signals.backgroundRatio ?: style.backgroundRatioRange?.let { (it.start + it.endInclusive) / 2f },
+            horizonY = signals.horizonY,
+            tiltDeg = null,
+            sceneSymmetry = signals.sceneSymmetry,
+        )
+        val decision = userSceneMode?.let { SceneModeDecision(it, 1f, SceneModeSource.USER) }
+            ?: sceneModeClassifier.classify(evidence)
+        _sceneModeDecision.value = decision
+        if (_guideMarks.value == null && decision != null) {
+            val marks = sceneTechniqueSelector.select(
+                mode = decision.suggested,
+                detections = state.observation.slotDetections,
+                evidence = evidence,
+                style = style,
+            )
+            if (marks != null && state.layoutState is GuideLayoutState.Fixed) {
+                _guideMarks.value = marks
+            }
+        }
     }
 
     private fun overlap(a: NormalizedBox, b: NormalizedBox): Float {

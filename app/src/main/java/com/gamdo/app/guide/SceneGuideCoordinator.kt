@@ -11,6 +11,10 @@ data class SceneFrameSignals(
     val layoutTemplate: LayoutTemplate? = null,
     val layoutTemplateId: String? = null,
     val viewportAspect: GuideViewportAspect = GuideViewportAspect.FOUR_TO_FIVE,
+    /** Optional cheap evidence for the situation-first guide. */
+    val horizonY: Float? = null,
+    val backgroundRatio: Float? = null,
+    val sceneSymmetry: Float? = null,
 )
 
 data class SceneGuideState(
