@@ -988,7 +988,8 @@ fun CameraScreen(
                             // afterwards — see `captureGeometryFor`. `capture()`
                             // already runs its work on Dispatchers.Default inside
                             // CameraX's callback.
-                            val bitmap = controller.capture(trace, aspect.ratioWtoH)
+                            val captured = controller.capture(trace, aspect.ratioWtoH)
+                            val bitmap = captured.bitmap
                             // The thumb stays a separate downscale: it is a different
                             // size from the photo, so it cannot share the same pass.
                             // It is small and it means no full-resolution bitmap is
@@ -1008,11 +1009,13 @@ fun CameraScreen(
                             // 3024×3780 rear, 2736×3420 front, both exactly 4:5 at the
                             // sensor's full width, so there is no viewport width crop.
                             //
-                            // `SubjectProjection`'s KDoc has been corrected to say so
-                            // (2026-07-30) — it had written that prediction up as a
-                            // measurement. Its `project()` arithmetic is unchanged and
-                            // may now be placing the editor's subject box wrong on this
-                            // device; that is open and recorded there.
+                            // That measurement is what retired `SubjectProjection`'s
+                            // two-ratio inference (2026-07-30): it had written its own
+                            // prediction up as evidence, and was misplacing the
+                            // editor's subject box by up to 6.3% of the frame at the
+                            // edges. It reads `captured.geometry` now — the crop that
+                            // ran — so `pane` below is measurement only and nothing
+                            // reads it back.
                             if (BuildConfig.DEBUG) {
                                 Log.d(
                                     LATENCY_TAG,
@@ -1033,9 +1036,9 @@ fun CameraScreen(
                                     frame = frame,
                                     matchScore = score,
                                     sessionId = sessionId,
-                                    paneRatioWtoH = paneRatioWtoH,
-                                    targetRatioWtoH = aspect.ratioWtoH,
-                                    mirror = isFront,
+                                    geometry = captured.geometry,
+                                    bufferWidth = captured.bufferWidth,
+                                    bufferHeight = captured.bufferHeight,
                                     tiltRecorded = tiltSensor.hasReading,
                                 ),
                                 trace = trace,

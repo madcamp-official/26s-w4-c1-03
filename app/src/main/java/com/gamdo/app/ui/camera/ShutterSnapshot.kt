@@ -1,5 +1,6 @@
 package com.gamdo.app.ui.camera
 
+import com.gamdo.app.camera.CaptureGeometry
 import com.gamdo.app.data.CaptureSnapshot
 import com.gamdo.app.edit.CaptureConditions
 
@@ -19,19 +20,21 @@ import com.gamdo.app.edit.CaptureConditions
  *   fired, in which case `FrameFeatures.tiltDeg` is the *default* 0f rather than a
  *   measurement, and writing it would say "perfectly level" about a phone nobody
  *   measured.
- * @param paneRatioWtoH preview pane aspect — the viewport crop. Zero/negative when
- *   the pane has not been measured, which drops the subject box rather than
- *   projecting through a bogus ratio.
- * @param targetRatioWtoH the saved file's aspect (D9: 0.8 or 1.0).
- * @param mirror true for the front lens.
+ * @param geometry the framing plan the shutter actually applied, straight from
+ *   `CameraController.capture`. Null drops the subject box rather than inventing one.
+ *   This used to be `paneRatioWtoH` + `targetRatioWtoH` + `mirror`, from which
+ *   [SubjectProjection] inferred the crops; the inference was measurably wrong on
+ *   SM-G970N and the plan is the thing that is not a guess. See that file's KDoc.
+ * @param bufferWidth the decoded capture buffer's width, which [geometry] is
+ *   expressed against; likewise [bufferHeight].
  */
 fun buildCaptureSnapshot(
     frame: ShutterFrame?,
     matchScore: Float?,
     sessionId: String?,
-    paneRatioWtoH: Float,
-    targetRatioWtoH: Float,
-    mirror: Boolean,
+    geometry: CaptureGeometry?,
+    bufferWidth: Int,
+    bufferHeight: Int,
     tiltRecorded: Boolean,
 ): CaptureSnapshot {
     // No frame means no measurement. Writing defaults would be worse than writing
@@ -49,9 +52,9 @@ fun buildCaptureSnapshot(
         },
         subject = SubjectProjection.project(
             box = frame.features.personBox ?: frame.features.faceBox,
-            paneRatioWtoH = paneRatioWtoH,
-            targetRatioWtoH = targetRatioWtoH,
-            mirror = mirror,
+            geometry = geometry,
+            bufferWidth = bufferWidth,
+            bufferHeight = bufferHeight,
         ),
     )
 
