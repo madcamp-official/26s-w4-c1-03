@@ -48,6 +48,38 @@ const val MAX_REFERENCE_OVERLAY_ALPHA = 0.60f
 fun clampReferenceOverlayAlpha(value: Float): Float =
     value.coerceIn(0f, MAX_REFERENCE_OVERLAY_ALPHA)
 
+// ---- the two 내 감도 words, in one place -------------------------------------
+
+/**
+ * The strip's two reference labels — **P1-B3**: "`내 감도 만들기`와 `현재 내 감도 적용`을
+ * 동일한 `+ 내 감도` 문구로 표현하지 않는다".
+ *
+ * They used to be string literals in three places: inside
+ * [com.gamdo.app.ui.reference.CreateReferenceThumb], inside
+ * [com.gamdo.app.ui.reference.MyReferenceThumb], and — the collision — inside P2's
+ * `ResultFilterStateHolder`, whose catalogue calls the *applied* slot 내 감도, the
+ * very word the `+` was using for *making* one. On device that read as `+ 내 감도`
+ * and nothing else: the button that creates a 감도 and the 감도 you had just created
+ * were the same two words, so a user who made one saw no evidence of it.
+ *
+ * The values below are today's, unchanged — this is the move, not the rewording.
+ * Both strips read from here, so when the wording is settled it changes in one
+ * place for the camera and the result screen at once;
+ * [com.gamdo.app.ui.camera.CameraScreen] renders the same two composables and needs
+ * no edit of its own.
+ *
+ * `ResultFilterSelectionTest` pins the property that has to hold whatever the
+ * wording turns out to be: the two are never the same string.
+ */
+object ReferenceLabels {
+
+    /** The leading `+` slot: start making a 감도 from a photo. */
+    const val CREATE = "내 감도"
+
+    /** The trailing slot: the 감도 that is active and can be applied to this photo. */
+    const val ACTIVE = "내 레퍼런스"
+}
+
 // ---- O-10 filter-strip ordering ---------------------------------------------
 
 /** One slot in a style/filter strip once wrapped with the AI 2 / AI 3 entry points. */

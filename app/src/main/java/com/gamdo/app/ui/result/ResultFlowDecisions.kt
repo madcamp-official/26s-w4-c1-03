@@ -1,5 +1,12 @@
 package com.gamdo.app.ui.result
 
+import com.gamdo.app.data.ResultFilterItem
+import com.gamdo.app.data.ResultFilterKind
+import com.gamdo.app.data.ResultFilterState
+import com.gamdo.app.data.ResultFilterStateHolder
+import com.gamdo.app.edit.LocalFilter
+import com.gamdo.app.ui.reference.ReferenceLabels
+
 /**
  * 보정(결과) 화면의 순수 판정 — **platform-free** (zero `android.*` imports), same
  * rule and the same reason as [com.gamdo.app.ui.rescue.RescueFlowDecisions] and
@@ -194,3 +201,169 @@ fun saveTargetFor(source: EditSourceKind): SaveTarget = when (source) {
  */
 fun openingPresetId(sessionPresetId: String?, profilePresetId: String?): String? =
     sessionPresetId?.takeIf { it.isNotBlank() } ?: profilePresetId?.takeIf { it.isNotBlank() }
+
+// ---- P1-B2: one filter catalogue, one selection -----------------------------
+//
+// The result screen used to own two private copies of what the strip shows:
+// the item list came from a `ResolvedStyle?` parameter held in a `remember` at
+// the nav host, and the selection from a `remember` inside the screen itself.
+// Both die with their composition, so an Activity recreation dropped the
+// `내 감도` slot and a trip to the album dropped the selection — while
+// `ResultFilterStateHolder`, which lives on `AppContainer` and therefore
+// outlives both, had the right answer and no reader.
+//
+// The holder is now the store. These functions are the *rules* that sit on top
+// of it: which id the screen puts there when a photo opens, and what each id
+// means to the pipeline. They take and return plain ids so they stay on the
+// JVM side of `ResultFlowDecisions`'s platform-free rule.
+
+/**
+ * The [LocalFilter] a strip id names, or null for the `내 감도` slot and for any
+ * id this build does not recognise.
+ *
+ * Unknown ids are reachable rather than theoretical: [ResultFilterStateHolder]
+ * is P2-owned and may grow items, and `sessions.style_preset_id` can hold the id
+ * of a preset a later build removed.
+ */
+fun presetFilterFor(filterId: String): LocalFilter? =
+    if (filterId == ResultFilterStateHolder.REFERENCE_FILTER_ID) {
+        null
+    } else {
+        LocalFilter.entries.firstOrNull { it.filter.id == filterId }
+    }
+
+/**
+ * Which recipe `QuickFilterEditor` runs for a strip id.
+ *
+ * The reference slot rides on `ORIGINAL`'s identity recipe — its colour is folded
+ * into the *plan* by `LocalEditor`, not applied a second time here (see
+ * `ResultScreen`'s `corrected`). An unrecognised id lands on the same identity
+ * recipe, which shows the photo rather than a look picked by accident.
+ */
+fun localFilterFor(filterId: String): LocalFilter =
+    presetFilterFor(filterId) ?: LocalFilter.ORIGINAL
+
+/**
+ * [StripSelection] for a strip id, so [stylePickFor] can be fed straight from
+ * [ResultFilterState.selectedId].
+ *
+ * An unrecognised id resolves to [StripSelection.ORIGINAL], never to
+ * [StripSelection.PRESET]. The difference is not cosmetic: `PRESET` switches the
+ * geometry and optical passes **on** for a device photo (see [correctionPassesFor]),
+ * so guessing wrong here would crop and re-expose someone's library photo under a
+ * label the screen could not even name.
+ */
+fun stripSelectionFor(filterId: String): StripSelection = when {
+    filterId == ResultFilterStateHolder.REFERENCE_FILTER_ID -> StripSelection.REFERENCE
+    presetFilterFor(filterId).let { it == null || it == LocalFilter.ORIGINAL } -> StripSelection.ORIGINAL
+    else -> StripSelection.PRESET
+}
+
+/**
+ * The word the strip and the on-photo badge put under a catalogue item.
+ *
+ * Presets keep P2's own [ResultFilterItem.displayName] — it is `PhotoFilter.label`,
+ * the same 깔끔한 소셜 / 밤거리 the camera shows. The reference slot does not: P2
+ * names it 내 감도, which is the word the leading `+` already uses for *creating*
+ * one, and P1-B3 forbids the two reading the same. [ReferenceLabels] settles it for
+ * both screens.
+ */
+fun stripLabelFor(item: ResultFilterItem): String = when (item.kind) {
+    ResultFilterKind.REFERENCE -> ReferenceLabels.ACTIVE
+    ResultFilterKind.ORIGINAL, ResultFilterKind.PRESET -> item.displayName
+}
+
+/** Whether the catalogue is currently offering the `내 감도` slot. */
+fun hasReferenceSlot(state: ResultFilterState): Boolean =
+    state.items.any { it.kind == ResultFilterKind.REFERENCE }
+
+/** What `capture_edit_stack.paramsJson` records as the filter, for a strip id. */
+fun editRecordFilterName(filterId: String): String =
+    if (filterId == ResultFilterStateHolder.REFERENCE_FILTER_ID) {
+        "REFERENCE"
+    } else {
+        localFilterFor(filterId).name
+    }
+
+/**
+ * Whether an active 내 감도 outranks the preset the shot was framed in, when an app
+ * capture opens. **It does not** — owner decision, 2026-07-30.
+ *
+ * This constant exists because the answer is genuinely contested and the losing
+ * side is written down in a contract. `docs/P2_실기기_기능수정기록_2026-07-29.md`'s
+ * P2-B3 fixes the priority as `활성 레퍼런스 색감 > 세션 프리셋 > 온보딩 추천`, and
+ * P2's own [ResultFilterState.recommendedDefaultFilterId] computes exactly that. So
+ * anyone reading P2's side will conclude this screen is wrong and "fix" it.
+ *
+ * They should not, and the reason is O-13 and O-14 rather than anything about
+ * references. A preset is **colour** now, and colour is a property of the
+ * photograph; O-14 put that colour into the live preview, so the user *watches* the
+ * look while framing and presses the shutter on what they can see. Opening that
+ * photo in a different colour than the one it was taken in is a defect no matter
+ * how good the other colour is. The reference is one tap away and always was.
+ *
+ * O-15 is the shipped, device-verified behaviour this preserves. Device photos are
+ * outside the question entirely — O-12 keeps them on 원본 either way.
+ *
+ * Both branches are pinned by `ResultFilterSelectionTest`, so if the decision is
+ * ever revisited, flipping this constant is the whole change.
+ */
+const val ACTIVE_REFERENCE_OPENS_APP_CAPTURES = false
+
+/**
+ * The strip item a freshly opened photo selects.
+ *
+ * - [EditSourceKind.DEVICE_PHOTO] opens on 원본. **O-12**, and it does not depend on
+ *   [hasActiveReferenceColor]: an active reference is still a look the user did not
+ *   pick *for this photo*, and applying it to something out of their own library is
+ *   the exact thing O-12 exists to prevent.
+ * - [EditSourceKind.APP_CAPTURE] opens on O-15's preset — the one on screen when the
+ *   shutter was pressed, else the onboarding profile's, else 원본 — unless
+ *   [ACTIVE_REFERENCE_OPENS_APP_CAPTURES] says the reference wins.
+ */
+fun openingFilterId(
+    source: EditSourceKind,
+    hasActiveReferenceColor: Boolean,
+    sessionPresetId: String?,
+    profilePresetId: String?,
+    referenceFirst: Boolean = ACTIVE_REFERENCE_OPENS_APP_CAPTURES,
+): String = when (source) {
+    EditSourceKind.DEVICE_PHOTO -> LocalFilter.ORIGINAL.filter.id
+    EditSourceKind.APP_CAPTURE ->
+        if (referenceFirst && hasActiveReferenceColor) {
+            ResultFilterStateHolder.REFERENCE_FILTER_ID
+        } else {
+            LocalFilter.forPresetId(openingPresetId(sessionPresetId, profilePresetId)).filter.id
+        }
+}
+
+/**
+ * What the strip should be sitting on right now — the whole rule, in one value.
+ *
+ * Two failures this closes, both of which arrive as a *late* recomposition rather
+ * than as a user action:
+ *
+ *  - The screen resolves its opening preset asynchronously (`captures` row →
+ *    `sessions` row → `style_preset_id`), so the answer changes at least once after
+ *    the first frame. The old effect re-seeded the selection unconditionally each
+ *    time it changed, so a filter tapped inside that window was silently undone.
+ *    [userHasChosen] makes a tap win over every later re-resolution.
+ *  - [ResultFilterState.selectedId] is app-scoped now, so without a per-photo reset
+ *    the 밤거리 left over from an app capture would carry into the next photo the
+ *    user opens — and if that is a device photo, O-12 has been broken by a look
+ *    nobody picked for it. Opening always re-answers from [openingFilterId].
+ *
+ * @param currentSelectedId what the holder has, used only once the user owns it.
+ */
+fun selectionOnOpen(
+    source: EditSourceKind,
+    userHasChosen: Boolean,
+    currentSelectedId: String,
+    hasActiveReferenceColor: Boolean,
+    sessionPresetId: String?,
+    profilePresetId: String?,
+): String = if (userHasChosen) {
+    currentSelectedId
+} else {
+    openingFilterId(source, hasActiveReferenceColor, sessionPresetId, profilePresetId)
+}

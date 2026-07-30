@@ -92,7 +92,7 @@ fun CreateReferenceThumb(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    StripThumb(label = "내 감도", shape = shape, size = size, selected = false, onClick = onClick, modifier = modifier) {
+    StripThumb(label = ReferenceLabels.CREATE, shape = shape, size = size, selected = false, onClick = onClick, modifier = modifier) {
         Text(
             text = "+",
             color = Sage,
@@ -148,11 +148,11 @@ fun MyReferenceThumb(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    StripThumb(label = "내 레퍼런스", shape = shape, size = size, selected = selected, onClick = onSelect, modifier = modifier) {
+    StripThumb(label = ReferenceLabels.ACTIVE, shape = shape, size = size, selected = selected, onClick = onSelect, modifier = modifier) {
         if (imageUri != null) {
             AsyncImage(
                 model = imageUri,
-                contentDescription = "내 레퍼런스",
+                contentDescription = ReferenceLabels.ACTIVE,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
