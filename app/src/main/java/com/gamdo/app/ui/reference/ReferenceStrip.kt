@@ -84,7 +84,17 @@ private fun StripThumb(
     }
 }
 
-/** `+` — leftmost on both strips. Opens the picker straight away (§5-2 flow start). */
+/**
+ * `+` — leftmost on both strips. Opens the picker straight away (§5-2 flow start).
+ *
+ * Labelled with a verb, and [MyReferenceThumb] with a possessive, because the two
+ * used to read as the same thing. This one said `내 감도` and the applied slot said
+ * `내 레퍼런스`, so the button that *creates* a 감도 and the slot that *is* one were
+ * named by whichever word came to hand — and once the result screen started taking
+ * its labels from `ResultFilterStateHolder`, whose reference entry is also `내 감도`,
+ * both would have said `내 감도` outright. Owner decision 2026-07-30; the requirement
+ * is P1-B3's "「내 감도 만들기」와 「현재 내 감도 적용」을 동일한 문구로 표현하지 않는다".
+ */
 @Composable
 fun CreateReferenceThumb(
     shape: Shape,
@@ -92,7 +102,7 @@ fun CreateReferenceThumb(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    StripThumb(label = "내 감도", shape = shape, size = size, selected = false, onClick = onClick, modifier = modifier) {
+    StripThumb(label = "감도 만들기", shape = shape, size = size, selected = false, onClick = onClick, modifier = modifier) {
         Text(
             text = "+",
             color = Sage,
@@ -148,11 +158,16 @@ fun MyReferenceThumb(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    StripThumb(label = "내 레퍼런스", shape = shape, size = size, selected = selected, onClick = onSelect, modifier = modifier) {
+    // `내 감도`, not `내 레퍼런스`: this is the slot the user's own 감도 occupies, and
+    // 레퍼런스 is our word for it, not theirs. `ResultFilterStateHolder` already names
+    // its reference entry `내 감도`, so a screen that takes its labels from the holder
+    // and a strip that hard-codes a different word would disagree about one thing.
+    // See [CreateReferenceThumb] for the other half of the same decision.
+    StripThumb(label = "내 감도", shape = shape, size = size, selected = selected, onClick = onSelect, modifier = modifier) {
         if (imageUri != null) {
             AsyncImage(
                 model = imageUri,
-                contentDescription = "내 레퍼런스",
+                contentDescription = "내 감도",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
