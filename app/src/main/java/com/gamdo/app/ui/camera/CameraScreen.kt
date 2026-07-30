@@ -8,6 +8,9 @@ import android.util.Log
 import android.widget.Toast
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -60,6 +63,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -759,6 +763,11 @@ fun CameraScreen(
         CameraBottomBar(
             lastThumb = lastThumb,
             capturing = capturing,
+            // The shutter turns amber on exactly the condition the bracket does —
+            // one predicate, two consumers. Passing `overlay?.guide?.aligned` straight
+            // through would light the shutter while the bracket was off screen (guide
+            // toggled off, still searching, or a manual layout in charge).
+            aligned = AlignmentAmber.isOn(overlay, guideShown = guideVisible),
             isFront = isFront,
             filterSheetOpen = overlayMode == CameraOverlayMode.FILTER_SHEET,
             // "적용 중", so the *active* style being a reference — not the mere existence
@@ -1767,6 +1776,11 @@ private fun CameraPreviewPane(
 private fun CameraBottomBar(
     lastThumb: android.graphics.Bitmap?,
     capturing: Boolean,
+    /**
+     * Whether the composition matches — from [AlignmentAmber.isOn], the same predicate
+     * the target bracket turns amber on. Never a score (D2-5).
+     */
+    aligned: Boolean,
     isFront: Boolean,
     filterSheetOpen: Boolean,
     /**
@@ -1818,26 +1832,7 @@ private fun CameraBottomBar(
 
         // D2-4: the shutter is manual only — `takePicture` is reachable from this
         // clickable lambda and nowhere else. No countdown, no auto-capture.
-        //
-        // Geometry is the redesign's (74 / ring 3 / disc 58, White 92%). The three
-        // *states* — amber on a matched composition, the 78% contraction, the 200ms
-        // fade — land in the next commit so each is revertable on its own.
-        Box(
-            modifier = Modifier
-                .size(74.dp)
-                .clip(CircleShape)
-                .border(3.dp, Color.White.copy(alpha = 0.92f), CircleShape)
-                .semantics { contentDescription = "촬영" }
-                .clickable(enabled = !capturing, onClick = onShutter),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(58.dp)
-                    .clip(CircleShape)
-                    .background(if (capturing) TextLow else TextHi),
-            )
-        }
+        CameraShutter(capturing = capturing, aligned = aligned, onShutter = onShutter)
 
         Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
             Row(
@@ -1870,6 +1865,75 @@ private fun CameraBottomBar(
                 }
             }
         }
+    }
+}
+
+/**
+ * The shutter and its three appearances (redesign 시안 03 / 04).
+ *
+ * ```
+ * 74 · ring 3px White 92% · disc 58 #F4F1EA
+ * 구도 일치 → Amber, faded over 200ms      촬영 중 → disc contracts to 78%
+ * ```
+ *
+ * Which appearance applies is [ShutterVisual]'s answer, not this composable's: colour
+ * follows alignment and scale follows capture, **independently**, so pressing the
+ * shutter on a matched composition does not flash the disc back to white for the
+ * length of the capture. See that file for why the redesign's three-state wording
+ * needs two decisions rather than one.
+ *
+ * Everything here is animated and nothing blinks. D2-3 allows exactly one success
+ * signal — a colour change — so there is no haptic, no sound, no toast and no
+ * scale pulse on alignment; the only scale change in the whole control belongs to the
+ * capture.
+ *
+ * `LinearOutSlowInEasing` is CSS `ease-out`: fast at the start, settling at the end.
+ * `FastOutSlowInEasing` would be `ease-in-out` and is the wrong curve for a state that
+ * should announce itself immediately and then stop moving.
+ */
+@Composable
+private fun CameraShutter(capturing: Boolean, aligned: Boolean, onShutter: () -> Unit) {
+    val amber = ShutterVisual.alignedAmber(aligned = aligned, capturing = capturing)
+    val target = if (amber) Amber else Color.White.copy(alpha = ShutterVisual.IDLE_ALPHA)
+    val ringColor by animateColorAsState(
+        targetValue = target,
+        animationSpec = tween(CAMERA_ALIGN_FADE_MS, easing = LinearOutSlowInEasing),
+        label = "shutterRing",
+    )
+    val discColor by animateColorAsState(
+        // The disc is opaque TextHi at rest, not White 92% — that alpha is the ring's.
+        targetValue = if (amber) Amber else TextHi,
+        animationSpec = tween(CAMERA_ALIGN_FADE_MS, easing = LinearOutSlowInEasing),
+        label = "shutterDisc",
+    )
+    val discScale by animateFloatAsState(
+        targetValue = ShutterVisual.discScale(capturing),
+        animationSpec = tween(CAMERA_ALIGN_FADE_MS, easing = LinearOutSlowInEasing),
+        label = "shutterDiscScale",
+    )
+    Box(
+        modifier = Modifier
+            .size(74.dp)
+            .clip(CircleShape)
+            .border(3.dp, ringColor, CircleShape)
+            .semantics { contentDescription = "촬영" }
+            .clickable(enabled = !capturing, onClick = onShutter),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                // Scaled rather than resized: `Modifier.size(58.dp * scale)` would
+                // re-measure the disc every animation frame and, because the parent
+                // centres it, nudge the layout. `graphicsLayer` moves it on the render
+                // thread and leaves the measured tree alone.
+                .size(58.dp)
+                .graphicsLayer {
+                    scaleX = discScale
+                    scaleY = discScale
+                }
+                .clip(CircleShape)
+                .background(discColor),
+        )
     }
 }
 
