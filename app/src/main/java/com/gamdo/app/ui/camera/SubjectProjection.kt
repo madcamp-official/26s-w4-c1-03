@@ -27,10 +27,25 @@ import com.gamdo.app.edit.SubjectBox
  * a real term in the projection, not an intermediate that cancels — which is why
  * [project] takes it.
  *
- * The model is arithmetic, not assumption, and the device confirms it: on
- * SM-G970N the sensor emits 3024×4032, the pane is 1080×1500, and the saved file
- * measured **2904×3630**. Predicted: 4032 × (1080/1500) = 2903.04 → 2904 wide,
- * then 2904 / 0.8 = 3630 tall. Exact.
+ * ⚠️ **The device does not confirm this, and this KDoc used to claim it did.**
+ *
+ * It read: "on SM-G970N the sensor emits 3024×4032, the pane is 1080×1500, and the
+ * saved file measured **2904×3630** … Exact." The real measurement, taken 2026-07-30
+ * on SM-G970N from `CameraScreen`'s `CaptureLatency geometry` line, is **3024×3780**
+ * rear and **2736×3420** front — both exactly 4:5 at the sensor's full width.
+ *
+ * The discrepancy is not in the arithmetic; it is in step 1. `saved.width ==
+ * buffer.width` means the viewport crop **did not narrow the width at all**, so on
+ * this device the two crops above did collapse into one and `paneRatioWtoH` is not the
+ * term this file says it is. 2904 was the *prediction*, written up as a measurement.
+ *
+ * [project] is **left as it is** on purpose. Its input feeds the editor's subject box
+ * (§4-1), so changing the model is a behavioural change to another vertical, and
+ * whether the box is currently misplaced needs its own measurement rather than an
+ * inference from one log line. Recorded for the owner rather than quietly patched.
+ *
+ * Believe `CaptureLatency geometry` over the paragraph above it until someone owns
+ * the fix.
  *
  * ## Mirroring
  *

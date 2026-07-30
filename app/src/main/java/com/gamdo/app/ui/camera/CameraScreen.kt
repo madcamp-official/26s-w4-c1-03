@@ -962,10 +962,11 @@ fun CameraScreen(
                             // 3024×3780 rear, 2736×3420 front, both exactly 4:5 at the
                             // sensor's full width, so there is no viewport width crop.
                             //
-                            // ⚠️ `SubjectProjection`'s KDoc still predicts 2904×3630
-                            // from a 1080×1500 pane and has not been corrected — that
-                            // file is out of scope here. Believe this line, not that
-                            // one, until someone owns the fix.
+                            // `SubjectProjection`'s KDoc has been corrected to say so
+                            // (2026-07-30) — it had written that prediction up as a
+                            // measurement. Its `project()` arithmetic is unchanged and
+                            // may now be placing the editor's subject box wrong on this
+                            // device; that is open and recorded there.
                             if (BuildConfig.DEBUG) {
                                 Log.d(
                                     LATENCY_TAG,
