@@ -138,19 +138,25 @@ fun GamdoNavHost(
     var pendingShootLayout by remember { mutableStateOf<GuideLayoutState?>(null) }
 
     /**
-     * The camera's entry point into the hand-off — the seam, ready and unoccupied.
+     * The camera's entry point into the hand-off, wired.
      *
-     * `CameraScreen` would take this as
-     * `onOpenDelegatedShoot: ((GuideLayoutState) -> Unit)? = null` and invoke it from a
-     * tap with `layoutState.value`, never from a `LaunchedEffect`. It is not passed
-     * below, by owner decision (2026-07-30): the delegated web page is not deployed —
-     * `gamdo-web/dist` is absent and the server answers `/shoot/{token}` with
-     * 503 `web_not_built` — so a button would be a control that cannot work, and P2's
-     * own §5 says an unconnected QR feature is to be left off the product surface and
-     * marked 미구현 rather than shown. Wiring it is one argument at the `CameraScreen`
-     * call below plus one button in that file.
+     * It was deliberately left unpassed until 2026-07-30 on the grounds that the
+     * delegated web page was not deployed — the note here said the server answered
+     * `/shoot/{token}` with 503 `web_not_built`. **That is no longer true and the
+     * measurement says so**: `/shoot/{token}` returns 200 with the Vite build's
+     * `index.html`. The web is deployed; only this repo's working tree lacks
+     * `gamdo-web/dist`, which says nothing about the server.
+     *
+     * One server-side defect remains and it is not P1's to fix: `main.py` mounts
+     * `/web-assets` at `dist/assets`, while the served `index.html` asks for
+     * `/web-assets/assets/…`, so the JS and CSS 404 and the friend's page renders
+     * white. `/web-assets/index-<hash>.js` is where the file actually is. Reported to
+     * P2 in `docs/P1_브리프응답_결함진단과조치_2026-07-30.md`; owner decided on
+     * 2026-07-30 to expose the entry point now rather than wait for it.
+     *
+     * Invoked from a tap with the layout on screen, never from a `LaunchedEffect` —
+     * see `CameraScreen`'s parameter of the same name for the no-layout branch.
      */
-    @Suppress("UNUSED_VARIABLE")
     val onOpenDelegatedShoot: (GuideLayoutState) -> Unit = { layout ->
         pendingShootLayout = layout
         navController.navigate(Routes.SHOOT)
@@ -218,6 +224,7 @@ fun GamdoNavHost(
                 CameraScreen(
                     container = container,
                     onOpenAlbum = { navController.navigate(Routes.ALBUM) },
+                    onOpenDelegatedShoot = onOpenDelegatedShoot,
                     // §5-2: the *active* reference's photo, translucent, over the
                     // live preview — never the sheet's transient pick (device
                     // bug, 2026-07-29; see this function's KDoc). Gated on
