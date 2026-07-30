@@ -135,6 +135,54 @@ class CameraRedesignGuardTest {
         )
     }
 
+    /**
+     * §3.1's wiring. `availableManualLayouts` and `selectManualLayout` were complete,
+     * tested, and had **zero callers** — the exact failure this file was created for.
+     */
+    @Test
+    fun `the frame picker is wired to P2's manual layout contract`() {
+        val source = code()
+        assertTrue(
+            "the list must come from CameraViewModel.availableManualLayouts",
+            source.contains("availableManualLayouts"),
+        )
+        assertTrue(
+            "selection must go through selectManualLayout",
+            source.contains("selectManualLayout("),
+        )
+        assertTrue(
+            "§3.1's 자동으로 돌아가기 exit is rescanLayout()",
+            source.contains("rescanLayout()"),
+        )
+    }
+
+    /**
+     * The condition worth a structural guard: the frame button's lit state must come from
+     * the **guide engine**, not from whether the sheet is open and not from what the sheet
+     * last requested. That is how "선택 실패를 고정 성공으로 표시하지 않는다" holds without
+     * anyone checking a boolean.
+     */
+    @Test
+    fun `the frame button reads the engine, not the sheet`() {
+        val lines = KotlinSourceProbe.codeLines(screen)
+        val wiring = lines.withIndex()
+            .filter { (_, line) -> line.contains("frameSheetActive =") }
+            .map { (i, line) -> i to line }
+        assertTrue("the frame button's state must be wired", wiring.isNotEmpty())
+        for ((index, line) in wiring) {
+            assertTrue(
+                "line ${index + 1}: frameSheetActive must be derived from " +
+                    "ManualFrameSelection (which reads layoutState), never from " +
+                    "overlayMode == FRAME_SHEET. Got: ${line.trim()}",
+                line.contains("ManualFrameSelection.frameButtonActive("),
+            )
+            assertFalse(
+                "line ${index + 1}: an open sheet is not an active frame",
+                line.contains("FRAME_SHEET"),
+            )
+        }
+    }
+
     // ---- what the redesign removed stays removed --------------------------------
 
     @Test

@@ -162,6 +162,20 @@ object CameraIconPaths {
     /** 내 레퍼런스 삭제 badge. viewBox 10, stroke 1.5, 8dp. */
     const val CLOSE: String = "M1.5 1.5l7 7M8.5 1.5l-7 7"
 
+    /**
+     * 프레임 — a rounded outer frame holding two inner rectangles, i.e. "a layout".
+     * viewBox 16, stroke 1.4, 16dp.
+     *
+     * Not from the mock: the final design has no frame button, so 담당 B's handoff leaves
+     * the glyph to P1 (§1). Drawn in the same idiom as the mock's own icons and chosen to
+     * collide with neither neighbour — 가이드 is four corner brackets, 재탐색 is a
+     * circular arrow, and this is the only one that encloses smaller shapes.
+     */
+    const val FRAME: String =
+        "M2 3.2a1.2 1.2 0 0 1 1.2-1.2h9.6A1.2 1.2 0 0 1 14 3.2v9.6a1.2 1.2 0 0 1-1.2 1.2" +
+            "H3.2A1.2 1.2 0 0 1 2 12.8Z" +
+            "M4.4 5.6h3.2v4.8H4.4ZM9.4 5.6h2.2v2.6H9.4Z"
+
     /** The 설정 glyph's two knobs, riding the rails at 6.5 and 15.5. */
     fun settingsKnobs(background: Color): List<IconDot> = listOf(
         IconDot(cx = 8.5f, cy = 6.5f, r = 2.4f, fill = background, stroked = true),

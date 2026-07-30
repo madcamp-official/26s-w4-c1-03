@@ -43,6 +43,16 @@ enum class CameraOverlayMode {
     /** 시안 05 — the six presets and `내 레퍼런스`, raised from the filter button. */
     FILTER_SHEET,
 
+    /**
+     * The 12 manual composition frames (§3.1), raised from the preview's frame button.
+     *
+     * A separate mode rather than a section of [FILTER_SHEET], because a preset is a
+     * **colour** and a frame is a **composition** (O-13). Putting them in one sheet is
+     * the confusion O-13 exists to have fixed — the colour control used to be the
+     * composition control.
+     */
+    FRAME_SHEET,
+
     /** Debug-only. Holds the HUD toggle; see [settingsSheetAvailable]. */
     SETTINGS_SHEET,
 
@@ -77,7 +87,10 @@ object CameraPanels {
      * express instead.
      */
     fun scrimTapped(current: CameraOverlayMode): CameraOverlayMode = when (current) {
-        CameraOverlayMode.FILTER_SHEET, CameraOverlayMode.SETTINGS_SHEET -> CameraOverlayMode.NONE
+        CameraOverlayMode.FILTER_SHEET,
+        CameraOverlayMode.FRAME_SHEET,
+        CameraOverlayMode.SETTINGS_SHEET,
+        -> CameraOverlayMode.NONE
         CameraOverlayMode.NONE, CameraOverlayMode.AREA_SELECT -> current
     }
 
@@ -99,7 +112,10 @@ object CameraPanels {
      * the sheet is a picker, not a modal.
      */
     fun sheetVisible(mode: CameraOverlayMode): Boolean = when (mode) {
-        CameraOverlayMode.FILTER_SHEET, CameraOverlayMode.SETTINGS_SHEET -> true
+        CameraOverlayMode.FILTER_SHEET,
+        CameraOverlayMode.FRAME_SHEET,
+        CameraOverlayMode.SETTINGS_SHEET,
+        -> true
         CameraOverlayMode.NONE, CameraOverlayMode.AREA_SELECT -> false
     }
 
