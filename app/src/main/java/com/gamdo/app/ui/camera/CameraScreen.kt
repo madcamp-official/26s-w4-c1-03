@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -64,8 +65,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
@@ -106,6 +111,8 @@ import com.gamdo.app.data.preset.StylePreset
 import com.gamdo.app.detect.DetectionResult
 import com.gamdo.app.guide.toSceneObservation
 import com.gamdo.app.detect.toAnalysisFrame
+import com.gamdo.app.guide.LayoutPreviewSlot
+import com.gamdo.app.guide.LayoutTemplateSummary
 import com.gamdo.app.guide.SceneSearchScope
 import com.gamdo.app.guide.StyleTarget
 import com.gamdo.app.guide.toStyleTarget
@@ -213,6 +220,20 @@ private val FilterButtonActive = Amber.copy(alpha = 0.16f)
 
 /** `gap:14px` between the filter strip's thumbnails. */
 private val STRIP_ITEM_GAP = 14.dp
+
+/**
+ * The frame sheet's cells are 4:5 rectangles, not circles.
+ *
+ * The filter strip is round because a colour has no shape; a frame's own proportions are
+ * the first thing the cell tells you, so these match the default capture ratio. 42×54 is
+ * 0.78 — 4:5 to within a rounding — and keeps the sheet the same height as the filter
+ * one, so switching between them does not move the shutter row.
+ */
+private val FRAME_THUMB_WIDTH = 42.dp
+private val FRAME_THUMB_HEIGHT = 54.dp
+
+/** 54 thumb + 5 gap + label, so the frame sheet stands as still as the filter sheet. */
+private val FRAME_STRIP_HEIGHT = 80.dp
 
 /** `gap:16px` between the filter and lens buttons. */
 private val SHUTTER_ROW_GAP = 16.dp
@@ -495,6 +516,11 @@ fun CameraScreen(
         label = "lassoSettle",
     )
     val searchScope by viewModel.searchScope.collectAsState()
+
+    // §3.1. Observed, never stored — see [ManualFrameSelection] for why the absence of
+    // local state is what satisfies both "실패를 성공으로 표시하지 않는다" and "세션을
+    // 나갔다 오면 자동 탐색으로 복귀한다".
+    val layoutState by viewModel.layoutState.collectAsState()
 
     // O-13 (1): **a preset is colour. It does not reach the guide.**
     //
@@ -782,6 +808,14 @@ fun CameraScreen(
             zoomBounds = zoomBounds,
             onSelectZoom = { controller.setZoom(it) },
             onRescan = { viewModel.rescanLayout() },
+            // What the guide engine is holding, not what the sheet asked for. See
+            // [ManualFrameSelection]: `selectManualLayout` returning true means "the id
+            // resolves", and the state change lands on the analysis thread afterwards —
+            // so the only honest source for "a manual frame is active" is `layoutState`.
+            frameSheetActive = ManualFrameSelection.frameButtonActive(layoutState),
+            onToggleFrameSheet = {
+                storedMode = CameraPanels.toggled(overlayMode, CameraOverlayMode.FRAME_SHEET)
+            },
             onRescanAt = { anchorX, anchorY -> viewModel.rescanLayoutAt(anchorX, anchorY) },
             onPaneRatio = { paneRatioWtoH = it },
             onPreviewFrameNs = viewModel::onPreviewFrame,
@@ -860,6 +894,26 @@ fun CameraScreen(
         //
         // Picking one does not close it — see [CameraPanels.filterPicked]. That is why
         // choosing between two looks still costs one tap each rather than three.
+        // §3.1. The list is read from the ViewModel, which reads it from
+        // `LayoutTemplateCatalog` — no template id is written down in this file.
+        CameraSheetSlot(visible = overlayMode == CameraOverlayMode.FRAME_SHEET) {
+            CameraFrameSheet(
+                layouts = viewModel.availableManualLayouts,
+                activeLayoutId = ManualFrameSelection.activeManualLayoutId(layoutState),
+                onSelectLayout = { id ->
+                    // The return value is deliberately not stored. It means "the id
+                    // resolves", and the sheet already only offers ids that came from the
+                    // catalogue — so what it can actually report is a bug on our side, not
+                    // a user-visible outcome. The *rendered* state comes from
+                    // `layoutState` on the next frame either way.
+                    viewModel.selectManualLayout(id)
+                },
+                // §3.1's "자동으로 돌아가기" — the same call the 재탐색 button makes,
+                // because it is the same act.
+                onSelectAuto = { viewModel.rescanLayout() },
+            )
+        }
+
         CameraSheetSlot(visible = overlayMode == CameraOverlayMode.FILTER_SHEET) {
             CameraFilterSheet(
                 presets = presets,
@@ -1486,6 +1540,190 @@ private fun CameraFilterSheet(
     }
 }
 
+/**
+ * The manual frame sheet (§3.1) — the 12 composition templates, plus `자동`.
+ *
+ * Same container vocabulary as [CameraFilterSheet] (Ink800, 20dp top corners, handle,
+ * 260ms) because it is the same kind of thing: a picker raised from a button. Its
+ * *contents* differ, and have to — a frame is a shape, so each cell draws the template's
+ * own slot rectangles rather than a colour swatch.
+ *
+ * **The list comes from [availableManualLayouts] and is never written down here.** §3.1
+ * requires it, and `CameraFramePickerTest` asserts that no template id literal appears
+ * anywhere under `ui/camera/`. That is not bureaucracy: the catalogue keeps old ids as
+ * compatibility aliases (`person_object` → `person_object_v2`), so a hardcoded list would
+ * be a second, silently diverging copy of names 담당 B owns.
+ *
+ * The leading cell is `자동` and calls `rescanLayout()` — §3.1's "자동으로 돌아가기" exit,
+ * in the same position and with the same grammar as the filter sheet's leading `+`.
+ *
+ * @param activeLayoutId from [ManualFrameSelection.activeManualLayoutId], i.e. what the
+ *   guide engine is actually holding — never what this sheet last asked for. See that
+ *   object for why the distinction is the requirement.
+ */
+@Composable
+private fun CameraFrameSheet(
+    layouts: List<LayoutTemplateSummary>,
+    activeLayoutId: String?,
+    onSelectLayout: (String) -> Unit,
+    onSelectAuto: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(topStart = SHEET_CORNER, topEnd = SHEET_CORNER))
+            .background(Ink800)
+            .padding(top = 8.dp, bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(11.dp),
+    ) {
+        SheetHandle()
+        val listState = rememberLazyListState()
+        LaunchedEffect(activeLayoutId, layouts) {
+            // Offset by one for the leading `자동` cell.
+            val index = layouts.indexOfFirst { it.id == activeLayoutId }
+            if (index >= 0) listState.animateScrollToItem(index + 1)
+        }
+        LazyRow(
+            modifier = Modifier.fillMaxWidth().height(FRAME_STRIP_HEIGHT),
+            state = listState,
+            contentPadding = PaddingValues(horizontal = STRIP_H_PADDING),
+            horizontalArrangement = Arrangement.spacedBy(STRIP_ITEM_GAP),
+            verticalAlignment = Alignment.Top,
+        ) {
+            item {
+                // `자동` — selected exactly when no manual frame is in charge, which is
+                // the same fact the frame button reads. One source, two consumers.
+                FrameThumb(
+                    label = "자동",
+                    selected = activeLayoutId == null,
+                    onClick = onSelectAuto,
+                ) { color ->
+                    // The scene-search glyph, not a template: four corner marks, the
+                    // overlay's own word for "composition", with nothing inside because
+                    // automatic means the app has not committed to a shape yet.
+                    drawFrameThumbBracket(color)
+                }
+            }
+            items(layouts, key = { it.id }) { summary ->
+                FrameThumb(
+                    label = ManualFrameSelection.label(summary),
+                    selected = summary.id == activeLayoutId,
+                    onClick = { onSelectLayout(summary.id) },
+                ) { color ->
+                    drawFrameThumbSlots(summary.slots, color)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One cell of the frame sheet: a 4:5 miniature with an optional caption.
+ *
+ * A rounded rectangle rather than the filter strip's circle, and 4:5 rather than square,
+ * because the thing being chosen **is** a frame — the cell's own shape is the first
+ * information it gives. The selection ring is the strip's (2dp amber + 2dp gap), so
+ * "selected" looks identical in both sheets.
+ *
+ * @param label null renders no caption. See [ManualFrameSelection.label] — one shipped
+ *   layout has no display name, and printing its raw id would be worse than a gap.
+ */
+@Composable
+private fun FrameThumb(
+    label: String?,
+    selected: Boolean,
+    onClick: () -> Unit,
+    content: DrawScope.(Color) -> Unit,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+        modifier = Modifier.clickable(onClick = onClick),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(width = FRAME_THUMB_WIDTH, height = FRAME_THUMB_HEIGHT)
+                .then(
+                    if (selected) {
+                        Modifier
+                            .border(2.dp, Amber, RoundedCornerShape(8.dp))
+                            .padding(2.dp)
+                    } else {
+                        Modifier.padding(2.dp)
+                    },
+                )
+                .clip(RoundedCornerShape(6.dp))
+                .background(Ink700),
+        ) {
+            val color = if (selected) Amber else IconInactive
+            Canvas(modifier = Modifier.fillMaxSize().padding(5.dp)) { content(color) }
+        }
+        if (label != null) {
+            Text(
+                text = label,
+                color = if (selected) Amber else TextMid,
+                fontSize = 10.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/**
+ * A template's slots as a miniature, **in their own kinds' styles**.
+ *
+ * Shares [SlotRenderStyle] with the live overlay, so a person slot is marked as a person
+ * in the picker and on the preview. Choosing "인물과 소품" and then seeing two identical
+ * boxes was the §3.3 defect; showing two identical boxes in the picker that chooses it
+ * would be the same defect one step earlier.
+ *
+ * Simplified rather than reproduced: a head circle for a person, a plain outline for an
+ * object. At 42×54dp a silhouette's shoulders are a few pixels and would read as noise.
+ */
+private fun DrawScope.drawFrameThumbSlots(slots: List<LayoutPreviewSlot>, color: Color) {
+    val stroke = 1.2.dp.toPx()
+    slots.forEach { slot ->
+        val left = slot.bounds.left * size.width
+        val top = slot.bounds.top * size.height
+        val width = (slot.bounds.right - slot.bounds.left) * size.width
+        val height = (slot.bounds.bottom - slot.bounds.top) * size.height
+        drawRoundRect(
+            color = color.copy(alpha = 0.85f),
+            topLeft = Offset(left, top),
+            size = Size(width, height),
+            cornerRadius = CornerRadius(2.5.dp.toPx(), 2.5.dp.toPx()),
+            style = Stroke(width = stroke),
+        )
+        if (SlotRenderStyle.of(slot.visualKind).isPerson) {
+            val radius = (width * 0.24f).coerceAtMost(height * 0.16f)
+            drawCircle(
+                color = color,
+                radius = radius,
+                center = Offset(left + width / 2f, top + radius * 1.5f),
+                style = Stroke(width = stroke),
+            )
+        }
+    }
+}
+
+/** The `자동` cell's glyph: the overlay's four corner marks, at thumbnail scale. */
+private fun DrawScope.drawFrameThumbBracket(color: Color) {
+    val stroke = 1.2.dp.toPx()
+    val arm = size.minDimension * 0.26f
+    for (right in listOf(false, true)) {
+        for (bottom in listOf(false, true)) {
+            val x = if (right) size.width else 0f
+            val y = if (bottom) size.height else 0f
+            val dx = if (right) -arm else arm
+            val dy = if (bottom) -arm else arm
+            drawLine(color, Offset(x, y), Offset(x + dx, y), stroke, StrokeCap.Round)
+            drawLine(color, Offset(x, y), Offset(x, y + dy), stroke, StrokeCap.Round)
+        }
+    }
+}
+
 /** The strip itself. Its container is [CameraFilterSheet]. */
 @Composable
 private fun CameraStyleStrip(
@@ -1640,6 +1878,12 @@ private fun CameraPreviewPane(
     zoomBounds: ZoomBounds,
     onSelectZoom: (Float) -> Unit,
     onRescan: () -> Unit,
+    /**
+     * Whether a **manual frame is in charge** — from
+     * [ManualFrameSelection.frameButtonActive], never from whether the sheet is open.
+     */
+    frameSheetActive: Boolean,
+    onToggleFrameSheet: () -> Unit,
     onRescanAt: (Float, Float) -> Unit,
     onPaneRatio: (Float) -> Unit,
     /** One tick per delivered preview frame (§7-1). Main thread. */
@@ -1941,12 +2185,28 @@ private fun CameraPreviewPane(
                         bounds = zoomBounds,
                         onSelect = onSelectZoom,
                     )
-                    RescanButton(
+                    // The two directions of one decision, stacked.
+                    //
+                    // 재탐색 says "look at the scene again" (automatic composition); the
+                    // frame button says "no, use this one". §3.1 makes that literal —
+                    // the documented way back from a manual frame is `rescanLayout()`,
+                    // i.e. the button directly below. Two controls that are each other's
+                    // exit belong next to each other.
+                    //
+                    // Vertical rather than side by side because the zoom stops are
+                    // centred in this row and 16:9 pillarboxes the window narrower than
+                    // the pane (938px measured against a 1080px pane). A horizontal pair
+                    // clears the stops today but only by relying on that margin.
+                    Column(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(bottom = 12.dp, end = 18.dp),
-                        onClick = onRescan,
-                    )
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        FrameButton(active = frameSheetActive, onClick = onToggleFrameSheet)
+                        RescanButton(onClick = onRescan)
+                    }
                 }
                 Box(modifier = Modifier.width(barWidth).fillMaxHeight().background(Ink950))
             }
@@ -2475,6 +2735,46 @@ private fun formatZoomStop(stop: Float): String =
     if (stop < 1f) ".5" else "${stop.toInt()}x"
 
 /**
+ * 프레임 — raises the manual composition sheet (§3.1).
+ *
+ * Sits directly above [RescanButton] and shares its whole vocabulary: 34dp circle,
+ * [OnPhotoScrim], a stroke glyph. Not in the top bar (the owner fixed that at four icons)
+ * and not in the shutter row (also four) — and it belongs here anyway, because this is
+ * where the *composition* controls live while colour lives on the shutter row. That split
+ * is O-13's two axes showing up as two places.
+ *
+ * The glyph is a rounded outer frame with two inner rectangles — "a layout" — chosen so it
+ * collides with neither of its neighbours' meanings: the 가이드 icon is four corner
+ * brackets and 재탐색 is a circular arrow.
+ *
+ * Amber stroke while a manual frame is in charge. Note **what decides that**: it is
+ * [ManualFrameSelection.frameButtonActive] reading the guide's own `layoutState`, not
+ * whether the sheet is open and not what the sheet last requested. A frame the engine
+ * refused leaves this button dark, which is §3.1's "선택 실패를 고정 성공으로 표시하지
+ * 않는다" holding by construction.
+ */
+@Composable
+private fun FrameButton(active: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(OnPhotoScrim)
+            .semantics { contentDescription = "프레임" }
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        StrokeIcon(
+            pathData = CameraIconPaths.FRAME,
+            viewBox = 16f,
+            size = 16.dp,
+            strokeWidth = 1.4f,
+            color = if (active) Amber else IconInactive,
+        )
+    }
+}
+
+/**
  * 재탐색 — asks the guide to look at the scene again (owner decision, 2026-07-28).
  *
  * Not in the 2c design. It is here because the auto layout resolver latches a
@@ -2496,7 +2796,7 @@ private fun formatZoomStop(stop: Float): String =
  * controls with the same glyph and different jobs was the worse problem.
  */
 @Composable
-private fun RescanButton(modifier: Modifier, onClick: () -> Unit) {
+private fun RescanButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .size(34.dp)
