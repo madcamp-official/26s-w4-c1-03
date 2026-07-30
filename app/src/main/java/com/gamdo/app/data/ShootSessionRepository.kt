@@ -35,6 +35,22 @@ class ShootSessionRepository(
         val status: ShootSessionStatus? = null,
         val loading: Boolean = false,
         val error: String? = null,
+        /**
+         * The hour ran out on the session this snapshot replaced.
+         *
+         * Additive, and load-bearing. [refresh] handles expiry by clearing the saved
+         * session and publishing an empty snapshot, which is byte-identical to "no
+         * session was ever created" — so without this flag the UI cannot tell 만료
+         * from 시작 전, and P2's requirement that 만료·오류·도착 없음·수신 가능 stay
+         * four distinguishable states is unsatisfiable from the snapshot alone.
+         * `ui/shoot/ShootFlowDecisions.kt` also derives expiry locally from
+         * [ActiveSession.expiresAt], so a dead server still yields 만료 rather than
+         * 오류; this flag is the signal for the case where the repository noticed
+         * first.
+         *
+         * No server call and no wire field changed to add it.
+         */
+        val expired: Boolean = false,
     ) {
         val photoCount: Int get() = status?.photos?.size ?: 0
         val isExpired: Boolean get() = session?.expiresAt?.let { it <= System.currentTimeMillis() } ?: false
@@ -68,7 +84,10 @@ class ShootSessionRepository(
         }
         if (resolvedSession.expiresAt <= System.currentTimeMillis()) {
             settings.clearShootSession()
-            _snapshot.value = SessionSnapshot()
+            // `expired = true`, not a bare SessionSnapshot(): the session is being
+            // dropped here, and dropping it silently is what made 만료 indistinguishable
+            // from 시작 전. See [SessionSnapshot.expired].
+            _snapshot.value = SessionSnapshot(expired = true)
             return _snapshot.value
         }
         _snapshot.value = _snapshot.value.copy(session = resolvedSession, loading = true, error = null)

@@ -33,6 +33,7 @@ import com.gamdo.app.data.AppContainer
 import com.gamdo.app.data.ReferenceCreateController
 import com.gamdo.app.data.ReferenceCreateState
 import com.gamdo.app.data.preset.ResolvedStyle
+import com.gamdo.app.guide.GuideLayoutState
 import com.gamdo.app.ui.album.AlbumScreen
 import com.gamdo.app.ui.camera.CameraScreen
 import com.gamdo.app.ui.onboarding.OnboardingScreen
@@ -43,6 +44,10 @@ import com.gamdo.app.ui.reference.clampReferenceOverlayAlpha
 import com.gamdo.app.ui.reference.shouldShowReferenceOverlay
 import com.gamdo.app.ui.result.ResultScreen
 import com.gamdo.app.ui.result.ResultTarget
+import com.gamdo.app.ui.shoot.DelegatedShootController
+import com.gamdo.app.ui.shoot.DelegatedShootScreen
+import com.gamdo.app.ui.shoot.shootPolicyFor
+import java.io.File
 import kotlinx.coroutines.launch
 
 /**
@@ -122,6 +127,35 @@ fun GamdoNavHost(
     }
 
     var overlayAlpha by rememberSaveable { mutableStateOf(DEFAULT_REFERENCE_OVERLAY_ALPHA) }
+
+    // ---- P2 §5 "나 찍어줘" hand-off state ----
+
+    // The layout the QR screen will turn into a ShootPolicyV2, handed over in memory
+    // because it is an object graph and [Routes.SHOOT] takes no arguments (see that
+    // constant's KDoc). Deliberately *not* rememberSaveable: a GuideLayoutState is not
+    // parcelable, and a stale layout restored into a new camera session would describe
+    // a scene that is no longer in front of the lens. Losing it to process death lands
+    // the screen on its 넘길 구도가 없어요 state, which is correct.
+    var pendingShootLayout by remember { mutableStateOf<GuideLayoutState?>(null) }
+
+    /**
+     * The camera's entry point into the hand-off — the seam, ready and unoccupied.
+     *
+     * `CameraScreen` would take this as
+     * `onOpenDelegatedShoot: ((GuideLayoutState) -> Unit)? = null` and invoke it from a
+     * tap with `layoutState.value`, never from a `LaunchedEffect`. It is not passed
+     * below, by owner decision (2026-07-30): the delegated web page is not deployed —
+     * `gamdo-web/dist` is absent and the server answers `/shoot/{token}` with
+     * 503 `web_not_built` — so a button would be a control that cannot work, and P2's
+     * own §5 says an unconnected QR feature is to be left off the product surface and
+     * marked 미구현 rather than shown. Wiring it is one argument at the `CameraScreen`
+     * call below plus one button in that file.
+     */
+    @Suppress("UNUSED_VARIABLE")
+    val onOpenDelegatedShoot: (GuideLayoutState) -> Unit = { layout ->
+        pendingShootLayout = layout
+        navController.navigate(Routes.SHOOT)
+    }
 
     val pickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
@@ -245,6 +279,79 @@ fun GamdoNavHost(
                     // AI 3's slot (O-10) — deliberately wired to nothing here; see
                     // the integration task's explicit instruction not to
                     // implement AI 3 behaviour.
+                )
+            }
+
+            composable(Routes.SHOOT) {
+                // **This destination's own scope, not the nav host's `scope`.** The
+                // difference is load-bearing: the nav host's scope lives as long as the
+                // app, so a 사진 받기 download launched into it would survive the user
+                // leaving — and `receiveAndClaim` *deletes the session server-side* when
+                // it finishes, so it would complete, claim, and then find no screen left
+                // to hand the files to. The photos would be gone with no way back to
+                // them. Cancelled with the screen instead, the download stops **before**
+                // the claim, the session stays alive on the server, and coming back finds
+                // the photos still waiting.
+                val shootScope = rememberCoroutineScope()
+                // One controller per visit. Keyed on the layout that was handed over, so
+                // re-entering with a different 구도 builds a different policy — and on the
+                // container, matching every other screen here.
+                val controller = remember(container, pendingShootLayout) {
+                    DelegatedShootController(
+                        repository = container.shootSessionRepository,
+                        scope = shootScope,
+                        policyDecision = shootPolicyFor(pendingShootLayout),
+                    )
+                }
+                DelegatedShootScreen(
+                    controller = controller,
+                    onClose = { navController.popBackStack() },
+                    // Requirement 4: the friend's photo opens through the *same* screen an
+                    // album photo opens through — `ResultTarget.DevicePhoto` over a Uri,
+                    // which `UriEditImageSource` reads with `ContentResolver
+                    // .openInputStream` exactly as it reads a MediaStore item. No new
+                    // result path, no `captures` row minted for someone else's photo.
+                    //
+                    // **Only the first photo is opened.** A friend may send up to the
+                    // server's cap (5 today) and there is no screen that shows a set of
+                    // loose cache files: the album reads `captures` rows and MediaStore,
+                    // and minting rows for someone else's photos is the duplication
+                    // W3.5-2's dedup removed. The rest stay in
+                    // `cacheDir/shoot-sessions/<sessionId>/` and are reachable once a
+                    // received-photo list exists. Raised as an open decision rather than
+                    // solved by inventing a gallery here.
+                    onOpenPhotos = { files ->
+                        files.firstOrNull()?.let { first ->
+                            navController.navigate(Routes.receivedPhoto(first.absolutePath))
+                        }
+                    },
+                    // P2 asks for 기본 프레임 선택 또는 취소; the manual frame picker does
+                    // not exist yet, so only 취소 is offered. This is the slot it plugs
+                    // into when it lands.
+                    onPickFrame = null,
+                )
+            }
+
+            composable(
+                route = Routes.RECEIVED_PHOTO,
+                arguments = listOf(navArgument(Routes.ARG_RECEIVED_PATH) { type = NavType.StringType }),
+            ) { entry ->
+                val path = entry.arguments?.getString(Routes.ARG_RECEIVED_PATH).orEmpty()
+                // Resolved from the path in the route rather than from
+                // `receivedShootPhotos`, so returning to this screen after the list has
+                // been cleared still shows the photo instead of an empty frame. An
+                // unreadable path resolves to a Uri that fails to open and the result
+                // screen says 사진을 열지 못했어요 — the same handling a missing MediaStore
+                // item already gets.
+                val uri = remember(path) { Uri.fromFile(File(path)) }
+                ResultScreen(
+                    container = container,
+                    target = ResultTarget.DevicePhoto(uri),
+                    onBack = { navController.popBackStack() },
+                    activeReferenceStyle = activeReferenceStyle,
+                    activeReferenceImageUri = activeReferenceImageUri,
+                    onCreateReference = onCreateReference,
+                    onDeleteReference = onDeleteReference,
                 )
             }
 
