@@ -1,5 +1,7 @@
 package com.gamdo.app.ui.camera
 
+import com.gamdo.app.camera.CaptureGeometry
+import com.gamdo.app.camera.captureGeometryFor
 import com.gamdo.app.detect.FrameFeatures
 import com.gamdo.app.detect.NormalizedBox
 import com.gamdo.app.detect.PointN
@@ -25,7 +27,22 @@ import org.junit.Test
  */
 class ShutterSnapshotTest {
 
-    private val pane = 1080f / 1500f
+    /**
+     * SM-G970N rear capture as it reaches `onCaptureSuccess` — landscape buffer plus
+     * the 90° that stands it up. Real dimensions, so the projection under this is
+     * exercised against the geometry the device actually produces.
+     */
+    private val bufW = 4032
+    private val bufH = 3024
+
+    private fun plan(targetRatioWtoH: Float = 0.8f, mirror: Boolean = false) =
+        captureGeometryFor(
+            bufferWidth = bufW,
+            bufferHeight = bufH,
+            rotationDegrees = 90,
+            mirror = mirror,
+            targetRatioWtoH = targetRatioWtoH,
+        )
 
     private fun features(
         person: NormalizedBox? = NormalizedBox(0.3f, 0.2f, 0.7f, 0.9f),
@@ -54,17 +71,15 @@ class ShutterSnapshotTest {
     private fun snapshot(
         f: ShutterFrame? = frame(),
         matchScore: Float? = 0.73f,
-        paneRatio: Float = pane,
-        target: Float = 0.8f,
-        mirror: Boolean = false,
+        geometry: CaptureGeometry? = plan(),
         tiltRecorded: Boolean = true,
     ) = buildCaptureSnapshot(
         frame = f,
         matchScore = matchScore,
         sessionId = "ses_TEST",
-        paneRatioWtoH = paneRatio,
-        targetRatioWtoH = target,
-        mirror = mirror,
+        geometry = geometry,
+        bufferWidth = bufW,
+        bufferHeight = bufH,
         tiltRecorded = tiltRecorded,
     )
 
@@ -97,10 +112,16 @@ class ShutterSnapshotTest {
         assertNull(CaptureConditions.parse(s.conditionsJson).tiltDeg)
     }
 
+    /**
+     * Was `an unmeasured pane drops the subject`, when the projection was fed aspect
+     * ratios and a zero meant "the pane has not been laid out yet". The plan replaces
+     * both ratios, so the same hole is now a missing plan — and it must still drop the
+     * subject rather than fall back to a box in the wrong coordinate space.
+     */
     @Test
-    fun `an unmeasured pane drops the subject but keeps the tilt`() {
-        val parsed = CaptureConditions.parse(snapshot(paneRatio = 0f).conditionsJson)
-        assertNull("a bogus ratio must not produce a plausible box", parsed.subject)
+    fun `a capture with no geometry drops the subject but keeps the tilt`() {
+        val parsed = CaptureConditions.parse(snapshot(geometry = null).conditionsJson)
+        assertNull("no geometry must not produce a plausible box", parsed.subject)
         assertEquals(-4.5f, parsed.tiltDeg!!, 1e-5f)
     }
 
@@ -202,8 +223,8 @@ class ShutterSnapshotTest {
      */
     @Test
     fun `KPI coordinates do not move with the chosen aspect but the subject does`() {
-        val four = snapshot(target = 0.8f)
-        val square = snapshot(target = 1.0f)
+        val four = snapshot(geometry = plan(0.8f))
+        val square = snapshot(geometry = plan(1.0f))
 
         val fourKpi = Json.parseToJsonElement(four.analysisJson).jsonObject[CaptureAnalysisJson.KEY_PERSON_BOX]
         val squareKpi = Json.parseToJsonElement(square.analysisJson).jsonObject[CaptureAnalysisJson.KEY_PERSON_BOX]
@@ -217,11 +238,23 @@ class ShutterSnapshotTest {
         )
     }
 
+    /**
+     * The subject box has to be **off centre** or this test cannot fail: the default
+     * `personBox` is 0.3..0.7, symmetric about x = 0.5, so a horizontal flip maps it
+     * onto itself and every assertion below passes with the mirror deleted. It was
+     * written that way and was vacuous for as long as it existed.
+     */
     @Test
     fun `front lens mirrors the stored subject box`() {
-        val back = CaptureConditions.parse(snapshot(mirror = false).conditionsJson).subject!!
-        val front = CaptureConditions.parse(snapshot(mirror = true).conditionsJson).subject!!
+        val offCentre = frame(features(person = NormalizedBox(0.1f, 0.2f, 0.5f, 0.9f)))
+        val back = CaptureConditions.parse(
+            snapshot(f = offCentre, geometry = plan(mirror = false)).conditionsJson,
+        ).subject!!
+        val front = CaptureConditions.parse(
+            snapshot(f = offCentre, geometry = plan(mirror = true)).conditionsJson,
+        ).subject!!
         assertEquals(1f - back.right, front.left, 1e-5f)
         assertEquals(1f - back.left, front.right, 1e-5f)
+        assertTrue("void unless the box actually moves", kotlin.math.abs(front.left - back.left) > 0.1f)
     }
 }

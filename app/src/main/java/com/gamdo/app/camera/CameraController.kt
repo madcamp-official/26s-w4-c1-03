@@ -36,6 +36,27 @@ import kotlin.math.roundToInt
 
 data class ZoomBounds(val min: Float = 1f, val max: Float = 1f)
 
+/**
+ * A finished capture together with the framing that produced it.
+ *
+ * [CameraController.capture] used to return the [bitmap] alone and drop the plan on
+ * the floor, which forced anyone who needed to know where the pixels came from to
+ * *reconstruct* it from aspect ratios. `ui/camera/SubjectProjection.kt` did exactly
+ * that, and was measurably wrong by up to 6.3% of the frame at the edges — the crop
+ * it predicted was not the crop that ran. The plan is not expensive to carry and it
+ * is not a guess, so it comes back with the photo now.
+ *
+ * [bufferWidth]/[bufferHeight] are the *decoded* buffer's dimensions, not the
+ * finished bitmap's: [geometry]'s `src` rect is in that coordinate space and is
+ * meaningless without them.
+ */
+data class CapturedPhoto(
+    val bitmap: Bitmap,
+    val geometry: CaptureGeometry,
+    val bufferWidth: Int,
+    val bufferHeight: Int,
+)
+
 private const val TAG = "CameraController"
 
 /** Seconds a tap-driven focus lock holds before CameraX returns to continuous AF. */
@@ -243,8 +264,10 @@ class CameraController(context: Context) {
     }
 
     /**
-     * Captures a photo and returns the finished bitmap: viewport-cropped, upright,
-     * front-camera mirrored, and cropped to [targetRatioWtoH] if one is given.
+     * Captures a photo and returns it as a [CapturedPhoto]: viewport-cropped, upright,
+     * front-camera mirrored, and cropped to [targetRatioWtoH] if one is given —
+     * alongside the [CaptureGeometry] that did it and the buffer it was planned
+     * against, because §3-3 needs the crop that ran rather than one inferred later.
      *
      * The viewport cropRect — attached by LifecycleCameraController from the
      * PreviewView — is part of the same composition, so the result contains exactly
@@ -272,7 +295,7 @@ class CameraController(context: Context) {
     suspend fun capture(
         trace: CaptureTrace? = null,
         targetRatioWtoH: Float? = null,
-    ): Bitmap =
+    ): CapturedPhoto =
         suspendCancellableCoroutine { cont ->
             camera.takePicture(
                 Dispatchers.Default.asExecutor(),
@@ -298,7 +321,17 @@ class CameraController(context: Context) {
                             )
                             val bitmap = decoded.transformedBy(plan)
                             trace?.mark(CapturePhase.DECODE)
-                            cont.resume(bitmap)
+                            // The plan travels with the photo: §3-3 has to project the
+                            // subject box through the crop that actually ran, and it
+                            // cannot be recovered from the finished bitmap.
+                            cont.resume(
+                                CapturedPhoto(
+                                    bitmap = bitmap,
+                                    geometry = plan,
+                                    bufferWidth = decoded.width,
+                                    bufferHeight = decoded.height,
+                                ),
+                            )
                         } catch (t: Throwable) {
                             cont.resumeWithException(t)
                         } finally {
