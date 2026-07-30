@@ -90,7 +90,7 @@ class MaskInstanceSplitter(private val minimumPartRatio: Float = .15f, private v
 /** Coordinates explicit polygon re-analysis with the same track manager used by
  * the live detector. A stale result is rejected when the scope revision changed. */
 class ScopedRefinementWorker(
-    private val detector: EfficientDetSceneDetector,
+    private val detector: ScopedObjectRefinement,
     private val scopeStore: SceneSearchScopeStore,
     private val tracks: ObjectTrackManager,
 ) {

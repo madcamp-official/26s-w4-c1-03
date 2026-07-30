@@ -33,6 +33,15 @@ interface PausableObjectSceneDetector {
     fun setObjectDetectionPaused(paused: Boolean)
 }
 
+interface ScopedObjectRefinement {
+    fun detectPolygon(
+        frame: AnalysisFrame,
+        polygon: com.gamdo.app.guide.ScenePolygonRegion,
+        scopeRevision: Long,
+        padding: Float = .03f,
+    ): EfficientDetSceneDetector.ScopedDetectionResult
+}
+
 data class ObjectDetectionBatch(
     val objects: List<ObjectObservation>,
     val isFresh: Boolean,
@@ -52,7 +61,7 @@ interface SubjectSceneSegmenter {
 class ThrottledObjectSceneDetector(
     private val delegate: ObjectSceneDetector,
     private val refreshEveryFrames: Int = 3,
-) : ObjectSceneDetector, AcceleratorReporting, PausableObjectSceneDetector {
+) : ObjectSceneDetector, AcceleratorReporting, PausableObjectSceneDetector, ScopedObjectRefinement {
     init {
         require(refreshEveryFrames >= 1)
     }
@@ -91,6 +100,10 @@ class ThrottledObjectSceneDetector(
     }
 
     override fun close() = delegate.close()
+
+    override fun detectPolygon(frame: AnalysisFrame, polygon: com.gamdo.app.guide.ScenePolygonRegion, scopeRevision: Long, padding: Float): EfficientDetSceneDetector.ScopedDetectionResult =
+        (delegate as? ScopedObjectRefinement)?.detectPolygon(frame, polygon, scopeRevision, padding)
+            ?: EfficientDetSceneDetector.ScopedDetectionResult(emptyList(), scopeRevision, false)
 
     fun reset() {
         frameCount = 0
@@ -352,6 +365,7 @@ class SceneDetector(
     private val stageSink: ((DetectStageTimings) -> Unit)? = null,
     val scopeStore: SceneSearchScopeStore = SceneSearchScopeStore(),
 ) {
+    private var scopedRefinementWorker: ScopedRefinementWorker? = null
     fun setObjectDetectionPaused(paused: Boolean) {
         (customObjectDetector as? PausableObjectSceneDetector)?.setObjectDetectionPaused(paused)
         (objectDetector as? PausableObjectSceneDetector)?.setObjectDetectionPaused(paused)
@@ -380,11 +394,26 @@ class SceneDetector(
         // detection pipeline.
         val pose: PoseObservation? = null
         val t2 = t1
-        val objectBatch = when {
+        val detectedBatch = when {
             customObjectDetector != null -> customObjectDetector.detectBatch(frame)
             objectDetector != null -> objectDetector.detectBatch(frame)
             else -> ObjectDetectionBatch(emptyList(), isFresh = true, sequenceId = 0L)
         }
+        val scopedDetector = (customObjectDetector as? ScopedObjectRefinement)
+            ?: (objectDetector as? ScopedObjectRefinement)
+        val objectBatch = if (scopeStore.current() is DetectionSearchScope.Polygon && scopedDetector != null) {
+            val worker = scopedRefinementWorker ?: ScopedRefinementWorker(
+                scopedDetector,
+                scopeStore,
+                ObjectTrackManager(),
+            ).also { scopedRefinementWorker = it }
+            val scoped = worker.refine(frame)
+            ObjectDetectionBatch(
+                objects = scoped.map { ObjectObservation(it.box, detectionConfidence = it.confidence, category = it.category, sceneTrackId = it.trackId) },
+                isFresh = scoped.isNotEmpty(),
+                sequenceId = detectedBatch.sequenceId,
+            )
+        } else detectedBatch
         val t3 = System.nanoTime()
         // Segmentation only refines a foreground already found by a cheaper
         // detector. Running it on an empty wall cannot create a valid object
@@ -396,7 +425,8 @@ class SceneDetector(
         val scopedInstances = if (scopeStore.current() is DetectionSearchScope.Polygon) {
             (subjectSegmenter as? MlKitSubjectSegmenter)?.detectInstances(frame).orEmpty()
         } else emptyList()
-        val fusedObjects = fuseScopedInstances(objectBatch.objects, scopedInstances)
+        val polygon = (scopeStore.current() as? DetectionSearchScope.Polygon)?.region
+        val fusedObjects = fuseScopedInstances(objectBatch.objects, scopedInstances, polygon)
         val t4 = System.nanoTime()
 
         stageSink?.let { sink ->
@@ -445,20 +475,42 @@ class SceneDetector(
     private fun fuseScopedInstances(
         objects: List<ObjectObservation>,
         instances: List<InstanceMaskObservation>,
+        polygon: com.gamdo.app.guide.ScenePolygonRegion?,
     ): List<ObjectObservation> {
         if (instances.isEmpty()) return objects
         val result = objects.toMutableList()
         instances.forEach { instance ->
-            val alreadyRepresented = result.any { overlap(it.box, instance.bounds) >= .20f }
-            if (!alreadyRepresented) {
+            val splitMasks = MaskInstanceSplitter().split(instance.mask)
+            splitMasks.forEach { splitMask ->
+                val splitBounds = maskBounds(splitMask) ?: instance.bounds
+                if (polygon != null && !polygon.accepts(splitBounds, minimumBoxOverlap = .50f)) return@forEach
+                val alreadyRepresented = result.any { overlap(it.box, splitBounds) >= .20f }
+                if (!alreadyRepresented) {
                 result += ObjectObservation(
-                    box = instance.bounds,
+                    box = splitBounds,
                     detectionConfidence = instance.confidence,
                     category = GuideObjectCategory.UNKNOWN,
                 )
+                }
             }
         }
         return result
+    }
+
+    private fun maskBounds(mask: CompactConfidenceMask): NormalizedBox? {
+        var left = mask.width; var top = mask.height; var right = -1; var bottom = -1
+        for (y in 0 until mask.height) for (x in 0 until mask.width) {
+            if (mask.values[y * mask.width + x] < .55f) continue
+            left = minOf(left, x); top = minOf(top, y); right = maxOf(right, x); bottom = maxOf(bottom, y)
+        }
+        if (right < left || bottom < top) return null
+        val b = mask.frameBounds
+        return NormalizedBox(
+            b.left + b.width * left / mask.width,
+            b.top + b.height * top / mask.height,
+            b.left + b.width * (right + 1) / mask.width,
+            b.top + b.height * (bottom + 1) / mask.height,
+        )
     }
 
     private fun overlap(a: NormalizedBox, b: NormalizedBox): Float {

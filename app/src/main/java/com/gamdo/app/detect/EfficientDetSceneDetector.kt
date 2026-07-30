@@ -58,7 +58,7 @@ data class EfficientDetSceneDetectorConfig(
 class EfficientDetSceneDetector(
     context: Context,
     private val config: EfficientDetSceneDetectorConfig = EfficientDetSceneDetectorConfig(),
-) : CustomSceneDetector, AcceleratorReporting {
+) : CustomSceneDetector, AcceleratorReporting, ScopedObjectRefinement {
     val scopeStore = SceneSearchScopeStore()
     private val scopedTracks = ObjectTrackManager()
     /** Result of an explicit lasso refinement. It is intentionally separate
@@ -208,19 +208,6 @@ class EfficientDetSceneDetector(
             primary
         }
 
-        val scope = scopeStore.current()
-        if (scope is DetectionSearchScope.Polygon) {
-            val refined = detectPolygon(frame, scope.region, scope.revision)
-            if (refined.ran && refined.scopeRevision == scope.revision) {
-                val scoped = refined.objects.map { observation ->
-                    SceneObjectCandidate(observation.box, observation.detectionConfidence ?: 0f, observation.category, observation.classificationConfidence, DetectionSource.SCOPE_CROP)
-                }
-                val trackedScoped = scopedTracks.update(scope.revision, scoped)
-                    .filter { scope.region.accepts(it.box, .50f) }.take(4)
-                val scopedObservations = trackedScoped.map { ObjectObservation(it.box, detectionConfidence = it.confidence, category = it.category, sceneTrackId = it.trackId) }
-                return ObjectDetectionBatch(scopedObservations, true, sequenceId)
-            }
-        }
         val fused = detectionFusion.fuse(merged.map {
             SceneObjectCandidate(
                 box = it.box,
@@ -247,11 +234,11 @@ class EfficientDetSceneDetector(
 
     override fun detect(frame: AnalysisFrame): List<ObjectObservation> = detectBatch(frame).objects
 
-    fun detectPolygon(
+    override fun detectPolygon(
         frame: AnalysisFrame,
         polygon: com.gamdo.app.guide.ScenePolygonRegion,
         scopeRevision: Long,
-        padding: Float = .03f,
+        padding: Float,
     ): ScopedDetectionResult {
         val provider = frame.cropBitmapProvider ?: return ScopedDetectionResult(emptyList(), scopeRevision, false)
         val crop = ScopeCropResolver.forPolygon(polygon, padding)
