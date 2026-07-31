@@ -65,8 +65,26 @@ class ObjectTrackManager(private val config: V4ObjectTrackConfig = V4ObjectTrack
 
     fun reset() { tracks.clear() }
     fun update(sequenceId: Long, candidates: List<SceneObjectCandidate>): List<TrackedSceneObject> {
-        val remaining = candidates.take(12).toMutableList()
-        val active = tracks.values.toList()
+        val remaining = candidates.take(MATCHER_SIDE_LIMIT).toMutableList()
+        // Both sides are capped, and the track side is the one that used to crash.
+        // `MinimumCostMatcher` is a bit-mask DP with a hard 12-per-side limit, but
+        // nothing bounds this table: every unmatched candidate opens a track below
+        // while eviction waits out `maxMissedFrames`. A desk or a café table
+        // crosses twelve live tracks within a second or two, and the `require`
+        // then threw out of the CameraX analysis thread and killed the process —
+        // reproducibly on opening the 구도 sheet, because the pane resize rebinds
+        // the analyzer and the boxes all shift at once.
+        //
+        // Matching the best-established tracks first keeps the assignment stable
+        // between frames; the ones left out are simply unmatched this frame, which
+        // is what the miss bookkeeping below now records.
+        val active = tracks.values
+            .sortedWith(
+                compareByDescending<MutableTrack> { it.hits }
+                    .thenBy { it.misses }
+                    .thenByDescending { it.confidence },
+            )
+            .take(MATCHER_SIDE_LIMIT)
         val costs = Array(active.size) { index ->
             FloatArray(remaining.size) { candidateIndex ->
                 val track = active[index]
@@ -89,7 +107,11 @@ class ObjectTrackManager(private val config: V4ObjectTrackConfig = V4ObjectTrack
             track.mask = candidate.instanceMask
             track.sources += candidate.source
         }
-        active.filter { it.id !in matchedTracks }.forEach { it.misses++ }
+        // Every track, not just the ones that went into the matrix. Ageing only the
+        // matched subset would leave a track that fell outside the cap frozen at its
+        // current miss count, so it could never reach `maxMissedFrames` and the table
+        // would grow without bound — trading the crash for a leak.
+        tracks.values.filter { it.id !in matchedTracks }.forEach { it.misses++ }
         remaining.filterIndexed { index, _ -> index !in matchedCandidates }.forEach { c ->
             tracks[nextId] = MutableTrack(nextId++, c.box, c.category, c.detectionConfidence, 1, 0, c.instanceMask, mutableSetOf(c.source))
         }
@@ -136,6 +158,19 @@ class ObjectTrackManager(private val config: V4ObjectTrackConfig = V4ObjectTrack
             if (left || right) union++
         }
         return if (union == 0) 0f else intersection.toFloat() / union
+    }
+
+    private companion object {
+        /**
+         * Per-side cap on the assignment problem, matching `MinimumCostMatcher`'s own
+         * limit rather than restating a number that happens to agree with it today.
+         *
+         * The matcher is a bit-mask dynamic program over the right-hand side, so its
+         * ceiling is a complexity budget (2^12 states), not a modelling choice. Both
+         * sides are held to it here so the `require` inside it can only ever fail on a
+         * programming error, never on a busy scene.
+         */
+        const val MATCHER_SIDE_LIMIT = 12
     }
 }
 
