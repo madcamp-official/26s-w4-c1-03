@@ -84,7 +84,7 @@ object SceneModeSelection {
      * 강조 인물 and 여행·풍경 both make. Above it, the person is the subject.
      *
      * The catalogue falls either side with room to spare: the 원경/여행 person slots
-     * have area 0.08–0.11, and the smallest subject-person slot (전신 비대칭, 인물과
+     * have area 0.076–0.11, and the smallest subject-person slot (전신 비대칭, 인물과
      * 소품) has ≈ 0.31 — so 0.20 is not sitting on a boundary a rounding error can
      * cross. It replaced a height threshold (0.78) when the small-figure frames landed:
      * height separated 전신 from 상반신, but a distant figure and a full-body portrait
@@ -99,7 +99,9 @@ object SceneModeSelection {
     /**
      * A lone object slot at or above this area reads as scenery or architecture — a
      * landmark — rather than a tabletop subject. The catalogue's landmark slot has area
-     * 0.25 and its largest tabletop slot ≈ 0.12, so the constant sits in a real gap.
+     * 0.25; the largest slot this rule actually gates is 음료와 접시's plate at ≈ 0.12,
+     * and even the catalogue's largest tabletop slot anywhere (카페 테이블's plate,
+     * 0.136 — never gated, three-object frame) stays under the constant. A real gap.
      * It routes the one-object frames: landmark-sized to 여행·풍경, the rest to 정물·소품.
      */
     private const val LANDMARK_MIN_AREA = 0.16f

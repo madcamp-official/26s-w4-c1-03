@@ -83,7 +83,14 @@ class SceneGuideCoordinatorTest {
             state.fixedLayout!!.template.slots.map { it.id },
             state.fixedLayout!!.assignments.map { it.slotId },
         )
-        val fixedBounds = state.layoutGuide.fixedLayout!!.template.slots.single().bounds
-        assertTrue(fixedBounds.left in 0f..1f && fixedBounds.right in 0f..1f)
+        // "Without moving its slots" is now literal. This test's first version only
+        // asserted the bounds stayed in [0,1], and under that assertion the style
+        // transform was silently re-centring every single-slot template onto the
+        // anchor — (0.3, 0.3)-(0.7, 0.7) here instead of the authored rectangle. An
+        // explicitly supplied template is a manual command, so it renders verbatim.
+        assertEquals(
+            template.slots.single().bounds,
+            state.layoutGuide.fixedLayout!!.template.slots.single().bounds,
+        )
     }
 }
