@@ -1768,7 +1768,7 @@ private fun CameraFrameSheet(
             selected = sceneMode,
             onSelect = onSelectSceneMode,
         )
-        // The filtered list, not the catalogue's twelve — see [SceneModeSelection.framesFor]
+        // The filtered list, not the whole catalogue — see [SceneModeSelection.framesFor]
         // for the mapping and for the two things it guarantees (never empty, never hides
         // the frame the overlay is drawing). Keyed on the *lit* chip, so the row and the
         // amber pill above it can never describe different situations.
@@ -1876,8 +1876,8 @@ private fun SceneModeChips(
  * information it gives. The selection ring is the strip's (2dp amber + 2dp gap), so
  * "selected" looks identical in both sheets.
  *
- * @param label null renders no caption. See [ManualFrameSelection.label] — one shipped
- *   layout has no display name, and printing its raw id would be worse than a gap.
+ * @param label null renders no caption. See [ManualFrameSelection.label] — a layout
+ *   without a display name gets a gap, because printing its raw id would be worse.
  */
 @Composable
 private fun FrameThumb(

@@ -234,7 +234,14 @@ object LayoutTemplateCatalog {
     const val PERSON_UPPER = "person_upper_v2"
     const val PERSON_SEATED = "person_seated_v2"
     const val PERSON_OBJECT = "person_object_v2"
+    const val PERSON_ENV_THIRDS_LEFT = "person_env_thirds_left_v1"
+    const val PERSON_ENV_THIRDS_RIGHT = "person_env_thirds_right_v1"
+    const val PERSON_ENV_CENTER = "person_env_center_v1"
+    const val TRAVEL_LANDMARK_PERSON = "travel_landmark_person_v1"
+    const val TRAVEL_SCENERY_PERSON = "travel_scenery_person_v1"
+    const val TRAVEL_LANDMARK_THIRDS = "travel_landmark_thirds_v1"
     const val OBJECT_SINGLE = "object_single_v2"
+    const val OBJECT_SINGLE_THIRDS = "object_single_thirds_v1"
     const val OBJECT_PAIR_BALANCED = "object_pair_balanced_v2"
     const val OBJECT_PAIR_DIAGONAL = "object_pair_diagonal_v2"
     const val OBJECT_TRIO_TRIANGLE = "object_trio_triangle_v2"
@@ -242,12 +249,27 @@ object LayoutTemplateCatalog {
     const val OBJECT_QUAD_GRID = "object_quad_grid_v2"
     const val OBJECT_QUAD_HIERARCHY = "object_quad_hierarchy_v3"
     const val CAFE_TABLE_V2 = "cafe_table_v2"
+    const val CAFE_DRINK_PLATE = "cafe_drink_plate_v1"
 
+    /**
+     * The frame sheet's whole offer, in the order the sheet shows it: person frames
+     * where the person is the subject, then the small-figure frames (배경 강조 인물,
+     * then 여행·풍경's landmark pairings), then object arrangements from one subject
+     * up to four, then the café-specific templates.
+     *
+     * Expanded from twelve on the owner's 2026-07-31 instruction ("가이드를 몇개 더
+     * 추가해줘 … 모든 분야의 가이드가 잘 배치될 수 있도록"): 배경 강조 인물 and
+     * 여행·풍경 previously reused the full-body portrait frames and had no shape of
+     * their own, which is why the two chips looked identical to the person chip.
+     */
     val manualIds = listOf(
         PERSON_FULL_CENTER, PERSON_FULL_OFFSET, PERSON_FULL_RELAXED, PERSON_FULL_WALKING,
-        PERSON_UPPER, PERSON_SEATED,
-        OBJECT_SINGLE, OBJECT_PAIR_BALANCED, OBJECT_PAIR_DIAGONAL,
-        OBJECT_TRIO_TRIANGLE, OBJECT_QUAD_HIERARCHY, CAFE_TABLE_V2,
+        PERSON_UPPER, PERSON_SEATED, PERSON_OBJECT,
+        PERSON_ENV_THIRDS_LEFT, PERSON_ENV_THIRDS_RIGHT, PERSON_ENV_CENTER,
+        TRAVEL_LANDMARK_PERSON, TRAVEL_SCENERY_PERSON, TRAVEL_LANDMARK_THIRDS,
+        OBJECT_SINGLE, OBJECT_SINGLE_THIRDS, OBJECT_PAIR_BALANCED, OBJECT_PAIR_DIAGONAL,
+        OBJECT_TRIO_TRIANGLE, OBJECT_TRIO_ROW, OBJECT_QUAD_GRID, OBJECT_QUAD_HIERARCHY,
+        CAFE_TABLE_V2, CAFE_DRINK_PLATE,
     )
 
     val legacyIds = listOf(
@@ -286,6 +308,32 @@ object LayoutTemplateCatalog {
             LayoutSlot("person", GuideObjectCategory.PERSON, RectN(0.08f, 0.14f, 0.50f, 0.88f), role = SlotRole.PERSON, visualKind = SlotVisualKind.PERSON_SILHOUETTE),
             LayoutSlot("object", null, RectN(0.60f, 0.56f, 0.84f, 0.78f)),
         ), viewportAspect = viewportAspect)
+        // 배경 강조 인물 (owner instruction 2026-07-31). The full-body frames put the
+        // person across 0.86 of the frame height; these do the opposite — a small
+        // figure (area ≈ 0.08–0.11) low in the frame, on a thirds line or centred,
+        // with the head-room above it left to the background the chip is named after.
+        PERSON_ENV_THIRDS_LEFT -> portraitFrame(id, RectN(0.22f, 0.42f, 0.44f, 0.92f), viewportAspect)
+        PERSON_ENV_THIRDS_RIGHT -> portraitFrame(id, RectN(0.56f, 0.42f, 0.78f, 0.92f), viewportAspect)
+        PERSON_ENV_CENTER -> portraitFrame(id, RectN(0.41f, 0.50f, 0.59f, 0.92f), viewportAspect)
+        // 여행·풍경 (same instruction). Travel compositions the previous catalogue could
+        // not express: a landmark with a person for scale, and a landmark alone. The
+        // person is deliberately small (bracket, not silhouette) — in a travel photo the
+        // place is the subject and the person proves someone was there.
+        TRAVEL_LANDMARK_PERSON -> LayoutTemplate(id, listOf(
+            LayoutSlot("person", GuideObjectCategory.PERSON, RectN(0.12f, 0.48f, 0.34f, 0.90f), role = SlotRole.PERSON, visualKind = SlotVisualKind.PERSON_BRACKET),
+            LayoutSlot("landmark", null, RectN(0.36f, 0.10f, 0.88f, 0.56f)),
+        ), viewportAspect = viewportAspect)
+        TRAVEL_SCENERY_PERSON -> LayoutTemplate(id, listOf(
+            LayoutSlot("person", GuideObjectCategory.PERSON, RectN(0.60f, 0.40f, 0.80f, 0.88f), role = SlotRole.PERSON, visualKind = SlotVisualKind.PERSON_BRACKET),
+            LayoutSlot("feature", null, RectN(0.14f, 0.30f, 0.36f, 0.50f)),
+        ), viewportAspect = viewportAspect)
+        // One large subject on the upper-right thirds crossing. Distinguished from
+        // OBJECT_SINGLE by sheer size (area 0.25 vs 0.10): a slot this large reads as
+        // architecture or scenery, not a tabletop object, and the situation filter
+        // separates the two on exactly that.
+        TRAVEL_LANDMARK_THIRDS -> LayoutTemplate(id, listOf(
+            LayoutSlot("landmark", null, RectN(0.40f, 0.12f, 0.90f, 0.62f)),
+        ), viewportAspect = viewportAspect)
         CAFE_TABLE, CAFE_TABLE_V2 -> LayoutTemplate.cafeTable(viewportAspect).copy(id = id)
         DRINK_PAIR -> LayoutTemplate(id, listOf(
             LayoutSlot("drink_left", GuideObjectCategory.DRINKWARE, RectN(0.10f, 0.48f, 0.42f, 0.84f), visualKind = SlotVisualKind.CUP),
@@ -297,12 +345,39 @@ object LayoutTemplateCatalog {
             LayoutSlot("drink_right", GuideObjectCategory.DRINKWARE, RectN(0.66f, 0.48f, 0.94f, 0.84f), visualKind = SlotVisualKind.CUP),
         ), viewportAspect = viewportAspect)
         STILL_LIFE -> LayoutTemplate(id, listOf(LayoutSlot("main_plate", GuideObjectCategory.FOOD_TABLEWARE, RectN(0.29f, 0.52f, 0.71f, 0.86f), visualKind = SlotVisualKind.PLATE)), viewportAspect = viewportAspect)
+        CAFE_DRINK_PLATE -> LayoutTemplate(id, listOf(
+            LayoutSlot("drink", GuideObjectCategory.DRINKWARE, RectN(0.16f, 0.30f, 0.42f, 0.62f), visualKind = SlotVisualKind.CUP),
+            LayoutSlot("plate", GuideObjectCategory.FOOD_TABLEWARE, RectN(0.48f, 0.58f, 0.86f, 0.90f), visualKind = SlotVisualKind.PLATE),
+        ), viewportAspect = viewportAspect)
         GENERIC_SINGLE, OBJECT_SINGLE -> GenericLayoutSynthesizer.generic(1, Arrangement.SINGLE, id = id, viewportAspect = viewportAspect)
+        // The rule-of-thirds counterpart of OBJECT_SINGLE, named in B-5's own list
+        // ("단일 중앙, 단일 삼분할"). Off-centre on the lower-right crossing.
+        OBJECT_SINGLE_THIRDS -> LayoutTemplate(id, listOf(
+            LayoutSlot("object_0", null, RectN(0.50f, 0.47f, 0.80f, 0.77f)),
+        ), viewportAspect = viewportAspect)
         GENERIC_PAIR, OBJECT_PAIR_BALANCED -> GenericLayoutSynthesizer.generic(2, Arrangement.ROW, id = id, viewportAspect = viewportAspect)
         OBJECT_PAIR_DIAGONAL -> GenericLayoutSynthesizer.generic(2, Arrangement.DIAGONAL, id = id, viewportAspect = viewportAspect)
         GENERIC_TRIO, OBJECT_TRIO_TRIANGLE -> GenericLayoutSynthesizer.generic(3, Arrangement.TRIANGLE, id = id, viewportAspect = viewportAspect)
-        OBJECT_TRIO_ROW -> GenericLayoutSynthesizer.generic(3, Arrangement.TRIANGLE, id = id, viewportAspect = viewportAspect)
-        GENERIC_QUAD, OBJECT_QUAD_GRID -> GenericLayoutSynthesizer.generic(4, Arrangement.DIAMOND, id = id, viewportAspect = viewportAspect)
+        // Authored inline, not through the synthesizer: `forObjects` folds every
+        // three-object request into TRIANGLE, which left this id drawing the same
+        // frame as OBJECT_TRIO_TRIANGLE while its name promised a row. A hand-picked
+        // repetition composition is a real photograph (three cups on a counter); the
+        // synthesizer normalization keeps only the *automatic* path away from lines.
+        OBJECT_TRIO_ROW -> LayoutTemplate(id, listOf(
+            LayoutSlot("object_0", null, RectN(0.09f, 0.49f, 0.35f, 0.75f)),
+            LayoutSlot("object_1", null, RectN(0.37f, 0.49f, 0.63f, 0.75f)),
+            LayoutSlot("object_2", null, RectN(0.65f, 0.49f, 0.91f, 0.75f)),
+        ), viewportAspect = viewportAspect)
+        GENERIC_QUAD -> GenericLayoutSynthesizer.generic(4, Arrangement.DIAMOND, id = id, viewportAspect = viewportAspect)
+        // Same reasoning as OBJECT_TRIO_ROW: a deliberate 2×2 flat-lay the user picks
+        // by name. `generic(4, GRID)` still normalizes to DIAMOND so a stale caller
+        // cannot synthesize this; only the named manual id reaches it.
+        OBJECT_QUAD_GRID -> LayoutTemplate(id, listOf(
+            LayoutSlot("object_0", null, RectN(0.22f, 0.28f, 0.46f, 0.52f)),
+            LayoutSlot("object_1", null, RectN(0.54f, 0.28f, 0.78f, 0.52f)),
+            LayoutSlot("object_2", null, RectN(0.22f, 0.60f, 0.46f, 0.84f)),
+            LayoutSlot("object_3", null, RectN(0.54f, 0.60f, 0.78f, 0.84f)),
+        ), viewportAspect = viewportAspect)
         OBJECT_QUAD_HIERARCHY -> GenericLayoutSynthesizer.generic(4, Arrangement.DIAMOND, id = id, viewportAspect = viewportAspect)
         else -> null
     }
@@ -321,13 +396,24 @@ object LayoutTemplateCatalog {
         PERSON_UPPER -> "상반신"
         PERSON_SEATED -> "앉은 인물"
         PERSON_OBJECT -> "인물과 소품"
+        PERSON_ENV_THIRDS_LEFT -> "원경 인물 좌측"
+        PERSON_ENV_THIRDS_RIGHT -> "원경 인물 우측"
+        PERSON_ENV_CENTER -> "원경 인물 중앙"
+        TRAVEL_LANDMARK_PERSON -> "랜드마크와 인물"
+        TRAVEL_SCENERY_PERSON -> "풍경 속 인물"
+        TRAVEL_LANDMARK_THIRDS -> "랜드마크 삼분할"
         OBJECT_SINGLE -> "물체 1개"
+        OBJECT_SINGLE_THIRDS -> "물체 1개 삼분할"
         OBJECT_PAIR_BALANCED -> "물체 2개 균형"
         OBJECT_PAIR_DIAGONAL -> "물체 2개 대각"
         OBJECT_TRIO_TRIANGLE -> "물체 3개 삼각"
         OBJECT_TRIO_ROW -> "물체 3개 연속"
         OBJECT_QUAD_GRID -> "물체 4개 2×2"
+        // B-5's own name for this arrangement ("주 피사체+보조"); shipping it unnamed
+        // left the one captionless cell ManualFrameSelection had to special-case.
+        OBJECT_QUAD_HIERARCHY -> "주 피사체+보조"
         CAFE_TABLE_V2 -> "카페 테이블"
+        CAFE_DRINK_PLATE -> "음료와 접시 대각"
         else -> id
     }
 }

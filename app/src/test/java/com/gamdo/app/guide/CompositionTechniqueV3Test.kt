@@ -6,16 +6,24 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CompositionTechniqueV3Test {
+    /**
+     * The manual catalogue now ships the row and grid frames the V3.1 *automatic* path
+     * still refuses to synthesize (owner instruction 2026-07-31). The distinction this
+     * file used to state as "no rows or grids anywhere" was really two rules, and only
+     * one of them survives: the detector must never *invent* a line or a 2×2 from
+     * scattered objects, but a user asking for 물체 3개 연속 by name is a composition
+     * decision, not a detector guess.
+     */
     @Test
-    fun `manual catalog is twelve fixed photographic frames without pose skeletons`() {
-        assertEquals(12, LayoutTemplateCatalog.manualSummaries.size)
+    fun `manual catalog is fixed photographic frames without pose skeletons`() {
+        assertEquals(23, LayoutTemplateCatalog.manualSummaries.size)
         assertTrue(LayoutTemplateCatalog.manualSummaries.all { it.poseTemplateId == null })
-        assertTrue(LayoutTemplateCatalog.manualSummaries.none { it.id == LayoutTemplateCatalog.OBJECT_TRIO_ROW })
-        assertTrue(LayoutTemplateCatalog.manualSummaries.none { it.id == LayoutTemplateCatalog.OBJECT_QUAD_GRID })
+        assertTrue(LayoutTemplateCatalog.manualSummaries.any { it.id == LayoutTemplateCatalog.OBJECT_TRIO_ROW })
+        assertTrue(LayoutTemplateCatalog.manualSummaries.any { it.id == LayoutTemplateCatalog.OBJECT_QUAD_GRID })
     }
 
     @Test
-    fun `three and four objects use triangle and diamond instead of lines or grid`() {
+    fun `automatic three and four objects use triangle and diamond, never lines or grid`() {
         val three = (0 until 3).map { index ->
             SlotDetection("o$index", com.gamdo.app.detect.GuideObjectCategory.UNKNOWN,
                 com.gamdo.app.detect.NormalizedBox(0.2f + index * 0.2f, 0.3f, 0.3f + index * 0.2f, 0.5f),
@@ -26,8 +34,25 @@ class CompositionTechniqueV3Test {
 
         assertEquals(Arrangement.TRIANGLE, GenericLayoutSynthesizer.chooseArrangement(three))
         assertEquals(Arrangement.DIAMOND, GenericLayoutSynthesizer.chooseArrangement(four))
-        assertFalse(LayoutTemplateCatalog.resolve(LayoutTemplateCatalog.OBJECT_TRIO_ROW)!!.slots
-            .zipWithNext().all { (a, b) -> kotlin.math.abs(a.bounds.centerY() - b.bounds.centerY()) < 0.05f })
+    }
+
+    /**
+     * The named row is now genuinely a row. It used to fold into TRIANGLE, which drew
+     * the same frame twice under two captions — the picker offered "물체 3개 연속" and
+     * delivered 물체 3개 삼각.
+     */
+    @Test
+    fun `the manual trio row is a level line, distinct from the triangle`() {
+        val row = LayoutTemplateCatalog.resolve(LayoutTemplateCatalog.OBJECT_TRIO_ROW)!!
+        assertEquals(3, row.slots.size)
+        assertTrue(row.slots.zipWithNext().all { (a, b) ->
+            kotlin.math.abs(a.bounds.centerY() - b.bounds.centerY()) < 0.01f
+        })
+        val triangle = LayoutTemplateCatalog.resolve(LayoutTemplateCatalog.OBJECT_TRIO_TRIANGLE)!!
+        assertFalse(
+            "the row and the triangle must not be the same frame under two names",
+            row.slots.map { it.bounds } == triangle.slots.map { it.bounds },
+        )
     }
 
     @Test

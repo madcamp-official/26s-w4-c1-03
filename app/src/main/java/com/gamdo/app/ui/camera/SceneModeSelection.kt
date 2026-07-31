@@ -79,21 +79,30 @@ object SceneModeSelection {
         ?.suggested
 
     /**
-     * A person slot this tall is a **full-body** frame: head and feet are both inside it,
-     * so whatever is behind the person is in the picture with them.
+     * A person slot at or under this share of the frame's area is a **distant figure**:
+     * the background around it is most of the photograph, which is the statement 배경
+     * 강조 인물 and 여행·풍경 both make. Above it, the person is the subject.
      *
-     * The catalogue's twelve manual layouts fall either side of it with room to spare —
-     * the four 전신 frames span 0.86 of the frame height, 상반신 and 앉은 인물 span 0.75 —
-     * so the constant is not sitting on a boundary either group can cross by a rounding
-     * error. It is deliberately the *low* end of that gap: if 담당 B ever tightens a 전신
-     * frame slightly it stays a 전신 frame, and the failure this direction produces is one
-     * extra cell in the row rather than a chip that offers fewer frames than it should.
+     * The catalogue falls either side with room to spare: the 원경/여행 person slots
+     * have area 0.08–0.11, and the smallest subject-person slot (전신 비대칭, 인물과
+     * 소품) has ≈ 0.31 — so 0.20 is not sitting on a boundary a rounding error can
+     * cross. It replaced a height threshold (0.78) when the small-figure frames landed:
+     * height separated 전신 from 상반신, but a distant figure and a full-body portrait
+     * are *both* head-to-feet, and area is what actually differs between them.
      *
      * A property of the *shape*, because a shape is all a [LayoutTemplateSummary] can be
      * asked about. There is no "environmental" flag to read, and inventing one would mean
      * editing the catalogue, which 담당 B owns.
      */
-    private const val FULL_BODY_MIN_HEIGHT = 0.78f
+    private const val DISTANT_PERSON_MAX_AREA = 0.20f
+
+    /**
+     * A lone object slot at or above this area reads as scenery or architecture — a
+     * landmark — rather than a tabletop subject. The catalogue's landmark slot has area
+     * 0.25 and its largest tabletop slot ≈ 0.12, so the constant sits in a real gap.
+     * It routes the one-object frames: landmark-sized to 여행·풍경, the rest to 정물·소품.
+     */
+    private const val LANDMARK_MIN_AREA = 0.16f
 
     /**
      * The frames a situation offers — the owner's 2026-07-31 instruction, "구도 선택 탭에서
@@ -110,40 +119,48 @@ object SceneModeSelection {
      *
      * ## The mapping, and why each line
      *
-     * Every rule is read off the summary's own slots — roles, count, and the person slot's
-     * height. Nothing here names a template id: the catalogue keeps old ids as aliases and
+     * Every rule is read off the summary's own slots — roles, count, and slot area.
+     * Nothing here names a template id: the catalogue keeps old ids as aliases and
      * `ManualFrameSelectionTest` bans id literals under `ui/camera/` for exactly that
-     * reason, and a rule made of shapes keeps working when 담당 B adds a thirteenth frame.
+     * reason, and a rule made of shapes keeps working when 담당 B adds another frame.
      *
-     *  - **자동** — all twelve. The app has not been told what the scene is, so it has no
-     *    grounds to withhold any frame. This is also the current behaviour, kept.
-     *  - **인물** — every frame with a person slot (6). Any of them frames a person; the
-     *    choice between 전신 and 상반신 is the user's, and that choice *is* the strip.
-     *  - **배경 강조 인물** — the full-body person frames (4). Showing someone head to feet
-     *    is what puts the place they are standing in the photograph, and the four that
-     *    qualify each keep the person inside ≤0.45 of the frame width, so the majority of
-     *    the frame is the background the chip is named after. 상반신 crops the background
-     *    out and 앉은 인물 is the widest frame in the catalogue — neither emphasises it.
-     *  - **여행·풍경** — the same full-body frames, plus the single-object frame (5). A
-     *    travel photograph is a person in a place or one thing that *is* the place; both
-     *    of those are compositions the catalogue has, and neither is a table of objects.
-     *  - **카페·음식** — object frames built for two or more subjects (5). A café table is
-     *    a drink and a plate, or three of them; the interesting decision there is how they
-     *    are arranged, which is what those five frames differ by.
-     *  - **정물·소품** — object frames for one or two subjects (3). A still life is a small
-     *    deliberate arrangement, and the frames for four scattered objects are the
-     *    opposite of that.
+     * The 2026-07-31 owner instruction redrew this table: 배경 강조 인물 used to be the
+     * full-body subset of 인물 ("인물이랑 배경 강조 인물이 같아") and 여행·풍경 had no
+     * frame of its own. Both now key on **slot area** — whether the person (or lone
+     * object) is the subject or a small figure inside a dominant background — which is
+     * the distinction those chips were always trying to make.
      *
-     * The person modes nest (배경 강조 인물 ⊂ 인물) and the object modes overlap on the
-     * two-object frames. That is deliberate: a frame that genuinely suits two situations
-     * should appear in both, and forcing the six lists to be disjoint would mean hiding
-     * 전신 비대칭 from someone who tapped 인물.
+     *  - **자동** — everything. The app has not been told what the scene is, so it has
+     *    no grounds to withhold any frame. This is also the previous behaviour, kept.
+     *  - **인물** — frames where a person slot is large enough to be the subject
+     *    (area > [DISTANT_PERSON_MAX_AREA]): the four 전신, 상반신, 앉은 인물, and
+     *    인물과 소품. The 원경 figures are deliberately *not* here — a distant speck is
+     *    not what someone tapping 인물 is composing.
+     *  - **배경 강조 인물** — frames whose only content is a **small** person (every
+     *    person slot ≤ [DISTANT_PERSON_MAX_AREA], no objects). The person is placed;
+     *    everything around them — most of the frame — is the background the chip is
+     *    named after. Disjoint from 인물 by construction, which is the owner's fix.
+     *  - **여행·풍경** — a small person *with* a place-sized companion slot (landmark,
+     *    distant feature), or a lone object big enough to *be* the place
+     *    (≥ [LANDMARK_MIN_AREA]). These are the travel-authored frames and nothing else
+     *    reaches the rule, so the chip finally has its own row.
+     *  - **카페·음식** — object frames built for two or more subjects. A café table is
+     *    a drink and a plate, or three or four of them; the interesting decision there
+     *    is the arrangement, which is what these frames differ by.
+     *  - **정물·소품** — object frames for one or two tabletop-sized subjects
+     *    (< [LANDMARK_MIN_AREA]). A still life is a small deliberate arrangement, and
+     *    both the four-object flat-lays and the landmark frame are the opposite of it.
+     *
+     * The object modes still overlap on the two-object frames. That is deliberate: a
+     * frame that genuinely suits two situations should appear in both, and forcing the
+     * six lists to be disjoint would mean hiding 음료와 접시 대각 from one of the two
+     * chips it honestly serves.
      *
      * ## Two things this can never do
      *
      * **Return an empty list.** The owner's hard requirement. Two independent guarantees,
      * because one of them is about a catalogue this file does not own: the rules above
-     * leave every mode non-empty for the shipped twelve (pinned by
+     * leave every mode non-empty for the shipped catalogue (pinned by
      * `SceneModeFrameFilterTest`), and if a future catalogue ever starved a mode the
      * `ifEmpty` below hands back the whole list. A strip with the wrong frames in it is a
      * bad recommendation; a strip with nothing in it is a broken screen.
@@ -177,16 +194,25 @@ object SceneModeSelection {
     private fun suits(mode: CaptureSceneMode, summary: LayoutTemplateSummary): Boolean {
         val people = summary.slots.count { it.role == SlotRole.PERSON }
         val objects = summary.slots.count { it.role == SlotRole.OBJECT }
-        val fullBody = summary.slots.any {
-            it.role == SlotRole.PERSON && it.bounds.height >= FULL_BODY_MIN_HEIGHT
-        }
+        val maxPersonArea = summary.slots
+            .filter { it.role == SlotRole.PERSON }
+            .maxOfOrNull { it.bounds.width * it.bounds.height } ?: 0f
+        val maxObjectArea = summary.slots
+            .filter { it.role == SlotRole.OBJECT }
+            .maxOfOrNull { it.bounds.width * it.bounds.height } ?: 0f
+        // "Distant" is a statement about every person in the frame: one large person
+        // slot makes the person the subject no matter how many small ones sit beside it.
+        val distantPerson = people > 0 && maxPersonArea <= DISTANT_PERSON_MAX_AREA
         return when (mode) {
             CaptureSceneMode.AUTO -> true
-            CaptureSceneMode.PORTRAIT -> people > 0
-            CaptureSceneMode.ENVIRONMENTAL_PORTRAIT -> fullBody
-            CaptureSceneMode.TRAVEL_LANDSCAPE -> fullBody || (people == 0 && objects == 1)
+            CaptureSceneMode.PORTRAIT -> people > 0 && !distantPerson
+            CaptureSceneMode.ENVIRONMENTAL_PORTRAIT -> distantPerson && objects == 0
+            CaptureSceneMode.TRAVEL_LANDSCAPE ->
+                (distantPerson && objects > 0) ||
+                    (people == 0 && objects == 1 && maxObjectArea >= LANDMARK_MIN_AREA)
             CaptureSceneMode.CAFE_FOOD -> people == 0 && objects >= 2
-            CaptureSceneMode.STILL_LIFE -> people == 0 && objects in 1..2
+            CaptureSceneMode.STILL_LIFE ->
+                people == 0 && objects in 1..2 && maxObjectArea < LANDMARK_MIN_AREA
         }
     }
 }

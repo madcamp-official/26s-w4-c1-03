@@ -39,7 +39,7 @@ class SceneModeFrameFilterTest {
 
     /**
      * **"빈 목록이 나오는 조합이 없어야 한다."** All six situations against the shipped
-     * twelve, and then again with each of the twelve held as the active selection —
+     * catalogue, and then again with each frame held as the active selection —
      * `framesFor`'s two arguments are the only inputs, so this is the whole space.
      */
     @Test
@@ -87,58 +87,126 @@ class SceneModeFrameFilterTest {
         assertEquals(catalogue, frames(CaptureSceneMode.AUTO))
     }
 
+    /**
+     * 인물 is the frames where a person slot is large enough to be the subject. The
+     * 원경 figures are person frames too, but they belong to 배경 강조 인물 — offering
+     * them here is exactly the sameness the owner reported, in the other direction.
+     */
     @Test
-    fun `인물 offers every person frame and no object frame`() {
+    fun `인물 offers the frames where the person is the subject`() {
         val portrait = frames(CaptureSceneMode.PORTRAIT)
-        assertEquals(catalogue.filter { it.category == LayoutCategory.PERSON }, portrait)
-        assertEquals(6, portrait.size)
+        assertEquals(
+            listOf(
+                LayoutTemplateCatalog.PERSON_FULL_CENTER,
+                LayoutTemplateCatalog.PERSON_FULL_OFFSET,
+                LayoutTemplateCatalog.PERSON_FULL_RELAXED,
+                LayoutTemplateCatalog.PERSON_FULL_WALKING,
+                LayoutTemplateCatalog.PERSON_UPPER,
+                LayoutTemplateCatalog.PERSON_SEATED,
+                LayoutTemplateCatalog.PERSON_OBJECT,
+            ),
+            portrait.map { it.id },
+        )
+        for (summary in portrait) {
+            val bounds = personSlot(summary).bounds
+            assertTrue(
+                "${summary.id}: 인물's person must be subject-sized",
+                bounds.width * bounds.height > 0.20f,
+            )
+        }
     }
 
     /**
-     * 배경 강조 인물 is the full-body subset, and the two properties that make that the
-     * right subset are asserted rather than assumed: the person is shown whole (so the
-     * place they are standing in is in the picture) and occupies less than half the frame
-     * width (so the majority of it is that place).
+     * **The owner's 2026-07-31 complaint, fixed and pinned**: 배경 강조 인물 used to be
+     * the full-body subset of 인물 and read as the same list. It is now the small-figure
+     * frames — a person the background dominates — and shares nothing with 인물.
      */
     @Test
-    fun `배경 강조 인물 offers the full-body person frames`() {
+    fun `배경 강조 인물 offers the small-figure frames and none of 인물's`() {
         val environmental = frames(CaptureSceneMode.ENVIRONMENTAL_PORTRAIT)
-        assertEquals(4, environmental.size)
-        assertTrue(environmental.all { it.category == LayoutCategory.PERSON })
+        assertEquals(
+            listOf(
+                LayoutTemplateCatalog.PERSON_ENV_THIRDS_LEFT,
+                LayoutTemplateCatalog.PERSON_ENV_THIRDS_RIGHT,
+                LayoutTemplateCatalog.PERSON_ENV_CENTER,
+            ),
+            environmental.map { it.id },
+        )
         for (summary in environmental) {
             val bounds = personSlot(summary).bounds
-            assertTrue("${summary.id} is not a full-body frame", bounds.height >= 0.85f)
-            assertTrue("${summary.id} leaves no room for the background", bounds.width < 0.50f)
+            assertTrue(
+                "${summary.id}: the person must be small enough for the background to " +
+                    "dominate the frame",
+                bounds.width * bounds.height <= 0.20f,
+            )
+            assertTrue(
+                "${summary.id}: a 배경 강조 frame is the person alone in the place",
+                summary.slots.all { it.role == SlotRole.PERSON },
+            )
         }
-        val dropped = frames(CaptureSceneMode.PORTRAIT) - environmental.toSet()
-        assertEquals("only the two crops are dropped", 2, dropped.size)
         assertTrue(
-            "a dropped frame must be one that does not show the whole person",
-            dropped.all { personSlot(it).bounds.height <= 0.76f },
+            "인물 and 배경 강조 인물 must not share a frame — that sameness is the bug " +
+                "the owner reported",
+            frames(CaptureSceneMode.PORTRAIT).intersect(environmental.toSet()).isEmpty(),
         )
     }
 
-    /** A person in a place, or the one thing that *is* the place. */
+    /**
+     * 여행·풍경 finally has its own row: a small person beside a place-sized slot, or a
+     * lone slot big enough to *be* the place. None of it is borrowed from the person
+     * chips any more.
+     */
     @Test
-    fun `여행·풍경 offers the full-body frames plus the single-object frame`() {
+    fun `여행·풍경 offers its own travel frames`() {
         val travel = frames(CaptureSceneMode.TRAVEL_LANDSCAPE)
-        val singleObject = catalogue.filter { it.category == LayoutCategory.OBJECT && it.slotCount == 1 }
-        assertEquals(1, singleObject.size)
-        assertEquals(frames(CaptureSceneMode.ENVIRONMENTAL_PORTRAIT) + singleObject, travel)
+        assertEquals(
+            listOf(
+                LayoutTemplateCatalog.TRAVEL_LANDMARK_PERSON,
+                LayoutTemplateCatalog.TRAVEL_SCENERY_PERSON,
+                LayoutTemplateCatalog.TRAVEL_LANDMARK_THIRDS,
+            ),
+            travel.map { it.id },
+        )
+        for (mode in listOf(CaptureSceneMode.PORTRAIT, CaptureSceneMode.ENVIRONMENTAL_PORTRAIT)) {
+            assertTrue(
+                "여행·풍경 must not borrow $mode's frames — a travel chip that repeats a " +
+                    "person chip is the owner's complaint again",
+                frames(mode).intersect(travel.toSet()).isEmpty(),
+            )
+        }
     }
 
     @Test
     fun `카페·음식 offers the object frames built for two or more subjects`() {
         val cafe = frames(CaptureSceneMode.CAFE_FOOD)
-        assertEquals(5, cafe.size)
+        assertEquals(8, cafe.size)
         assertTrue(cafe.all { it.category == LayoutCategory.OBJECT && it.slotCount >= 2 })
     }
 
     @Test
-    fun `정물·소품 offers the object frames for one or two subjects`() {
+    fun `정물·소품 offers the object frames for one or two tabletop subjects`() {
         val stillLife = frames(CaptureSceneMode.STILL_LIFE)
-        assertEquals(3, stillLife.size)
+        assertEquals(5, stillLife.size)
         assertTrue(stillLife.all { it.category == LayoutCategory.OBJECT && it.slotCount <= 2 })
+        assertTrue(
+            "a landmark-sized slot is scenery, not a still life",
+            stillLife.flatMap { it.slots }.all { it.bounds.width * it.bounds.height < 0.16f },
+        )
+    }
+
+    /** The expansion's purpose: every frame in the catalogue has a chip that offers it. */
+    @Test
+    fun `no frame is orphaned — each is reachable from a specific situation`() {
+        val reachable = CaptureSceneMode.entries
+            .filter { it != CaptureSceneMode.AUTO }
+            .flatMap { frames(it) }
+            .toSet()
+        assertEquals(
+            "these frames are only reachable through 자동, so no situation recommends " +
+                "them: ${catalogue.filterNot { it in reachable }.map { it.id }}",
+            catalogue.toSet(),
+            reachable,
+        )
     }
 
     /** No person frame reaches a table, and no object frame reaches a portrait chip. */
@@ -196,9 +264,9 @@ class SceneModeFrameFilterTest {
      * has a second, catalogue-independent half: a situation that matches nothing falls
      * back to everything.
      *
-     * The fixture is a person-with-prop frame — a real shape the catalogue already knows
-     * (`person_object_v2`) though it does not currently offer it manually. 카페·음식 can
-     * never match it, so this exercises the fallback rather than the rules.
+     * The fixture is a person-with-prop frame — the same shape as the catalogue's own
+     * `person_object_v2`. 카페·음식 requires an object-only frame, so it can never match
+     * this one and must take the fallback rather than the rules.
      */
     @Test
     fun `a situation that matches nothing still fills the row`() {
