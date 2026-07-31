@@ -118,51 +118,44 @@ class SlotRenderStyleTest {
     /**
      * **Where the two person styles and the mixed case can actually be reached from.**
      *
-     * Characterisation, not a wish — and it was a surprise. A first draft asserted that
-     * *some manual layout* mixes a person with an object; it failed, and the failure is a
-     * fact about the catalogue rather than a bug in the mapping:
+     * Characterisation, updated with the 2026-07-31 catalogue expansion — the note this
+     * test carried before it predicted its own obsolescence ("if 담당 B adds a mixed
+     * template to `manualIds`, this test fails — and that is the right outcome"). That
+     * is what happened:
      *
-     *  - the 12 manual layouts are 6 person templates and 6 object templates, and **no
-     *    manual template mixes the two**;
-     *  - every manual person template is `PERSON_BRACKET` (they all come from
-     *    `portraitFrame`), so **`PERSON_SILHOUETTE` is not reachable from the manual
-     *    list at all**. It lives in `person_object_v2` and the legacy `portrait_person`,
-     *    both of which arrive through *automatic* scene resolution.
+     *  - the manual list now contains exactly three mixed templates — 인물과 소품 and
+     *    the two travel person+landmark frames — so the mixed rendering path **is**
+     *    reachable from the picker now, and can be verified by opening it;
+     *  - `person_object_v2`'s person slot is a `PERSON_SILHOUETTE`, so the silhouette
+     *    style is reachable from the picker through that one cell. Every other manual
+     *    person slot stays a `PERSON_BRACKET`.
      *
-     * That matters for verification, which is why it is written down here instead of
-     * being noticed on a device: the silhouette and the mixed case cannot be checked by
-     * opening the frame picker. They need a scene where the detector finds a person and
-     * an object together.
-     *
-     * If 담당 B adds a mixed template to `manualIds`, this test fails — and that is the
-     * right outcome, because it would make the picker reach a case this note says it
-     * cannot.
+     * Pinned as the exact id set rather than "some templates mix", so the next
+     * catalogue change has to update a fact instead of sliding past a predicate.
      */
     @Test
-    fun `the manual list is person-only or object-only per template`() {
+    fun `exactly three manual templates mix person and object slots`() {
         val mixed = LayoutTemplateCatalog.manualSummaries.filter { summary ->
             summary.slots.map { SlotRenderStyle.of(it.visualKind).isPerson }.toSet().size > 1
         }
         assertEquals(
-            "a manual template now mixes person and object slots. That is fine — but it " +
-                "changes what the frame picker can reach, so update this test's note " +
-                "rather than deleting it.",
-            emptyList<String>(),
+            "the set of mixed manual templates changed — update this test's note so it " +
+                "keeps describing what the picker can reach.",
+            listOf(
+                LayoutTemplateCatalog.PERSON_OBJECT,
+                LayoutTemplateCatalog.TRAVEL_LANDMARK_PERSON,
+                LayoutTemplateCatalog.TRAVEL_SCENERY_PERSON,
+            ),
             mixed.map { it.id },
         )
         val manualStyles = LayoutTemplateCatalog.manualSummaries
             .flatMap { it.slots }
             .map { SlotRenderStyle.of(it.visualKind) }
             .toSet()
-        assertFalse(
-            "PERSON_SILHOUETTE is not reachable from the manual list — verify it through " +
-                "an automatic person+object scene, not the picker",
-            SlotRenderStyle.PERSON_SILHOUETTE in manualStyles,
-        )
         assertTrue(
-            "the manual list must still reach both a person style and an object style",
-            SlotRenderStyle.PERSON_BRACKET in manualStyles &&
-                SlotRenderStyle.OBJECT_BRACKET in manualStyles,
+            "the manual list must reach every style the overlay can draw, so the whole " +
+                "renderer is verifiable from the picker",
+            manualStyles == SlotRenderStyle.entries.toSet(),
         )
     }
 

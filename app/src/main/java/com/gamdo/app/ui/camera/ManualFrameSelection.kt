@@ -50,19 +50,16 @@ object ManualFrameSelection {
     /**
      * The label for a layout, or **null when there isn't one**.
      *
-     * `LayoutTemplateCatalog.displayName` falls back to `else -> id`, and exactly one of
-     * the twelve manual layouts has no case: `object_quad_hierarchy_v3`. Rendering that
-     * would put a raw template id on a user-facing surface, which R7-1 bans (전문 용어)
-     * and which no user can read.
+     * `LayoutTemplateCatalog.displayName` falls back to `else -> id`, and a layout with
+     * no case has its raw id as its `displayName`. Rendering that would put a template
+     * id on a user-facing surface, which R7-1 bans (전문 용어) and no user can read —
+     * so an unnamed layout shows its thumbnail with no caption instead.
      *
-     * Returning null — the cell shows its thumbnail and no caption — is the honest
-     * option. The alternatives were worse: printing the id is the bug, and inventing a
-     * Korean name here would be P1 writing content for a catalogue 담당 B owns, in a
-     * second place, where it would silently outrank theirs once they added one.
-     *
-     * A single unlabelled cell among eleven labelled ones is *visible*, which is the
-     * point. Escalated to the lead 2026-07-30; when the name lands in `displayName` it
-     * appears here with no change to this file.
+     * Every shipped manual layout is currently named (`object_quad_hierarchy_v3` was
+     * the one gap, escalated 2026-07-30 and closed with B-5's own "주 피사체+보조" during
+     * the 2026-07-31 catalogue expansion), so the null branch is dormant. It stays,
+     * because it is what makes a *future* unnamed layout degrade to a visible blank
+     * caption rather than to an id on screen.
      */
     fun label(summary: LayoutTemplateSummary): String? =
         summary.displayName.takeIf { it != summary.id }

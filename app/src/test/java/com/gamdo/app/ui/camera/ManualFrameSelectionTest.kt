@@ -71,10 +71,13 @@ class ManualFrameSelectionTest {
     // ---- the list is B's ---------------------------------------------------------
 
     @Test
-    fun `the catalogue supplies twelve manual layouts`() {
+    fun `the catalogue supplies twenty-three manual layouts`() {
+        // §3.1 named 12; the owner's 2026-07-31 expansion grew the catalogue so 배경
+        // 강조 인물 and 여행·풍경 have frames of their own. The exact number is pinned
+        // so a catalogue change is a decision, not drift.
         val summaries = LayoutTemplateCatalog.manualSummaries
-        assertEquals("§3.1 names 12 frames", 12, summaries.size)
-        assertEquals("ids must be unique", 12, summaries.map { it.id }.toSet().size)
+        assertEquals("the catalogue ships 23 frames", 23, summaries.size)
+        assertEquals("ids must be unique", 23, summaries.map { it.id }.toSet().size)
         assertTrue(
             "every summary must carry preview slots — the picker draws them",
             summaries.all { it.slots.isNotEmpty() },
@@ -94,26 +97,20 @@ class ManualFrameSelectionTest {
     // ---- the missing display name -----------------------------------------------
 
     /**
-     * **A real gap in 담당 B's catalogue, pinned rather than papered over.**
-     *
-     * `LayoutTemplateCatalog.displayName` ends in `else -> id`, and exactly one of the
-     * twelve manual layouts has no case — so its `displayName` *is* its raw id. Rendering
-     * that would put `object_quad_hierarchy_v3` on a user-facing surface, which R7-1 bans
-     * and no user can read.
-     *
-     * [ManualFrameSelection.label] returns null for it and the cell shows no caption.
-     * `guide/` is 담당 B's file, so this is escalated rather than fixed here; when the name
-     * lands, this test starts failing and the assertion below is the instruction for what
-     * to do about it.
+     * The gap this test used to pin is closed: `object_quad_hierarchy_v3` shipped
+     * without a `displayName` case (escalated 2026-07-30) and received B-5's own name
+     * "주 피사체+보조" with the 2026-07-31 catalogue expansion, exactly the outcome the
+     * old expectation's message asked for. The assertion stays at "no unnamed layouts"
+     * so a future frame added without a name fails loudly here instead of shipping a
+     * captionless cell.
      */
     @Test
     fun `layouts without a display name render no caption`() {
         val unnamed = LayoutTemplateCatalog.manualSummaries.filter { it.displayName == it.id }
         assertEquals(
-            "the set of unnamed manual layouts changed. If it shrank, 담당 B added the " +
-                "name — good; update this expectation. If it grew, a new layout shipped " +
-                "without one and its cell is now captionless.",
-            listOf(LayoutTemplateCatalog.OBJECT_QUAD_HIERARCHY),
+            "a manual layout shipped without a display name and its cell is now " +
+                "captionless — name it in LayoutTemplateCatalog.displayName.",
+            emptyList<String>(),
             unnamed.map { it.id },
         )
         for (summary in unnamed) {
@@ -127,7 +124,7 @@ class ManualFrameSelectionTest {
     @Test
     fun `named layouts render their name`() {
         val named = LayoutTemplateCatalog.manualSummaries.filter { it.displayName != it.id }
-        assertEquals("eleven of twelve are named", 11, named.size)
+        assertEquals("every manual layout is named", 23, named.size)
         for (summary in named) {
             assertEquals(summary.displayName, ManualFrameSelection.label(summary))
         }
