@@ -47,6 +47,98 @@ class SceneLayoutContractTest {
         assertEquals(GuideLayoutState.Searching, coordinator.currentLayoutState)
     }
 
+    // ---- a manual frame renders where it was authored --------------------------------
+    //
+    // `GenericLayoutSynthesizer.transform` re-centres slots on the style anchor as
+    // `anchor + (slot centre − mean of centres) × spacing`. With one slot the
+    // parenthesis is zero, so every single-slot manual frame collapsed onto the anchor
+    // — (0.5, 0.5) without a reference — and 원경 인물 좌측/우측 rendered at the same
+    // pixels while their thumbnails showed different frames. A manual frame's authored
+    // coordinates are its identity, so MANUAL now bypasses the transform at selection,
+    // on every re-transforming frame, and on style updates. These tests read
+    // `fixedLayout` — the render input — not the catalogue summary, because the summary
+    // was correct the whole time the overlay was wrong.
+
+    private fun authoredBounds(id: String): List<RectN> =
+        LayoutTemplateCatalog.resolve(id)!!.slots.map { it.bounds }
+
+    private fun SceneGuideCoordinator.renderedBounds(): List<RectN> =
+        (currentLayoutState as GuideLayoutState.Fixed).template.slots.map { it.bounds }
+
+    @Test
+    fun `a single-slot manual frame keeps its authored off-centre position`() {
+        for (id in listOf(
+            LayoutTemplateCatalog.PERSON_ENV_THIRDS_LEFT,
+            LayoutTemplateCatalog.PERSON_FULL_OFFSET,
+            LayoutTemplateCatalog.TRAVEL_LANDMARK_THIRDS,
+        )) {
+            val coordinator = SceneGuideCoordinator()
+            assertTrue(coordinator.selectManualLayout(id))
+            assertEquals(
+                "$id must render its authored slots, not the style anchor",
+                authoredBounds(id),
+                coordinator.renderedBounds(),
+            )
+        }
+    }
+
+    /**
+     * The per-frame path re-derives the rendered template from `fixedBaseTemplate` on
+     * **every** `update`, so a selection-time fix alone would last exactly one frame.
+     * The style target carries an off-centre anchor here to prove the frame ignores it.
+     */
+    @Test
+    fun `the per-frame re-transform does not move a manual frame either`() {
+        val id = LayoutTemplateCatalog.PERSON_ENV_THIRDS_LEFT
+        val coordinator = SceneGuideCoordinator()
+        assertTrue(coordinator.selectManualLayout(id))
+        var state: SceneGuideState? = null
+        repeat(3) {
+            state = coordinator.update(
+                detection = com.gamdo.app.detect.DetectionResult(emptyList(), null),
+                styleTarget = StyleTarget(subjectAnchorX = 2f / 3f, subjectAnchorY = 0.4f),
+            )
+        }
+        assertEquals(authoredBounds(id), state!!.fixedLayout!!.template.slots.map { it.bounds })
+        assertEquals(LayoutSource.MANUAL, (state!!.layoutState as GuideLayoutState.Fixed).source)
+    }
+
+    /**
+     * A reference's anchor arrives through `updateStyle` when the user toggles the
+     * reference chip. The manual frame is the more explicit and more recent choice, so
+     * it wins: the anchor must not drag it. (AUTO and REFERENCE layouts keep following
+     * the style — only the hand-picked frame is verbatim.)
+     */
+    @Test
+    fun `updateStyle does not move a manual frame`() {
+        val id = LayoutTemplateCatalog.PERSON_ENV_THIRDS_RIGHT
+        val coordinator = SceneGuideCoordinator()
+        assertTrue(coordinator.selectManualLayout(id))
+        coordinator.updateStyle(StyleTarget(subjectAnchorX = 1f / 3f))
+        assertEquals(authoredBounds(id), coordinator.renderedBounds())
+    }
+
+    /**
+     * The owner-visible symptom, pinned directly: the left and right 원경 frames must
+     * render at different horizontal positions. Under the anchor collapse both rendered
+     * at exactly (0.39, 0.25)-(0.61, 0.75).
+     */
+    @Test
+    fun `the mirrored 원경 frames render at different positions`() {
+        fun renderedCentreX(id: String): Float {
+            val coordinator = SceneGuideCoordinator()
+            assertTrue(coordinator.selectManualLayout(id))
+            val bounds = coordinator.renderedBounds().single()
+            return (bounds.left + bounds.right) / 2f
+        }
+        val left = renderedCentreX(LayoutTemplateCatalog.PERSON_ENV_THIRDS_LEFT)
+        val right = renderedCentreX(LayoutTemplateCatalog.PERSON_ENV_THIRDS_RIGHT)
+        assertTrue(
+            "좌측 must sit left of centre and 우측 right of it, got $left / $right",
+            left < 0.45f && right > 0.55f,
+        )
+    }
+
     private val twoObjectReference = StyleTarget(
         referenceSlots = listOf(
             ReferenceTargetSlot(SlotRole.OBJECT, SlotVisualKind.GENERIC_OBJECT, RectN(0.10f, 0.20f, 0.40f, 0.60f)),

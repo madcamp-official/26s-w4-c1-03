@@ -94,10 +94,7 @@ class SceneGuideCoordinator(
             manualTemplateId = explicitTemplate.id
             fixedBaseTemplate = explicitTemplate
             fixedSource = LayoutSource.MANUAL
-            layoutState = GuideLayoutState.Fixed(
-                GenericLayoutSynthesizer.transform(explicitTemplate, styleTarget, templateSafetyMargin),
-                LayoutSource.MANUAL,
-            )
+            layoutState = GuideLayoutState.Fixed(explicitTemplate, LayoutSource.MANUAL)
         }
         val baseTemplate = when (val current = layoutState) {
             is GuideLayoutState.Fixed -> fixedBaseTemplate ?: current.template
@@ -108,7 +105,8 @@ class SceneGuideCoordinator(
                 referenceTemplate = referenceTemplate,
             )
         }
-        val template = baseTemplate?.let { GenericLayoutSynthesizer.transform(it, styleTarget, templateSafetyMargin) }
+        // `resolveSearching` may have just latched, so `fixedSource` is read *after* it.
+        val template = baseTemplate?.let { styleFor(it, styleTarget) }
         val fixedLayout = template?.let {
             FixedLayoutGuide(
                 template = it,
@@ -256,16 +254,48 @@ class SceneGuideCoordinator(
         }
     }
 
+    /**
+     * Applies the style transform to a latched template — **except a manual one**.
+     *
+     * `GenericLayoutSynthesizer.transform` re-centres a template on the style's anchor:
+     * `new centre = anchor + (slot centre − mean of slot centres) × spacing`. For a
+     * single-slot template the parenthesis is zero, so *every* one-slot frame collapsed
+     * onto the anchor — with no reference active that is (0.5, 0.5), which rendered
+     * 원경 인물 좌측 and 우측 at pixel-identical positions and drew 전신 비대칭 dead
+     * centre while the picker's thumbnail showed it offset. The picker promised one
+     * composition and the overlay delivered another — the owner's "다 똑같다" one layer
+     * down.
+     *
+     * A manual frame is the user's *explicit* composition: its authored coordinates are
+     * its whole identity, and B-5 defines it as "인식 여부와 무관하게 즉시 고정". The
+     * anchor move exists so the *automatic* path can bend a discovered layout toward a
+     * style or reference — bending a hand-picked frame toward anything overrides the
+     * more explicit, more recent choice. So MANUAL renders verbatim, and this also
+     * settles the reference-vs-manual conflict: while a reference's anchor lives in the
+     * style target, a manually chosen frame ignores it, because the user picked the
+     * frame *after* (and despite) the reference. AUTO and REFERENCE keep the transform
+     * unchanged. Catalogue templates are authored inside the 5% safety margin, so
+     * skipping the transform loses no clamping.
+     */
+    private fun styleFor(
+        template: LayoutTemplate,
+        styleTarget: StyleTarget,
+        source: LayoutSource? = fixedSource,
+    ): LayoutTemplate =
+        if (source == LayoutSource.MANUAL) template
+        else GenericLayoutSynthesizer.transform(template, styleTarget, templateSafetyMargin)
+
+    /**
+     * [styleTarget] is accepted for call-site compatibility but no longer moves the
+     * template — see [styleFor] for why a manual frame renders its authored coordinates.
+     */
     fun selectManualLayout(templateId: String, styleTarget: StyleTarget = StyleTarget()): Boolean {
         val template = LayoutTemplateCatalog.resolve(templateId) ?: return false
         manualTemplateId = templateId
         autoLayoutResolver.reset()
         fixedBaseTemplate = template
         fixedSource = LayoutSource.MANUAL
-        layoutState = GuideLayoutState.Fixed(
-            GenericLayoutSynthesizer.transform(template, styleTarget, templateSafetyMargin),
-            LayoutSource.MANUAL,
-        )
+        layoutState = GuideLayoutState.Fixed(template, LayoutSource.MANUAL)
         return true
     }
 
@@ -281,7 +311,7 @@ class SceneGuideCoordinator(
     fun updateStyle(styleTarget: StyleTarget) {
         val base = fixedBaseTemplate ?: return
         val source = fixedSource ?: if (manualTemplateId == null) LayoutSource.AUTO else LayoutSource.MANUAL
-        layoutState = GuideLayoutState.Fixed(GenericLayoutSynthesizer.transform(base, styleTarget, templateSafetyMargin), source)
+        layoutState = GuideLayoutState.Fixed(styleFor(base, styleTarget, source), source)
     }
 
     fun reset() {

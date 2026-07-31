@@ -310,7 +310,7 @@ object LayoutTemplateCatalog {
         ), viewportAspect = viewportAspect)
         // 배경 강조 인물 (owner instruction 2026-07-31). The full-body frames put the
         // person across 0.86 of the frame height; these do the opposite — a small
-        // figure (area ≈ 0.08–0.11) low in the frame, on a thirds line or centred,
+        // figure (area 0.076–0.11) low in the frame, on a thirds line or centred,
         // with the head-room above it left to the background the chip is named after.
         PERSON_ENV_THIRDS_LEFT -> portraitFrame(id, RectN(0.22f, 0.42f, 0.44f, 0.92f), viewportAspect)
         PERSON_ENV_THIRDS_RIGHT -> portraitFrame(id, RectN(0.56f, 0.42f, 0.78f, 0.92f), viewportAspect)
